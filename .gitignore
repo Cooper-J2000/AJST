@@ -1,0 +1,24 @@
+# ── 数据目录：克隆 AJST-Data 数据仓库到此位置（或设 AJST_DATA_DIR）──
+catadata/
+
+# ── 运行时产物 ──
+backend/fitting_store/
+*.log
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ── 本地配置/密钥 ──
+.env
+*.pem
+*.key
+
+# ── 系统 ──
+.DS_Store
+
+# ── 本地开发记录（公开版本见 docs/TECHNICAL.md）──
+技术文档.md

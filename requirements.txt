@@ -1,0 +1,18 @@
+# AJST 后端依赖（Python >= 3.10）
+Flask>=3.0
+flask-cors>=4.0
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+Werkzeug>=3.0
+numpy>=1.26
+scipy>=1.11
+astropy>=6.0
+
+# 银河系消光改正（CSFD 尘埃图 + P92 模型）
+dustmaps>=1.0
+dust_extinction>=1.4
+
+# ── 可选：余辉拟合功能（体积较大，不需要拟合可不装）──
+# VegasAfterglow[mcmc]>=2.0
+# corner>=2.2
+# matplotlib>=3.8

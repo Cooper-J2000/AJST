@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-bs-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- 主题初始化：CSS 加载前设置 data-bs-theme，避免主题闪烁 -->
+<script>
+(function () {
+  var t = null;
+  try { t = localStorage.getItem('ajst-theme'); } catch (e) {}
+  if (t !== 'light' && t !== 'dark') {
+    t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+  }
+  document.documentElement.setAttribute('data-bs-theme', t);
+})();
+</script>
+<title>AJST 暂现源光变目录</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<!-- Bootstrap 5 (color modes via data-bs-theme) -->
+<link href="vendor/bootstrap.min.css" rel="stylesheet">
+<!-- Bootstrap Icons -->
+<link rel="stylesheet" href="vendor/bootstrap-icons.min.css">
+<!-- Chart.js -->
+<script src="vendor/chart.umd.min.js"></script>
+<!-- Aladin Lite（v3 样式由 JS 注入，无需单独 CSS） -->
+<script src="vendor/aladin.js"></script>
+<!-- Custom CSS -->
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Navbar -->
+  <nav class="navbar navbar-expand-lg app-navbar sticky-top">
+    <div class="container-fluid">
+      <a class="navbar-brand fw-bold" href="#/">
+        <i class="bi bi-stars"></i> AJST 暂现源目录
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navMenu">
+        <ul class="navbar-nav me-auto" id="navLinks">
+          <li class="nav-item"><a class="nav-link" href="#/list" data-route><i class="bi bi-list-ul"></i> 事件列表</a></li>
+          <li class="nav-item"><a class="nav-link" href="#/stats" data-route><i class="bi bi-bar-chart-line"></i> 全局统计</a></li>
+          <li class="nav-item"><a class="nav-link" href="#/filters" data-route><i class="bi bi-funnel"></i> 光学滤光片</a></li>
+          <li class="nav-item"><a class="nav-link" href="#/compare" data-route><i class="bi bi-layers"></i> 多源对比</a></li>
+          <li class="nav-item"><a class="nav-link" href="#/new" data-route><i class="bi bi-plus-circle"></i> 新建事件</a></li>
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle" href="#" id="toolsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-toolbox"></i> 工具箱</a>
+            <ul class="dropdown-menu" aria-labelledby="toolsDropdown">
+              <li><a class="dropdown-item" href="#/tools/gcn" data-route><i class="bi bi-journal-text"></i> GCN 阅读工具</a></li>
+              <li><a class="dropdown-item" href="#/tools/digitizer" data-route><i class="bi bi-vector-pen"></i> 抠图取数</a></li>
+            </ul>
+          </li>
+        </ul>
+        <span class="navbar-text small text-secondary" id="navStats"></span>
+        <div class="d-flex align-items-center gap-2" id="authBar">
+          <button class="btn btn-sm btn-outline-secondary" id="themeToggle" title="切换浅色/深色主题">
+            <i class="bi bi-sun"></i>
+          </button>
+          <span class="small text-secondary" id="authStatus" style="display:none">已登录</span>
+          <a class="btn btn-sm btn-outline-warning" id="adminBtn" style="display:none" href="/admin" title="管理员后台"><i class="bi bi-person-gear"></i> 管理后台</a>
+          <button class="btn btn-sm btn-outline-secondary" id="loginBtn" onclick="showLoginModal()"><i class="bi bi-lock"></i> 登录</button>
+          <button class="btn btn-sm btn-outline-secondary" id="logoutBtn" style="display:none" onclick="doLogout()"><i class="bi bi-unlock"></i> 退出</button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main id="app" class="container-fluid py-3">
+    <div class="d-flex justify-content-center align-items-center" style="min-height: 60vh;">
+      <div class="spinner-border" role="status"><span class="visually-hidden">加载中...</span></div>
+    </div>
+  </main>
+
+  <!-- Toast / Notification -->
+  <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer"></div>
+
+  <!-- Login Modal -->
+  <div class="modal fade" id="loginModal" tabindex="-1">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h6 class="modal-title"><i class="bi bi-shield-lock"></i> 登录</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="text" class="form-control mb-2" id="loginUsername" placeholder="用户名" autocomplete="username">
+          <input type="password" class="form-control" id="loginPassword" placeholder="密码" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+          <div class="mt-2 small text-danger" id="loginError" style="display:none"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-sm btn-primary" onclick="doLogin()">登录</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="vendor/bootstrap.bundle.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-bs-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+(function () {
+  var t = null;
+  try { t = localStorage.getItem('ajst-theme'); } catch (e) {}
+  if (t !== 'light' && t !== 'dark') {
+    t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+  }
+  document.documentElement.setAttribute('data-bs-theme', t);
+})();
+</script>
+<title>管理后台 — AJST 暂现源光变目录</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link href="vendor/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="vendor/bootstrap-icons.min.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav class="navbar app-navbar sticky-top">
+    <div class="container-fluid">
+      <a class="navbar-brand fw-bold" href="/"><i class="bi bi-stars"></i> AJST 暂现源目录</a>
+      <span class="navbar-text"><i class="bi bi-person-gear"></i> 管理员维护后台</span>
+      <div class="d-flex align-items-center gap-2">
+        <a class="btn btn-sm btn-outline-secondary" href="/"><i class="bi bi-house"></i> 返回主页</a>
+        <button class="btn btn-sm btn-outline-secondary" id="logoutBtn" style="display:none" onclick="doLogout()"><i class="bi bi-unlock"></i> 退出</button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container py-4" style="max-width: 760px;">
+
+    <!-- 管理员登录 -->
+    <div id="loginPanel" class="card mx-auto" style="max-width: 380px; display:none;">
+      <div class="card-body">
+        <h6 class="card-title mb-3"><i class="bi bi-shield-lock"></i> 管理员登录</h6>
+        <input type="text" class="form-control mb-2" id="loginUsername" placeholder="用户名" autocomplete="username">
+        <input type="password" class="form-control" id="loginPassword" placeholder="密码" autocomplete="current-password"
+               onkeydown="if(event.key==='Enter')doLogin()">
+        <div class="mt-2 small text-danger" id="loginError" style="display:none"></div>
+        <button class="btn btn-sm btn-primary w-100 mt-3" onclick="doLogin()">登录</button>
+      </div>
+    </div>
+
+    <!-- 用户管理 -->
+    <div id="adminPanel" style="display:none;">
+      <div class="card mb-3">
+        <div class="card-body">
+          <h6 class="card-title"><i class="bi bi-person-plus"></i> 新增普通用户</h6>
+          <div class="row g-2 align-items-center">
+            <div class="col"><input type="text" class="form-control form-control-sm" id="newUsername" placeholder="用户名"></div>
+            <div class="col"><input type="password" class="form-control form-control-sm" id="newPassword" placeholder="密码" autocomplete="new-password"></div>
+            <div class="col-auto"><button class="btn btn-sm btn-primary" onclick="createUser()">添加</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <h6 class="card-title"><i class="bi bi-people"></i> 用户列表</h6>
+          <table class="table table-sm align-middle">
+            <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>创建时间 (UTC)</th><th class="text-end">操作</th></tr></thead>
+            <tbody id="userTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer"></div>
+
+<script src="vendor/bootstrap.bundle.min.js"></script>
+<script>
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin' };
+  if (body) opts.body = JSON.stringify(body);
+  const resp = await fetch('/api' + path, opts);
+  if (!resp.ok) {
+    let msg = resp.status + ' ' + resp.statusText;
+    try { const e = await resp.json(); msg = e.message || e.error || msg; } catch {}
+    throw new Error(msg);
+  }
+  return resp.json();
+}
+
+function toast(msg, ok = true) {
+  const c = document.getElementById('toastContainer');
+  const t = document.createElement('div');
+  t.className = 'toast align-items-center show';
+  t.innerHTML = `<div class="d-flex"><div class="toast-body" style="color:${ok ? 'var(--accent-green, #4caf50)' : 'var(--accent-red, #f44336)'}">${msg}</div></div>`;
+  c.appendChild(t);
+  setTimeout(() => t.remove(), 4000);
+}
+
+async function doLogin() {
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  try {
+    const r = await api('POST', '/auth/login', { username, password });
+    if (r.role !== 'admin') {
+      await api('POST', '/auth/logout');
+      throw new Error('该账户不是管理员，无权访问后台');
+    }
+    boot();
+  } catch (e) {
+    const el = document.getElementById('loginError');
+    el.textContent = e.message;
+    el.style.display = 'block';
+  }
+}
+
+async function doLogout() {
+  await api('POST', '/auth/logout');
+  location.reload();
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function loadUsers() {
+  const users = await api('GET', '/admin/users');
+  document.getElementById('userTableBody').innerHTML = users.map(u => `
+    <tr>
+      <td>${u.id}</td>
+      <td>${esc(u.username)}</td>
+      <td>${u.role === 'admin' ? '<span class="badge text-bg-warning">管理员</span>' : '<span class="badge text-bg-secondary">普通用户</span>'}</td>
+      <td class="small text-secondary">${u.created_at ? esc(u.created_at.replace('T', ' ').slice(0, 19)) : ''}</td>
+      <td class="text-end text-nowrap">
+        ${u.role === 'admin' ? '<span class="small text-secondary">内置账户</span>' : `
+        <button class="btn btn-sm btn-outline-secondary" onclick="editUser(${u.id}, '${esc(u.username)}')"><i class="bi bi-pencil"></i></button>
+        <button class="btn btn-sm btn-outline-danger" onclick="deleteUser(${u.id}, '${esc(u.username)}')"><i class="bi bi-trash"></i></button>`}
+      </td>
+    </tr>`).join('');
+}
+
+async function createUser() {
+  const username = document.getElementById('newUsername').value.trim();
+  const password = document.getElementById('newPassword').value;
+  if (!username || !password) { toast('用户名和密码不能为空', false); return; }
+  try {
+    await api('POST', '/admin/users', { username, password });
+    document.getElementById('newUsername').value = '';
+    document.getElementById('newPassword').value = '';
+    toast(`已添加用户 ${username}`);
+    loadUsers();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function editUser(id, username) {
+  const newName = prompt('修改用户名（留空保持不变）', username);
+  const newPwd = prompt('重置密码（留空保持不变）');
+  const body = {};
+  if (newName && newName.trim() && newName.trim() !== username) body.username = newName.trim();
+  if (newPwd) body.password = newPwd;
+  if (!Object.keys(body).length) return;
+  try {
+    await api('PUT', '/admin/users/' + id, body);
+    toast('已更新用户');
+    loadUsers();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function deleteUser(id, username) {
+  if (!confirm(`确定删除用户 ${username}？该用户的登录权限将立即失效。`)) return;
+  try {
+    await api('DELETE', '/admin/users/' + id);
+    toast(`已删除用户 ${username}`);
+    loadUsers();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function boot() {
+  let status = { authenticated: false };
+  try { status = await api('GET', '/auth/status'); } catch {}
+  const isAdmin = status.authenticated && status.role === 'admin';
+  document.getElementById('loginPanel').style.display = isAdmin ? 'none' : 'block';
+  document.getElementById('adminPanel').style.display = isAdmin ? 'block' : 'none';
+  document.getElementById('logoutBtn').style.display = status.authenticated ? 'inline-block' : 'none';
+  if (isAdmin) loadUsers();
+}
+boot();
+</script>
+</body>
+</html>

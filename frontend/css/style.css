@@ -1,0 +1,595 @@
+/* === AJST Catalog — 双主题（极简科技风） === */
+/* 变量按 [data-bs-theme] 分套定义；自定义类全部引用变量，两主题下同构可用。 */
+
+[data-bs-theme="dark"] {
+  --bg-darker: #0d1117;
+  --bg-dark: #161b22;
+  --bg-card: #161b22;
+  --bg-hover: #1c2128;
+  --border-color: #21262d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --accent-blue: #58a6ff;
+  --accent-green: #3fb950;
+  --accent-red: #f85149;
+  --accent-orange: #d29922;
+  --accent-purple: #d2a8ff;
+  --accent-blue-soft: rgba(88, 166, 255, 0.12);
+  --accent-blue-border: rgba(88, 166, 255, 0.3);
+  --focus-ring: rgba(88, 166, 255, 0.25);
+  --nav-bg: rgba(13, 17, 23, 0.8);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --card-shadow-hover: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --header-bg: rgba(255, 255, 255, 0.02);
+  --row-new-bg: rgba(63, 185, 80, 0.08);
+  --brand-gradient: linear-gradient(90deg, #79b8ff, #b392f0);
+  --warning-color: #e3b341;
+  --warning-border: rgba(210, 153, 34, 0.5);
+  --warning-bg: rgba(210, 153, 34, 0.12);
+  --warning-hover: #ffd76a;
+}
+
+[data-bs-theme="light"] {
+  --bg-darker: #f6f8fa;
+  --bg-dark: #ffffff;
+  --bg-card: #ffffff;
+  --bg-hover: #f0f3f6;
+  --border-color: #d0d7de;
+  --text-primary: #1f2328;
+  --text-secondary: #57606a;
+  --accent-blue: #0969da;
+  --accent-green: #1a7f37;
+  --accent-red: #d1242f;
+  --accent-orange: #9a6700;
+  --accent-purple: #8250df;
+  --accent-blue-soft: rgba(9, 105, 218, 0.08);
+  --accent-blue-border: rgba(9, 105, 218, 0.3);
+  --focus-ring: rgba(9, 105, 218, 0.2);
+  --nav-bg: rgba(255, 255, 255, 0.8);
+  --card-shadow: 0 1px 3px rgba(31, 35, 40, 0.06);
+  --card-shadow-hover: 0 3px 10px rgba(31, 35, 40, 0.1);
+  --header-bg: rgba(31, 35, 40, 0.02);
+  --row-new-bg: rgba(26, 127, 55, 0.08);
+  --brand-gradient: linear-gradient(90deg, #0969da, #8250df);
+  --warning-color: #9a6700;
+  --warning-border: rgba(154, 103, 0, 0.5);
+  --warning-bg: rgba(154, 103, 0, 0.1);
+  --warning-hover: #7d5700;
+}
+
+body {
+  background: var(--bg-darker);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+  font-size: 14px;
+}
+
+/* 等宽数字：表格与统计值 */
+.table, .stat-card .stat-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Navbar：半透明 + backdrop-blur */
+.navbar.app-navbar {
+  background: var(--nav-bg) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border-color);
+}
+.navbar.app-navbar .nav-link {
+  color: var(--text-secondary);
+}
+.navbar.app-navbar .nav-link:hover {
+  color: var(--text-primary);
+}
+.navbar.app-navbar .nav-link.active {
+  color: var(--accent-blue);
+}
+
+/* 品牌标题渐变 */
+.navbar-brand {
+  background: var(--brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Cards：1px 细边框 + 8px 圆角 + 轻阴影 */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: var(--card-shadow);
+  transition: box-shadow 0.2s ease;
+}
+.card:hover {
+  box-shadow: var(--card-shadow-hover);
+}
+.card-header {
+  background: var(--header-bg);
+  border-bottom-color: var(--border-color);
+  font-weight: 600;
+}
+
+/* Tables：紧凑 */
+.table {
+  color: var(--text-primary);
+  margin-bottom: 0;
+}
+.table > :not(caption) > * > * {
+  background: transparent;
+  border-bottom-color: var(--border-color);
+  color: var(--text-primary);
+  padding: 0.4rem 0.5rem;
+}
+.table-hover > tbody > tr:hover > * {
+  background: var(--bg-hover);
+}
+.table-hover > tbody > tr {
+  transition: background-color 0.12s ease;
+}
+.table thead th {
+  border-bottom-color: var(--border-color);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* Sortable headers */
+.sort-header {
+  cursor: pointer;
+  user-select: none;
+}
+.sort-header:hover {
+  color: var(--accent-blue);
+}
+.sort-header::after {
+  content: ' ↕';
+  opacity: 0.3;
+  font-size: 0.8em;
+}
+.sort-header.sort-asc::after { content: ' ↑'; opacity: 1; color: var(--accent-blue); }
+.sort-header.sort-desc::after { content: ' ↓'; opacity: 1; color: var(--accent-blue); }
+
+/* Forms */
+.form-control, .form-select, .input-group-text {
+  background: var(--bg-dark);
+  border-color: var(--border-color);
+  color: var(--text-primary);
+}
+.form-control:focus, .form-select:focus {
+  background: var(--bg-dark);
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 0.2rem var(--focus-ring);
+  color: var(--text-primary);
+}
+.form-control::placeholder { color: var(--text-secondary); }
+
+/* Buttons：细边框 + 过渡 */
+.btn {
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.btn-outline-secondary {
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+.btn-outline-secondary:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+/* 警告色描边按钮（银消改正）在两主题下的可读性 */
+.btn-outline-warning {
+  color: var(--warning-color);
+  border-color: var(--warning-border);
+}
+.btn-outline-warning:hover {
+  background: var(--warning-bg);
+  color: var(--warning-hover);
+  border-color: var(--accent-orange);
+}
+
+/* Badge / Tags */
+.badge-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.8em;
+  font-weight: 500;
+  background: var(--accent-blue-soft);
+  color: var(--accent-blue);
+  border: 1px solid var(--accent-blue-border);
+  margin-right: 4px;
+}
+/* 中性灰徽章（子标签、拟合统计值等，替代写死的 #21262d/#8b949e 内联样式） */
+.badge-neutral {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.8em;
+  font-weight: 500;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+/* Stats cards */
+.stat-card {
+  text-align: center;
+  padding: 1.2rem;
+  transition: transform 0.15s ease;
+}
+.stat-card .stat-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--accent-blue);
+}
+.stat-card .stat-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-top: 0.3rem;
+}
+.card:hover .stat-card {
+  transform: translateY(-2px);
+}
+
+/* Page header */
+.page-header {
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+/* Aladin container（天文图像，固定黑底） */
+#aladinContainer {
+  width: 100%;
+  height: 400px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+}
+
+/* LC chart container */
+.chart-container {
+  position: relative;
+  width: 100%;
+  height: 480px;
+}
+
+/* Data table scroll */
+.table-scroll {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* 详情页光变数据表：单元格允许换行，引用/备注列完整可见，横向滚动兜底 */
+#tab-data .table-scroll {
+  overflow-x: auto;
+}
+#tab-data .table td {
+  white-space: normal;
+  word-break: break-word;
+}
+#tab-data .table td.lc-ref,
+#tab-data .table td.lc-comment {
+  max-width: 240px;
+  font-size: 0.75rem;
+}
+/* 详情页数据表：勾选标记的行整行高亮（定位/对比用），盖过斑马纹与 hover */
+#tab-data tr.lc-row-mark > td {
+  background: color-mix(in srgb, var(--accent-orange) 22%, transparent);
+}
+#tab-data .table-hover > tbody > tr.lc-row-mark:hover > * {
+  background: color-mix(in srgb, var(--accent-orange) 34%, transparent);
+}
+.table-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.table-scroll::-webkit-scrollbar-track {
+  background: var(--bg-dark);
+}
+.table-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+
+/* 滚动数据表：表头吸顶 */
+.table-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-card);
+  box-shadow: 0 1px 0 var(--border-color);
+}
+
+/* 新增行高亮（详情页数据表内联新增） */
+.row-new {
+  background: var(--row-new-bg) !important;
+}
+
+/* Toast */
+.toast {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  #aladinContainer { height: 280px; }
+  .chart-container { height: 300px; }
+  .stat-card .stat-value { font-size: 1.5rem; }
+}
+
+/* Loading spinner */
+.spinner-border { color: var(--accent-blue) !important; }
+
+/* Tab navigation */
+.nav-tabs {
+  border-bottom-color: var(--border-color);
+}
+.nav-tabs .nav-link {
+  color: var(--text-secondary);
+  border: none;
+  padding: 0.5rem 1rem;
+}
+.nav-tabs .nav-link:hover {
+  color: var(--text-primary);
+  border: none;
+}
+.nav-tabs .nav-link.active {
+  color: var(--accent-blue);
+  background: transparent;
+  border-bottom: 2px solid var(--accent-blue);
+}
+
+/* Clickable row */
+.row-link {
+  cursor: pointer;
+}
+.row-link:hover {
+  background: var(--bg-hover) !important;
+}
+
+/* 计算列（银消星等）淡色区分 */
+.lc-computed {
+  color: var(--accent-purple) !important;
+}
+
+/* ─── Swiss International Typographic Style — Home ─── */
+/* 数学网格 + 字体层级为王 + 细线分隔；只用主题变量，两主题同构。 */
+
+.swiss-home {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: clamp(1.5rem, 4vw, 4rem) 0 3rem;
+}
+
+/* 抵消 .row 负边距，使网格内容与非网格区块左缘严格齐头（flush left） */
+.swiss-home > .row {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+/* 功能性小标签：全大写 + 宽字距 + 次级色 */
+.swiss-kicker {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 1.25rem;
+}
+.swiss-kicker-block {
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 0;
+}
+
+/* 超大展示标题：clamp 响应式，粗字重，flush left */
+.swiss-title {
+  font-size: clamp(3rem, 7.5vw, 6rem);
+  font-weight: 800;
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0 0 1.5rem;
+}
+.swiss-lede {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.8;
+  max-width: 32em;
+  margin-bottom: 0;
+}
+.swiss-hero {
+  padding-bottom: clamp(1.5rem, 3vw, 3rem);
+}
+
+/* 细线（hairline rule）分隔区块 */
+.swiss-rule {
+  border: 0;
+  border-top: 1px solid var(--border-color);
+  opacity: 1;
+  margin: clamp(1.5rem, 3vw, 3rem) 0;
+}
+
+/* 大统计数字：等宽数字，细线行式堆叠 */
+.swiss-stat {
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.swiss-stat-value {
+  font-size: clamp(2.5rem, 3.5vw, 3.5rem);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.swiss-stat-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-top: 0.3rem;
+}
+.swiss-stat-en {
+  margin-left: 0.6em;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  opacity: 0.75;
+}
+
+/* 静态事实行 */
+.swiss-facts {
+  padding: 0;
+}
+.swiss-fact {
+  padding: 0.25rem 0;
+}
+.swiss-fact-value {
+  font-size: clamp(1.5rem, 2.2vw, 2.1rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 编号入口列表：表格行式，细线分隔，悬停整行微移 + accent 变色 */
+.swiss-entries {
+  border-bottom: 1px solid var(--border-color);
+}
+.swiss-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 1.5rem;
+  padding: 1.15rem 0.25rem;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-primary);
+  text-decoration: none;
+  transition: transform 0.18s ease;
+}
+.swiss-entry:hover {
+  transform: translateX(8px);
+  color: var(--text-primary);
+}
+.swiss-entry-no {
+  flex: 0 0 2.2rem;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  letter-spacing: 0.08em;
+}
+.swiss-entry-title {
+  flex: 0 0 auto;
+  min-width: 7.5em;
+  font-size: 1.3rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  transition: color 0.18s ease;
+}
+.swiss-entry:hover .swiss-entry-title {
+  color: var(--accent-blue);
+}
+.swiss-entry-desc {
+  flex: 1 1 auto;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.swiss-entry-arrow {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  transition: color 0.18s ease;
+}
+.swiss-entry:hover .swiss-entry-arrow {
+  color: var(--accent-blue);
+}
+
+/* 窄视口：入口描述换行到标题下方 */
+@media (max-width: 991.98px) {
+  /* 网格上下堆叠时，统计列与 hero 标题拉开间距 */
+  .swiss-hero .col-lg-4 {
+    margin-top: 2rem;
+  }
+}
+@media (max-width: 767.98px) {
+  .swiss-entry {
+    flex-wrap: wrap;
+    gap: 0.35rem 1rem;
+  }
+  .swiss-entry-desc {
+    flex-basis: 100%;
+    padding-left: calc(2.2rem + 1rem);
+  }
+  .swiss-entry-arrow {
+    margin-left: auto;
+  }
+}
+
+/* 数据表可排序表头 */
+.lc-sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.lc-sortable:hover { color: var(--accent-blue); }
+.lc-sort-ind { font-size: 0.7em; color: var(--accent-blue); }
+
+/* ── 主页标签分布（瑞士风，点击展开子标签列表） ── */
+.swiss-kicker-hint { font-size: 0.65rem; letter-spacing: 0.05em; text-transform: none; color: var(--text-secondary); }
+.swiss-tags { border-top: 1px solid var(--border-color); }
+.swiss-tag-item { border-bottom: 1px solid var(--border-color); }
+.swiss-tag-row {
+  display: grid;
+  grid-template-columns: 8rem 1fr auto 1.5rem;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.55rem 0;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.swiss-tag-row:hover { background: var(--bg-hover, rgba(128,128,128,0.06)); }
+.swiss-tag-name { font-weight: 700; font-size: 1.05rem; }
+.swiss-tag-count { font-size: 1.3rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.swiss-tag-toggle { color: var(--text-secondary); text-align: right; transition: transform 0.15s ease; }
+.swiss-tag-item.open .swiss-tag-toggle { transform: rotate(45deg); color: var(--accent-blue); }
+.swiss-tag-subs {
+  display: none;
+  padding: 0 0 0.5rem 8rem;
+}
+.swiss-tag-item.open .swiss-tag-subs { display: block; }
+.swiss-tag-subrow {
+  display: grid;
+  grid-template-columns: 10rem auto;
+  gap: 1rem;
+  padding: 0.22rem 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  border-top: 1px dashed var(--border-color);
+}
+.swiss-tag-subrow > span:last-child { text-align: right; color: var(--text-primary); font-weight: 600; }
+
+/* ─── GCN 阅读工具 ─── */
+.gcn-view {
+  font-family: "DejaVu Sans Mono", Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+}
+.gcn-num { color: var(--accent-red); font-weight: 700; }
+.gcn-key { color: var(--accent-blue); font-weight: 700; }
+.gcn-bool { color: var(--accent-orange); }
+.gcn-chip { font-size: 0.75rem; }
+.gcn-form-sec {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent-blue);
+  border-bottom: 1px solid var(--border-color);
+  margin: 0.4rem 0 0.5rem;
+  padding-bottom: 0.15rem;
+}
+
+/* ─── 抠图取数 ─── */
+.dgz-ds-row:hover { background: var(--bg-hover); }
+.dgz-ds-active { background: var(--accent-blue-soft); }

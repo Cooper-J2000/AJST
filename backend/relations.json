@@ -1,0 +1,98 @@
+{
+  "relations": [
+    {
+      "name": "amati",
+      "title": "Amati 关系 (E_p,rest–E_iso)",
+      "x": {"key": "eiso", "label": "E_iso", "unit": "erg"},
+      "y": {"key": "ep_rest", "label": "E_p,rest", "unit": "keV"},
+      "x_log": true,
+      "y_log": true,
+      "lit": {"slope": 0.52, "intercept": null, "label": "Amati+2002", "bibcode": "2002A&A...390...81A"},
+      "group_by_type": true,
+      "refs": [
+        {"label": "Amati et al. 2002, A&A 390, 81", "url": null},
+        {"label": "Amati 2012, IJMPD 21, 1230006", "url": null},
+        {"label": "Minaev & Pozanenko 2020, MNRAS 492, 1919", "url": "https://arxiv.org/abs/1912.09810"},
+        {"label": "Wang et al. 2022, MNRAS 516, 2575", "url": "https://arxiv.org/abs/2208.09272"},
+        {"label": "Liang et al. 2023, ApJS 266, 31", "url": "https://arxiv.org/abs/2211.12187"}
+      ]
+    },
+    {
+      "name": "yonetoku",
+      "title": "Yonetoku 关系 (E_p,rest–L_p,iso)",
+      "x": {"key": "lp_iso", "label": "L_p,iso", "unit": "erg/s"},
+      "y": {"key": "ep_rest", "label": "E_p,rest", "unit": "keV"},
+      "x_log": true,
+      "y_log": true,
+      "lit": {"slope": 0.50, "intercept": null, "label": "Yonetoku+2004", "bibcode": "2004ApJ...609..935Y"},
+      "group_by_type": true,
+      "refs": [
+        {"label": "Yonetoku et al. 2004, ApJ 609, 935", "url": null},
+        {"label": "Tsvetkova et al. 2017, ApJ 850, 161", "url": "https://ui.adsabs.harvard.edu/abs/2017ApJ...850..161T/abstract"},
+        {"label": "Tsvetkova et al. 2021, ApJ 908, 83", "url": "https://ui.adsabs.harvard.edu/abs/2021ApJ...908...83T/abstract"},
+        {"label": "Liang et al. 2023, ApJS 266, 31", "url": "https://arxiv.org/abs/2211.12187"},
+        {"label": "Airasca 2025", "url": "https://arxiv.org/abs/2510.16475"}
+      ]
+    },
+    {
+      "name": "ghirlanda",
+      "title": "Ghirlanda 关系 (E_p,rest–E_γ)",
+      "x": {"key": "e_gamma", "label": "E_γ", "unit": "erg"},
+      "y": {"key": "ep_rest", "label": "E_p,rest", "unit": "keV"},
+      "x_log": true,
+      "y_log": true,
+      "lit": {"slope": 0.70, "intercept": null, "label": "Ghirlanda+2004", "bibcode": "2004ApJ...616..331G"},
+      "group_by_type": false,
+      "refs": [
+        {"label": "Ghirlanda et al. 2004, ApJ 616, 331", "url": null},
+        {"label": "Nava et al. 2006, A&A 450, 471", "url": null},
+        {"label": "Ghirlanda et al. 2007, Phil. Trans. R. Soc. A 365, 1385", "url": null}
+      ]
+    },
+    {
+      "name": "lag_lum",
+      "title": "谱延迟–光度关系 (τ_lag–L_p,iso)",
+      "x": {"key": "tlag_rest", "label": "τ_lag,rest", "unit": "s"},
+      "y": {"key": "lp_iso", "label": "L_p,iso", "unit": "erg/s"},
+      "x_log": true,
+      "y_log": true,
+      "lit": {"slope": -1.0, "intercept": null, "label": "Norris+2000", "bibcode": "2000ApJ...534..248N"},
+      "group_by_type": false,
+      "refs": [
+        {"label": "Norris et al. 2000, ApJ 534, 248", "url": null},
+        {"label": "Tsvetkova et al. 2017, ApJ 850, 161", "url": "https://ui.adsabs.harvard.edu/abs/2017ApJ...850..161T/abstract"},
+        {"label": "Parsotan & Ito 2022, Universe 8, 329", "url": "https://arxiv.org/abs/2204.09729"}
+      ]
+    },
+    {
+      "name": "var_lum",
+      "title": "变异性–光度关系 (V–L_p,iso)",
+      "x": {"key": "variability", "label": "V", "unit": ""},
+      "y": {"key": "lp_iso", "label": "L_p,iso", "unit": "erg/s"},
+      "x_log": true,
+      "y_log": true,
+      "lit": {"slope": null, "intercept": null, "label": null, "bibcode": null},
+      "group_by_type": false,
+      "refs": [
+        {"label": "Fenimore & Ramirez-Ruiz 2000 (arXiv:astro-ph/0004176)", "url": "https://arxiv.org/abs/astro-ph/0004176"},
+        {"label": "Reichart et al. 2001, ApJ 552, 57", "url": "https://arxiv.org/abs/astro-ph/0004302"},
+        {"label": "Guidorzi et al. 2024, A&A 690, A261", "url": "https://ui.adsabs.harvard.edu/abs/2024A%26A...690A.261G/abstract"}
+      ]
+    },
+    {
+      "name": "ep_alpha",
+      "title": "E_p,obs–α 分布",
+      "x": {"key": "alpha", "label": "α", "unit": ""},
+      "y": {"key": "epeak_obs", "label": "E_p,obs", "unit": "keV"},
+      "x_log": false,
+      "y_log": true,
+      "lit": {"slope": null, "intercept": null, "label": null, "bibcode": null},
+      "group_by_type": false,
+      "refs": [
+        {"label": "Parsotan & Ito 2022, Universe 8, 329", "url": "https://arxiv.org/abs/2204.09729"},
+        {"label": "Liang et al. 2023, ApJS 266, 31", "url": "https://arxiv.org/abs/2211.12187"},
+        {"label": "逆康普顿模型 Epeak-α 2026", "url": "https://arxiv.org/abs/2606.04894"}
+      ]
+    }
+  ]
+}
