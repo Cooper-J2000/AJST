@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 from app import get_engine, get_session
-from models import Base, Transient, Lightcurve, FilterDef, Tag, Spectrum, utcnow
+from models import Base, Transient, Lightcurve, FilterDef, Tag, Spectrum, Article, utcnow
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.environ.get('AJST_DATA_DIR', os.path.join(PROJECT_ROOT, 'catadata'))
@@ -206,6 +206,22 @@ def import_one_transient(sess, tid):
         )
         sess.add(t)
     sess.flush()
+
+    # 研究文章：info JSON 含 articles 字段时对该源做全量替换（与光变一致；
+    # 字段缺失说明是旧格式文件，不动库中现有条目）
+    if 'articles' in data:
+        sess.query(Article).filter(Article.transient_id == tid).delete()
+        for item in data.get('articles') or []:
+            name = (item.get('name') or '').strip()
+            url = (item.get('url') or '').strip()
+            if not name or not url:
+                continue
+            sess.add(Article(
+                transient_id=tid, name=name, url=url,
+                title=item.get('title'), bibtex=item.get('bibtex'),
+                source=item.get('source'),
+            ))
+        sess.flush()
     return True
 
 
@@ -397,6 +413,17 @@ def from_dump(sess):
             'pos_error_unit': t.pos_error_unit or 'arcsec',
             'extra_data': t.extra_data or {},
         }
+        # 研究文章一并落盘（articles 字段始终写入，空列表表示该源无文章，
+        # 导入端按此字段做全量替换，保证全量重建不丢文章数据）
+        arts = sess.query(Article).filter(
+            Article.transient_id == t.id).order_by(Article.id).all()
+        info['articles'] = [
+            {k: v for k, v in {
+                'name': a.name, 'title': a.title, 'url': a.url,
+                'bibtex': a.bibtex, 'source': a.source,
+            }.items() if v is not None}
+            for a in arts
+        ]
         # 去掉 None 值和空扩展字段
         info = {k: v for k, v in info.items() if v is not None and v != {}}
         with open(os.path.join(INFO_DIR, f'{t.id}.json'), 'w') as f:
