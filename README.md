@@ -4,12 +4,13 @@ A lightweight, self-hostable web database for GRB afterglows and other transient
 
 **Status: active development — not a finished product.** AJST is a personal
 project, built and maintained by one person on a personal computer through
-vibe coding driven by the Kimi-K3 model. Development time and model quota are
+vibe coding powered by the [Kimi-K3](https://www.kimi.com/news/kimi-k3) model. Development time and model quota are
 limited, so expect rough edges and gradual progress.
 
 AJST was inspired by a number of earlier statistical/catalog works in the
 transient community:
-<!-- TODO(author): list the works that inspired this project -->
+- [Dainotti, M. G. et al. An optical gamma-ray burst catalogue with measured redshift – I. Data release of 535 gamma-ray bursts and colour evolution. Monthly Notices of the Royal Astronomical Society 533, 4023–4043 (2024).](https://academic.oup.com/mnras/article/533/4/4023/7697178)
+- 
 
 Its core goals:
 
@@ -33,7 +34,8 @@ populate it with your own data instead.
 
 The current dataset was batch-collected from publicly available papers and
 GCN circulars, and also inherits data from a research project:
-<!-- TODO(author): name the research project the data inherits from -->
+- [Dainotti, M. G. et al. An optical gamma-ray burst catalogue with measured redshift – I. Data release of 535 gamma-ray bursts and colour evolution. Monthly Notices of the Royal Astronomical Society 533, 4023–4043 (2024).](https://academic.oup.com/mnras/article/533/4/4023/7697178)
+- 
 
 > **The data has NOT yet been manually reviewed entry by entry.** The author
 > plans to spend roughly one year auditing the quality of every entry. Until
