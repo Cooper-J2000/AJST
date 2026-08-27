@@ -35,6 +35,10 @@ def init_db():
     with engine.begin() as conn:
         conn.execute(text(
             "ALTER TABLE lightcurves ADD COLUMN IF NOT EXISTS source VARCHAR(128)"))
+        conn.execute(text(
+            "ALTER TABLE articles ADD COLUMN IF NOT EXISTS title TEXT"))
+        conn.execute(text(
+            "ALTER TABLE articles ADD COLUMN IF NOT EXISTS bibtex TEXT"))
     # 种子管理员：无任何 admin 账户时创建 admin，密码取 AUTH_PASSWORD
     # （环境变量 AJST_CATALOG_PASSWORD；未设置时为每次启动随机生成，
     #  请务必通过环境变量显式设置一个强密码，见 docs/TECHNICAL.md §7.1）

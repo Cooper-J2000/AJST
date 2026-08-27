@@ -247,22 +247,29 @@ function canEditLc(pt) {
   return isAuthed() && pt.source && u.username === pt.source;
 }
 
-// ─── 基本信息：相关研究文章条目（简称 + 链接，可多条） ───
+// ─── 基本信息：相关研究文章条目（简称 + 标题 + 链接 + BibTeX，可多条） ───
+// 条目以整数 id 定位（同一作者同年可有多篇，简称不唯一）
 // 权限：登录用户可添加；修改/删除仅管理员（与后端 /api/articles 一致）
 function articlesHTML() {
   const items = articlesData.map(a => `
-    <div class="d-flex align-items-center gap-2 mb-1" id="articleItem_${a.id}">
-      <a href="${escAttr(a.url)}" target="_blank" rel="noopener noreferrer"><i class="bi bi-journal-text"></i> ${escAttr(a.name)}</a>
-      ${a.source ? `<span class="text-secondary" style="font-size:0.72rem">${escAttr(a.source)}</span>` : ''}
-      ${isAdmin() ? `
-        <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="articleEditStart(${a.id})" title="编辑"><i class="bi bi-pencil"></i></button>
-        <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="articleDelete(${a.id})" title="删除"><i class="bi bi-trash"></i></button>` : ''}
+    <div class="mb-1" id="articleItem_${a.id}">
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <a href="${escAttr(a.url)}" target="_blank" rel="noopener noreferrer"><i class="bi bi-journal-text"></i> ${escAttr(a.name)}</a>
+        ${a.bibtex ? `<button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="articleBibtexCopy(${a.id})" title="复制 BibTeX 引用信息到剪贴板"><i class="bi bi-clipboard"></i> BibTeX</button>` : ''}
+        ${a.source ? `<span class="text-secondary" style="font-size:0.72rem">${escAttr(a.source)}</span>` : ''}
+        ${isAdmin() ? `
+          <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="articleEditStart(${a.id})" title="编辑"><i class="bi bi-pencil"></i></button>
+          <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="articleDelete(${a.id})" title="删除"><i class="bi bi-trash"></i></button>` : ''}
+      </div>
+      ${a.title ? `<div class="text-secondary text-truncate" style="font-size:0.78rem;max-width:520px" title="${escAttr(a.title)}">${escAttr(a.title)}</div>` : ''}
     </div>`).join('');
   const addArea = isAuthed() ? `
     <button class="btn btn-sm btn-outline-primary py-0 px-2 mt-1" id="articleAddBtn" onclick="articleAddToggle()"><i class="bi bi-plus-lg"></i> 添加</button>
     <div id="articleAddForm" style="display:none" class="mt-1">
       <input type="text" class="form-control form-control-sm mb-1" id="articleAddName" placeholder="简称（建议：第一作者+年份，如 Dainotti+2024）">
+      <input type="text" class="form-control form-control-sm mb-1" id="articleAddTitle" placeholder="文章标题（可选）">
       <input type="text" class="form-control form-control-sm mb-1" id="articleAddUrl" placeholder="文章链接 https://...">
+      <textarea class="form-control form-control-sm mb-1" id="articleAddBibtex" rows="3" placeholder="BibTeX 引用信息（可选），如 @article{...}"></textarea>
       <div class="d-flex gap-1">
         <button class="btn btn-sm btn-primary py-0 px-2" onclick="articleAddSave()">保存</button>
         <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="articleAddToggle()">取消</button>
@@ -1229,10 +1236,12 @@ export async function render(tid) {
 
     window.articleAddSave = async () => {
       const name = document.getElementById('articleAddName').value.trim();
+      const title = document.getElementById('articleAddTitle').value.trim();
       const url = document.getElementById('articleAddUrl').value.trim();
+      const bibtex = document.getElementById('articleAddBibtex').value.trim();
       if (!name || !url) { showToast('请填写文章简称和链接', 'warning'); return; }
       try {
-        await createArticle({ transient_id: tid, name, url });
+        await createArticle({ transient_id: tid, name, url, title, bibtex });
         showToast('已添加', 'success');
         render(tid);
       } catch (err) {
@@ -1245,10 +1254,12 @@ export async function render(tid) {
       const el = document.getElementById(`articleItem_${id}`);
       if (!a || !el) return;
       el.innerHTML = `
-        <div class="d-flex gap-1 flex-grow-1">
+        <div class="d-flex gap-1 flex-grow-1 mb-1">
           <input type="text" class="form-control form-control-sm" id="articleEditName_${id}" value="${escAttr(a.name)}" placeholder="简称">
           <input type="text" class="form-control form-control-sm" id="articleEditUrl_${id}" value="${escAttr(a.url)}" placeholder="链接">
         </div>
+        <input type="text" class="form-control form-control-sm mb-1" id="articleEditTitle_${id}" value="${escAttr(a.title || '')}" placeholder="文章标题（可选）">
+        <textarea class="form-control form-control-sm mb-1" id="articleEditBibtex_${id}" rows="3" placeholder="BibTeX 引用信息（可选）">${escAttr(a.bibtex || '')}</textarea>
         <button class="btn btn-sm btn-primary py-0 px-1" onclick="articleEditSave(${id})" title="保存"><i class="bi bi-check-lg"></i></button>
         <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="render(currentTid)" title="取消"><i class="bi bi-x-lg"></i></button>`;
     };
@@ -1256,13 +1267,38 @@ export async function render(tid) {
     window.articleEditSave = async (id) => {
       const name = document.getElementById(`articleEditName_${id}`).value.trim();
       const url = document.getElementById(`articleEditUrl_${id}`).value.trim();
+      const title = document.getElementById(`articleEditTitle_${id}`).value.trim();
+      const bibtex = document.getElementById(`articleEditBibtex_${id}`).value.trim();
       if (!name || !url) { showToast('简称和链接不能为空', 'warning'); return; }
       try {
-        await updateArticle(id, { name, url });
+        await updateArticle(id, { name, url, title, bibtex });
         showToast('已更新', 'success');
         render(tid);
       } catch (err) {
         showToast(`更新失败: ${err.message}`, 'danger');
+      }
+    };
+
+    // 复制 BibTeX 到剪贴板（http 非安全上下文时回退到 execCommand）
+    window.articleBibtexCopy = async (id) => {
+      const a = articlesData.find(x => x.id === id);
+      if (!a || !a.bibtex) { showToast('该条目没有 BibTeX 信息', 'warning'); return; }
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(a.bibtex);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = a.bibtex;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        showToast('BibTeX 已复制到剪贴板', 'success');
+      } catch (err) {
+        showToast(`复制失败: ${err.message}`, 'danger');
       }
     };
 

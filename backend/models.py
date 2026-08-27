@@ -215,6 +215,8 @@ class Article(Base):
                            nullable=False, index=True)
     name          = Column(String(256), nullable=False)  # 简称，建议「第一作者+年份」
     url           = Column(Text, nullable=False)         # 文章网页链接
+    title         = Column(Text, nullable=True)          # 文章标题（可含引号/冒号/空格）
+    bibtex        = Column(Text, nullable=True)          # BibTeX 引用信息（前端不整段展示，仅复制）
     source        = Column(String(128), nullable=True)   # 录入账户（自动记录）
     created_at    = Column(DateTime, default=lambda: utcnow())
     updated_at    = Column(DateTime, default=lambda: utcnow(),
@@ -228,6 +230,8 @@ class Article(Base):
             'transient_id': self.transient_id,
             'name': self.name,
             'url': self.url,
+            'title': self.title,
+            'bibtex': self.bibtex,
             'source': self.source,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,

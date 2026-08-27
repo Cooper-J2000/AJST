@@ -1,5 +1,5 @@
 """
-相关研究文章（每个源可多条，简称 + 链接）
+相关研究文章（每个源可多条：简称 + 标题 + 链接 + BibTeX；以自增 id 定位，简称不唯一）
 GET    /api/articles?transient_id=X   — 列表（公开）
 POST   /api/articles                   — 添加（登录即可，source 自动记录为当前账户）
 PUT    /api/articles/<id>              — 修改（仅管理员）
@@ -34,9 +34,12 @@ def create_article():
     url = (body.get('url') or '').strip()
     if not tid or not name or not url:
         return {'error': 'transient_id / name / url 均为必填'}, 400
+    # 可选字段：标题、BibTeX（空串存 None）
+    title = (body.get('title') or '').strip() or None
+    bibtex = (body.get('bibtex') or '').strip() or None
     sess = get_session()
     try:
-        a = Article(transient_id=tid, name=name, url=url,
+        a = Article(transient_id=tid, name=name, url=url, title=title, bibtex=bibtex,
                     source=current_username())  # 网页录入：自动记录提交账户
         sess.add(a)
         sess.commit()
@@ -67,6 +70,11 @@ def update_article(aid):
             if not url:
                 return {'error': 'url 不能为空'}, 400
             a.url = url
+        # 可选字段可改可清空（空串 → None）
+        if 'title' in body:
+            a.title = (body['title'] or '').strip() or None
+        if 'bibtex' in body:
+            a.bibtex = (body['bibtex'] or '').strip() or None
         sess.commit()
         return jsonify(a.to_dict())
     except Exception as e:

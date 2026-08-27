@@ -143,16 +143,20 @@
 | `description` | TEXT |
 | `color` | VARCHAR(16) |
 
-### 2.5 `articles` — 相关研究文章（2026-08-26 新增）
+### 2.5 `articles` — 相关研究文章（2026-08-26 新增；2026-08-27 扩展 title/bibtex）
 
 每个源可有多条；详情页「基本信息」卡片展示并可维护（登录可添加，修改/删除仅管理员）。
+条目以自增 `id` 定位——同一作者同年可能有多篇文章，`name` 简称**不唯一**，不能用作定位键。
+BibTeX 可能很长，前端不整段展示，仅提供「复制到剪贴板」按钮。
 
 | 列 | 类型 | 说明 |
 |---|---|---|
 | `id` | BIGINT PK auto | |
 | `transient_id` | VARCHAR(32) FK→transients CASCADE | |
-| `name` | VARCHAR(256) | 文章简称，建议格式「第一作者+年份」（如 `Dainotti+2024`） |
+| `name` | VARCHAR(256) | 文章简称，建议格式「第一作者+年份」（如 `Dainotti+2024`），不唯一 |
 | `url` | TEXT | 文章网页链接 |
+| `title` | TEXT | 文章标题（可含引号/冒号/空格），可空 |
+| `bibtex` | TEXT | BibTeX 引用信息，可空 |
 | `source` | VARCHAR(128) | 录入账户（POST 时自动记录） |
 | `created_at` / `updated_at` | DATETIME | naive UTC |
 
@@ -328,8 +332,8 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | PUT | `/api/admin/users/<id>` | 修改普通用户 `{username?, password?}`（不可改 admin） | 管理员 |
 | DELETE | `/api/admin/users/<id>` | 删除普通用户（不可删 admin） | 管理员 |
 | GET | `/api/articles` | 研究文章列表（`?transient_id=` 过滤） | 否 |
-| POST | `/api/articles` | 添加文章条目 `{transient_id, name, url}`（自动记录 `source`=当前账户） | 登录 |
-| PUT | `/api/articles/<id>` | 修改文章条目 `{name?, url?}` | 管理员 |
+| POST | `/api/articles` | 添加文章条目 `{transient_id, name, url, title?, bibtex?}`（自动记录 `source`=当前账户） | 登录 |
+| PUT | `/api/articles/<id>` | 修改文章条目 `{name?, url?, title?, bibtex?}`（title/bibtex 传空串即清空） | 管理员 |
 | DELETE | `/api/articles/<id>` | 删除文章条目 | 管理员 |
 
 ### 列表查询参数
