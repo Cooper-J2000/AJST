@@ -12,17 +12,19 @@ import csv
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 from app import get_engine, get_session
-from models import Base, Transient, Lightcurve, FilterDef, Tag, utcnow
+from models import Base, Transient, Lightcurve, FilterDef, Tag, Spectrum, utcnow
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.environ.get('AJST_DATA_DIR', os.path.join(PROJECT_ROOT, 'catadata'))
 LC_DIR = os.path.join(DATA_DIR, 'lc')
 INFO_DIR = os.path.join(DATA_DIR, 'info')
 FILTERS_FILE = os.path.join(DATA_DIR, 'filters.json')
+SPECTRA_DIR = os.path.join(DATA_DIR, 'spectra')
+MJD_EPOCH = datetime(1858, 11, 17)
 
 # CSV 列名到模型字段的映射
 CSV_FIELD_MAP = {
@@ -261,6 +263,68 @@ def import_one_lightcurve(sess, tid):
     return count, errors
 
 
+def import_spectra(sess):
+    """全量重建后：扫描 catadata/spectra/ 重建 spectra 表索引。
+    光谱文件是权威存储（上传/删除时文件与库记录同步维护），
+    此处只做 文件→库 的索引重建；transient 不存在的目录跳过。"""
+    if not os.path.isdir(SPECTRA_DIR):
+        print('  [SKIP] spectra dir not found')
+        return
+    count, errors, skipped = 0, 0, 0
+    for tid in sorted(os.listdir(SPECTRA_DIR)):
+        tdir = os.path.join(SPECTRA_DIR, tid)
+        if not os.path.isdir(tdir):
+            continue
+        if not sess.query(Transient).filter(Transient.id == tid).first():
+            print(f'  [WARN] spectra/{tid}: transient not in DB, skipped')
+            skipped += 1
+            continue
+        for fname in sorted(os.listdir(tdir)):
+            if not fname.endswith('.json'):
+                continue
+            try:
+                with open(os.path.join(tdir, fname)) as f:
+                    payload = json.load(f)
+                obj_name, obj = next(iter(payload.items()))
+                sp = obj.get('spectra', obj) if isinstance(obj, dict) else {}
+                data = sp.get('data') or []
+                wavs = [float(p[0]) for p in data if p]
+                obs_date = None
+                mjd = sp.get('time')
+                if mjd not in (None, ''):
+                    try:
+                        obs_date = MJD_EPOCH + timedelta(days=float(mjd))
+                    except (TypeError, ValueError):
+                        obs_date = None
+                sess.add(Spectrum(
+                    transient_id=tid,
+                    filename=sp.get('filename') or fname[:-5],
+                    wavelength_min=min(wavs) if wavs else None,
+                    wavelength_max=max(wavs) if wavs else None,
+                    instrument=sp.get('instrument'),
+                    observation_date=obs_date,
+                    file_path=f'catadata/spectra/{tid}/{fname}',
+                    file_type='json',
+                    extra_data={
+                        'observer': sp.get('observer'), 'reducer': sp.get('reducer'),
+                        'u_fluxes': sp.get('u_fluxes'),
+                        'u_wavelengths': sp.get('u_wavelengths'),
+                        'mjd': sp.get('time'), 'sn_name': obj_name,
+                        'flux_type': sp.get('flux_type', 'absolute'),
+                        'has_err': any(len(p) > 2 for p in data),
+                        'source': 'file_scan', 'n_points': len(data),
+                    },
+                ))
+                count += 1
+            except Exception as e:
+                errors += 1
+                if errors <= 3:
+                    print(f'  [ERROR] spectra {tid}/{fname}: {e}')
+    sess.flush()
+    print(f'  [OK] Spectra index rebuilt: {count} files '
+          f'({errors} errors, {skipped} dirs skipped)')
+
+
 def ensure_default_tags(sess):
     """创建默认标签（幂等）"""
     default_tags = [
@@ -276,6 +340,29 @@ def ensure_default_tags(sess):
     sess.commit()
 
 
+def dump_filters(sess):
+    """将数据库中的滤波器定义写回 filters.json（--dump 的一部分）。
+    保留文件中原有条目的顺序，新条目按 id 排序追加。"""
+    rows = {r.id: r for r in sess.query(FilterDef).all()}
+    old = {}
+    if os.path.exists(FILTERS_FILE):
+        with open(FILTERS_FILE) as f:
+            old = json.load(f)
+    out = {}
+    for fid in old:
+        if fid in rows:
+            r = rows[fid]
+            out[fid] = {'wavelength': r.wavelength, 'type': r.filter_type,
+                        'Vega2AB': r.vega2ab, 'description': r.description}
+    for fid in sorted(set(rows) - set(old)):
+        r = rows[fid]
+        out[fid] = {'wavelength': r.wavelength, 'type': r.filter_type,
+                    'Vega2AB': r.vega2ab, 'description': r.description}
+    with open(FILTERS_FILE, 'w') as f:
+        json.dump(out, f, indent=2, ensure_ascii=False)
+    print(f'  [OK] Filters dumped: {len(out)} entries')
+
+
 def from_dump(sess):
     """将数据库当前内容导出回 catadata/ 文件"""
     import csv as csv_mod
@@ -283,6 +370,8 @@ def from_dump(sess):
 
     os.makedirs(INFO_DIR, exist_ok=True)
     os.makedirs(LC_DIR, exist_ok=True)
+
+    dump_filters(sess)
 
     transients = sess.query(Transient).order_by(Transient.id).all()
     n_info = 0
@@ -362,7 +451,7 @@ def main():
     parser.add_argument('--filters', action='store_true',
                         help='强制刷新滤波器定义')
     parser.add_argument('--dump', action='store_true',
-                        help='将数据库当前内容导出回 catadata/ 文件（info JSON + lc CSV）')
+                        help='将数据库当前内容导出回 catadata/ 文件（info JSON + lc CSV + filters.json）')
     args = parser.parse_args()
 
     engine = get_engine()
@@ -437,6 +526,11 @@ def main():
                 total_err += e
             sess.commit()
             print(f'  [OK] {total_lc} points ({total_err} errors)')
+
+            # spectra 表也被 TRUNCATE 清空，从文件重新建索引
+            print(f'\n--- Rebuilding spectra index ---')
+            import_spectra(sess)
+            sess.commit()
 
             print(f'\n{"=" * 50}')
             print(f'Full rebuild: {len(tids)} transients, {total_lc} LC points')
