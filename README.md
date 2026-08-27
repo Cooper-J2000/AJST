@@ -57,7 +57,7 @@ Web UI (all local, no build step):
   written as an alternative to the AGPL-licensed WebPlotDigitizer.
 - **Filters management** — photometric filter definitions (admin-editable)
 - **Afterglow fitting** — submit and monitor
-  [VegasAfterglow](https://github.com/YihanWang17/VegasAfterglow) MCMC fits
+  [VegasAfterglow](https://github.com/YihanWangAstro/VegasAfterglow) MCMC fits
   from the detail page (optional dependency)
 - **GCN tool** — browse GCN circulars with per-source info cards and
   photometry entry
