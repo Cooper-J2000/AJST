@@ -59,12 +59,18 @@ Web UI (all local, no build step):
 - **Afterglow fitting** — submit and monitor
   [VegasAfterglow](https://github.com/YihanWangAstro/VegasAfterglow) MCMC fits
   from the detail page (optional dependency)
+- **Host galaxies** — per-source host coordinates, redshift (spectroscopic or
+  photometric) and multi-band photometry (AB/Vega/ST mag systems), plus a
+  built-in [pcigale](https://cigale.lam.fr) SED-fitting tab: fixed-z or
+  photometric-z runs with selectable bands, results table and best-model SED
+  plot, and one-click write-back of the adopted parameters
 - **GCN tool** — browse GCN circulars with per-source info cards and
   photometry entry
 - **Light-curve upload** — batch CSV import with column mapping
 - **Statistical relations** — Amati / Yonetoku / Ghirlanda / lag–luminosity /
   variability–luminosity / Ep–α
-- **Statistics** — overview, redshift distribution, band coverage
+- **Statistics** — overview, redshift distribution, band coverage,
+  host-galaxy coverage and M*/SFR distributions
 - **Admin panel** — user management (`/admin`)
 
 APIs and integrations:
@@ -85,7 +91,10 @@ APIs and integrations:
   [dust_extinction](https://github.com/karllark/dust_extinction). Requires a
   one-time `dustmaps.csfd.fetch()` download.
 - **Filter definitions** — `filters.json`; the Spitzer/IRAC entries are taken
-  from the **SVO Filter Profile Service**.
+  from the **SVO Filter Profile Service**; filter transmission curves for the
+  host-galaxy SED fits are also retrieved from SVO FPS.
+- **Host-galaxy SED fitting** — **pcigale** (Boquien et al. 2019; v2025.0
+  tested), run as a subprocess with results rendered by `matplotlib`.
 - **All-sky map** — embedded **Aladin Lite 3.8.2** (CDS).
 - **Afterglow fitting** — **VegasAfterglow** (v2.0.6 tested), with `corner`
   and `matplotlib` for posterior plots.

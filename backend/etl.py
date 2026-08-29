@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 from app import get_engine, get_session
-from models import Base, Transient, Lightcurve, FilterDef, Tag, Spectrum, Article, utcnow
+from models import Base, Transient, Lightcurve, FilterDef, Tag, Spectrum, Article, HostGalaxy, utcnow
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.environ.get('AJST_DATA_DIR', os.path.join(PROJECT_ROOT, 'catadata'))
@@ -141,11 +141,13 @@ def import_filters(sess, force=False):
             existing.filter_type = info.get('type')
             existing.vega2ab = info.get('Vega2AB', 0.0)
             existing.description = info.get('description')
+            existing.extra_data = info.get('extra_data') or {}
         else:
             sess.add(FilterDef(
                 id=fid, wavelength=info.get('wavelength', 0),
                 filter_type=info.get('type'), vega2ab=info.get('Vega2AB', 0.0),
                 description=info.get('description'),
+                extra_data=info.get('extra_data') or {},
             ))
         count += 1
     sess.commit()
@@ -220,6 +222,23 @@ def import_one_transient(sess, tid):
                 transient_id=tid, name=name, url=url,
                 title=item.get('title'), bibtex=item.get('bibtex'),
                 source=item.get('source'),
+            ))
+        sess.flush()
+
+    # 宿主星系：info JSON 含 host_galaxy 字段时 upsert（null = 删除该源的宿主记录）
+    if 'host_galaxy' in data:
+        hg = data['host_galaxy']
+        sess.query(HostGalaxy).filter(HostGalaxy.transient_id == tid).delete()
+        if hg:
+            sess.add(HostGalaxy(
+                transient_id=tid,
+                ra=parse_float(hg.get('ra')), dec=parse_float(hg.get('dec')),
+                redshift=parse_float(hg.get('redshift')),
+                redshift_err=parse_float(hg.get('redshift_err')),
+                redshift_type=hg.get('redshift_type'),
+                photometry=hg.get('photometry') or [],
+                derived=hg.get('derived') or {},
+                comment=hg.get('comment'), source=hg.get('source'),
             ))
         sess.flush()
     return True
@@ -370,10 +389,14 @@ def dump_filters(sess):
             r = rows[fid]
             out[fid] = {'wavelength': r.wavelength, 'type': r.filter_type,
                         'Vega2AB': r.vega2ab, 'description': r.description}
+            if r.extra_data:
+                out[fid]['extra_data'] = r.extra_data
     for fid in sorted(set(rows) - set(old)):
         r = rows[fid]
         out[fid] = {'wavelength': r.wavelength, 'type': r.filter_type,
                     'Vega2AB': r.vega2ab, 'description': r.description}
+        if r.extra_data:
+            out[fid]['extra_data'] = r.extra_data
     with open(FILTERS_FILE, 'w') as f:
         json.dump(out, f, indent=2, ensure_ascii=False)
     print(f'  [OK] Filters dumped: {len(out)} entries')
@@ -424,6 +447,17 @@ def from_dump(sess):
             }.items() if v is not None}
             for a in arts
         ]
+        # 宿主星系落盘（无宿主时字段缺失，清理步骤会去掉 None）
+        hg = sess.query(HostGalaxy).filter(HostGalaxy.transient_id == t.id).first()
+        if hg:
+            info['host_galaxy'] = {k: v for k, v in {
+                'ra': hg.ra, 'dec': hg.dec,
+                'redshift': hg.redshift, 'redshift_err': hg.redshift_err,
+                'redshift_type': hg.redshift_type,
+                'photometry': hg.photometry or [],
+                'derived': hg.derived or {},
+                'comment': hg.comment, 'source': hg.source,
+            }.items() if v is not None and v != {} and v != []}
         # 去掉 None 值和空扩展字段
         info = {k: v for k, v in info.items() if v is not None and v != {}}
         with open(os.path.join(INFO_DIR, f'{t.id}.json'), 'w') as f:
@@ -504,6 +538,12 @@ def main():
 
     sess = get_session()
     try:
+        # ---- dump 是纯导出：必须先处理并返回，绝不能先跑 import（否则会用
+        # 文件里的旧内容覆盖库中较新的数据，例如滤光片 extra_data） ----
+        if args.dump:
+            from_dump(sess)
+            return
+
         # ---- 滤波器（增量模式只检查 DB 中是否有，没有才从文件导入） ----
         if args.filters or not args.sync:
             print('\n--- Filters ---')
@@ -520,15 +560,13 @@ def main():
             ensure_default_tags(sess)
 
         # ---- 全量模式：清空重建 ----
-        if args.dump:
-            from_dump(sess)
-            return
         if tids is None:
             print('\n--- Clearing old data ---')
             with engine.connect() as conn:
                 conn.execute(text('TRUNCATE TABLE lightcurves, transient_tags, '
                                   'transients, filters, tags, extinction_corrections, '
-                                  'spectra, images, fitting_results RESTART IDENTITY CASCADE'))
+                                  'spectra, images, fitting_results, host_galaxies '
+                                  'RESTART IDENTITY CASCADE'))
                 conn.commit()
             print('[OK] Cleared')
 

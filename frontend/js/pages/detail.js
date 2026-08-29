@@ -6,9 +6,11 @@ import {
   deleteLightcurve,
   runExtinction, clearExtinction, fitLightcurveModel, getSpectra, getSpectrum, uploadSpectrum,
   deleteSpectrumApi,
-  getArticles, createArticle, updateArticle, deleteArticle
+  getArticles, createArticle, updateArticle, deleteArticle,
+  getHost
 } from '../api.js';
 import { initFittingTab, destroyFittingTab } from './fitting_tab.js';
+import { initHostfitTab, destroyHostfitTab } from './hostfit_tab.js';
 import { showLcUpload } from './lc_upload.js';
 import { dragRectPlugin, attachDragZoom } from '../dragzoom.js';
 import { SPEC_LINE_GROUPS, createSpecLinesPlugin, buildMarkingsPanelHTML } from '../spec_lines.js';
@@ -595,6 +597,31 @@ function buildBandPanel(sortedBands, spectralColors) {
   });
 }
 
+// ─── 概览「宿主星系」行：异步拉取摘要，点击跳转到宿主星系标签页 ───
+async function fillHostSummary(tid) {
+  const cell = document.getElementById('hostSummaryCell');
+  if (!cell) return;
+  let host = null;
+  try { host = await getHost(tid); } catch { host = null; }   // 404/失败按暂无处理
+  if (currentTid !== tid || !cell.isConnected) return;        // 已切换源或页面重建
+  if (!host) {
+    cell.innerHTML = '<span class="text-secondary">暂无</span>';
+    return;
+  }
+  const d = host.derived || {};
+  const parts = [];
+  if (host.redshift != null) parts.push(`z=${host.redshift} (${escAttr(host.redshift_type || '?')})`);
+  if (d.m_star != null) parts.push(`M*=${sig3(d.m_star)} M☉`);
+  if (d.sfr != null) parts.push(`SFR=${sig3(d.sfr)} M☉/yr`);
+  if (host.ra != null && host.dec != null) parts.push(`(${Number(host.ra).toFixed(4)}, ${Number(host.dec).toFixed(4)})`);
+  cell.innerHTML = `<a href="#" id="hostSummaryLink" title="查看宿主星系标签页">${parts.join(' · ') || '有记录'}</a>`;
+  const link = document.getElementById('hostSummaryLink');
+  if (link) link.addEventListener('click', (e) => {
+    e.preventDefault();
+    document.querySelector('#detailTabs .nav-link[data-tab="host"]')?.click();
+  });
+}
+
 // ─── 主渲染函数 ───
 export async function render(tid) {
   currentTid = tid;
@@ -605,6 +632,7 @@ export async function render(tid) {
   _spectraLoadedFor = null;
   specAxisRange = { xmin: null, xmax: null, ymin: null, ymax: null };
   destroyFittingTab(); // 停止拟合标签页轮询/图表（DOM 即将重建）
+  destroyHostfitTab(); // 停止宿主星系标签页轮询（DOM 即将重建）
   lcFits = [];
   lcAxisRange = { xmin: null, xmax: null, ymin: null, ymax: null };
   lcBandVisible = {};
@@ -685,6 +713,7 @@ export async function render(tid) {
         <li class="nav-item"><a class="nav-link" href="#" data-tab="lc">光变曲线</a></li>
         <li class="nav-item"><a class="nav-link" href="#" data-tab="data">数据表</a></li>
         <li class="nav-item"><a class="nav-link" href="#" data-tab="fitting">余辉拟合</a></li>
+        <li class="nav-item"><a class="nav-link" href="#" data-tab="host">宿主星系</a></li>
         <li class="nav-item"><a class="nav-link" href="#" data-tab="spectra">光谱数据</a></li>
         <li class="nav-item"><a class="nav-link" href="#" data-tab="sed">余辉SED分析 <small class="text-secondary">(开发中)</small></a></li>
       </ul>
@@ -710,6 +739,7 @@ export async function render(tid) {
                       <tr><td class="text-secondary">备注</td><td class="small">${transient.comment || '-'}</td></tr>
                       <tr><td class="text-secondary">研究文章</td><td class="small" id="articleCell">${articlesHTML()}</td></tr>
                       <tr><td class="text-secondary">数据点</td><td>${lcData.total}</td></tr>
+                      <tr><td class="text-secondary">宿主星系</td><td class="small" id="hostSummaryCell"><span class="text-secondary">加载中…</span></td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -906,6 +936,8 @@ export async function render(tid) {
         </div>
         <!-- ─── 余辉拟合（由 fitting_tab.js 填充） ─── -->
         <div id="tab-fitting" class="tab-pane" style="display:none"></div>
+        <!-- ─── 宿主星系（由 hostfit_tab.js 填充） ─── -->
+        <div id="tab-host" class="tab-pane" style="display:none"></div>
         <!-- ─── 光谱数据（单条查看 / 多条对比） ─── -->
         <div id="tab-spectra" class="tab-pane" style="display:none">
           <div class="row g-3">
@@ -1045,6 +1077,12 @@ export async function render(tid) {
         } else {
           destroyFittingTab();
         }
+        // 宿主星系：进入时初始化，切走时停止轮询
+        if (link.dataset.tab === 'host') {
+          initHostfitTab(pane, tid);
+        } else {
+          destroyHostfitTab();
+        }
         // 光谱数据：进入时加载光谱
         if (link.dataset.tab === 'spectra') {
           setTimeout(() => initSpectraTab(tid, transient.redshift), 100);
@@ -1067,6 +1105,9 @@ export async function render(tid) {
         if (btn) btn.style.display = '';
       }
     }
+
+    // 概览「宿主星系」摘要行（独立请求，不阻塞主渲染）
+    fillHostSummary(tid);
 
     // 全局函数
     window.APIImport = { exportLC: exportLightcurves };

@@ -18,6 +18,7 @@ const routes = {
   '/list':   () => import('./pages/list.js').then(m => m.render()),
   '/stats':  () => import('./pages/stats.js').then(m => m.render()),
   '/stats/relations': () => import('./pages/relations.js').then(m => m.render()),
+  '/stats/hosts': () => import('./pages/stats_hosts.js').then(m => m.render()),
   '/compare': () => import('./pages/compare.js').then(m => m.render()),
   '/new':     () => import('./pages/create.js').then(m => m.render({})),
   '/filters':  () => import('./pages/filters.js').then(m => m.render()),

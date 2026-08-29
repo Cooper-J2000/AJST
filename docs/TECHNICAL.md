@@ -161,7 +161,24 @@ BibTeX 可能很长，前端不整段展示，仅提供「复制到剪贴板」�
 | `source` | VARCHAR(128) | 录入账户（POST 时自动记录） |
 | `created_at` / `updated_at` | DATETIME | naive UTC |
 
-### 2.6 预留表
+### 2.6 `host_galaxies` — 宿主星系（2026-08-29 新增）
+
+每个源至多一行（transient_id UNIQUE）。详情页「宿主星系」tab 展示与维护；pcigale SED 拟合（见 §8.20）结果经用户确认后写入 `derived`。
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `id` | BIGINT PK auto | |
+| `transient_id` | VARCHAR(32) FK→transients CASCADE, UNIQUE | |
+| `ra` / `dec` | FLOAT | 宿主坐标（度） |
+| `redshift` / `redshift_err` | FLOAT | 宿主红移；光谱红移 err=0，测光红移有误差 |
+| `redshift_type` | VARCHAR(16) | `spec` / `phot` |
+| `photometry` | JSONB | `[{band, mag, mag_err, mag_sys(AB/Vega/ST), source}]` |
+| `derived` | JSONB | 采纳的拟合参数 `{m_star, sfr, age_main, Av_ISM, chi2, fit_at, job_id}` |
+| `comment` / `source` | TEXT / VARCHAR(128) | |
+
+落盘：随 `--dump` 写入 `info/<tid>.json` 的 `host_galaxy` 字段，导入时 upsert（见 §3.1）。
+
+### 2.7 预留表
 
 | 表名 | 用途 |
 |---|---|
@@ -342,6 +359,15 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | POST | `/api/articles` | 添加文章条目 `{transient_id, name, url, title?, bibtex?}`（自动记录 `source`=当前账户） | 登录 |
 | PUT | `/api/articles/<id>` | 修改文章条目 `{name?, url?, title?, bibtex?}`（title/bibtex 传空串即清空） | 管理员 |
 | DELETE | `/api/articles/<id>` | 删除文章条目 | 管理员 |
+| GET | `/api/hosts/<tid>` | 宿主星系信息（无记录 404） | 否 |
+| PUT | `/api/hosts/<tid>` | upsert 宿主信息 `{ra?, dec?, redshift?, redshift_err?, redshift_type?, photometry?, derived?, comment?}` | 登录 |
+| DELETE | `/api/hosts/<tid>` | 删除宿主信息 | 管理员 |
+| GET | `/api/hostfit/config` | pcigale 拟合默认网格与可用波段 | 否 |
+| POST | `/api/hostfit/jobs` | 提交宿主 SED 拟合 `{transient_id, mode, redshift?, grid, photometry}` | 登录 |
+| GET | `/api/hostfit/jobs` | 任务列表（`?transient_id=`） | 否 |
+| GET | `/api/hostfit/jobs/<id>` | 任务详情（含 best/bayes 参数） | 否 |
+| GET | `/api/hostfit/jobs/<id>/files/<kind>` | 产物：`results`/`sed_png`/`best_model`/`log` | 否 |
+| DELETE | `/api/hostfit/jobs/<id>` | 删除任务及产物 | 管理员 |
 
 ### 列表查询参数
 
@@ -1118,6 +1144,26 @@ TNS 对象网页执行同步：
 **学术绘图风格**：刻度/轴标题/图例统一衬线字体（`theme.js ACADEMIC_FONT`，
 Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详情页光变图、
 多源对比图与拟合标签页图。
+
+### 8.20 宿主星系与 pcigale SED 拟合（2026-08-29 新增）
+
+- 数据模型：`host_galaxies` 表（§2.6），每源一行；随 `--dump` 往返 `info/<tid>.json` 的 `host_galaxy` 字段。
+- 详情页「宿主星系」tab（`frontend/js/pages/hostfit_tab.js`）：宿主信息编辑（坐标/红移/红移类型）、
+  多波段测光表（mag + err + mag_sys AB/Vega/ST + 来源，逐行勾选参与拟合）、拟合配置（固定红移 /
+  测光红移网格）、任务队列（5s 轮询）、结果展示（best/bayes 参数表 + SED 图 + best_model.fits 下载）。
+- 拟合子系统 `backend/hostfit/`：作业记录复用 `fitting_results` 表（model_name=`pcigale_host`，
+  状态在 extra_data.status）；runner 生成 pcigale 输入（AB/Vega/ST → mJy 换算，缺 Vega2AB 或无
+  pcigale 滤光片的波段跳过并警告）→ 子进程 `pcigale run`（模板 sfhdelayed+bc03+dustatt_modified_CF00
+  +redshifting，pdf_analysis）→ 解析 results.txt → matplotlib 生成 sed.png。产物在
+  `fitting_store/<tid>/hostfit_<jobid>/`，不进数据仓库、全量重建清空（与余辉拟合一致）。
+- 「写入宿主信息」：用户确认后把 bayes 参数写入 `derived`；测光红移模式同时回写
+  redshift/redshift_err/redshift_type='phot'。
+- 滤光片：`FilterDef.extra_data` 存 `pcigale_name`（如 `sloan.sdss.g`）与 `transmission`
+  透过率曲线（SVO FPS 拉取，脚本 `scripts/fetch_svo_filters.py`；pcigale 2025.0 的
+  `pcigale-filters add` 在 numpy≥2 下需 np.trapz→trapezoid shim，脚本已内置）。
+- 权限：查看公开；宿主信息编辑/提交拟合/写回=登录；删除宿主/删除任务=管理员。
+- 列表页「宿主」徽章 + `has_host` 筛选；新建事件页可折叠宿主字段；首页与统计子页
+  `/stats/hosts`（覆盖率、M*/SFR 分布、宿主 z vs 暂现源 z 散点）。
 
 ---
 

@@ -150,6 +150,9 @@ def create_app():
     from routes.gcn import gcn_bp
     from routes.admin import admin_bp
     from routes.articles import articles_bp
+    # Phase 2: 宿主星系数据 + pcigale 宿主拟合
+    from routes.hosts import hosts_bp
+    from routes.hostfit import hostfit_bp
 
     app.register_blueprint(transients_bp, url_prefix='/api/transients')
     app.register_blueprint(lightcurves_bp, url_prefix='/api/lightcurves')
@@ -165,10 +168,16 @@ def create_app():
     app.register_blueprint(gcn_bp, url_prefix='/api/gcn')
     app.register_blueprint(admin_bp, url_prefix='/api/admin')
     app.register_blueprint(articles_bp, url_prefix='/api/articles')
+    # Phase 2: 宿主星系数据 + pcigale 宿主拟合
+    app.register_blueprint(hosts_bp, url_prefix='/api/hosts')
+    app.register_blueprint(hostfit_bp, url_prefix='/api/hostfit')
 
     # 上次运行残留的 pending/running 拟合任务标记为 interrupted
     from fitting.jobs import mark_interrupted
     mark_interrupted()
+    # Phase 2: hostfit（pcigale 宿主拟合）任务同样处理
+    from hostfit.jobs import mark_interrupted as hostfit_mark_interrupted
+    hostfit_mark_interrupted()
 
     # 根路径 → SPA
     @app.route('/')

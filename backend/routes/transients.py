@@ -9,7 +9,7 @@ DELETE /api/transients/<id>     — 删除
 from flask import Blueprint, request, jsonify
 from sqlalchemy import cast, String, or_
 from app import get_session, require_auth, require_admin
-from models import Transient, Tag, TransientTag, utcnow
+from models import Transient, Tag, TransientTag, HostGalaxy, utcnow
 from datetime import datetime
 import extinction
 
@@ -74,6 +74,14 @@ def list_transients():
             q = q.filter(Transient.redshift.isnot(None))
         elif has_z == 'false':
             q = q.filter(Transient.redshift.is_(None))
+        # --- 是否有宿主星系信息 ---
+        has_host = request.args.get('has_host')
+        if has_host == 'true':
+            q = q.filter(Transient.id.in_(
+                sess.query(HostGalaxy.transient_id)))
+        elif has_host == 'false':
+            q = q.filter(Transient.id.notin_(
+                sess.query(HostGalaxy.transient_id)))
         # --- 排序 ---
         sort = request.args.get('sort', 'id')
         if sort not in SORTABLE:

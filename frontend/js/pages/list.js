@@ -79,6 +79,10 @@ export async function render() {
               <input class="form-check-input" type="checkbox" id="fHasZ" onchange="applyFilter()">
               <label class="form-check-label small">仅显示有红移</label>
             </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="fHasHost" onchange="applyFilter()">
+              <label class="form-check-label small">仅显示有宿主信息</label>
+            </div>
           </div>
           <div class="col-md-2">
             <button class="btn btn-sm btn-outline-secondary w-100" onclick="clearFilter()">清除筛选</button>
@@ -103,11 +107,12 @@ export async function render() {
                 <th>触发仪器</th>
                 <th>数据点</th>
                 <th>光谱</th>
+                <th>宿主</th>
                 <th id="listDelHeader" style="display:none">操作</th>
               </tr>
             </thead>
             <tbody id="tableBody">
-              <tr><td colspan="10" class="text-center text-secondary py-4">加载中...</td></tr>
+              <tr><td colspan="11" class="text-center text-secondary py-4">加载中...</td></tr>
             </tbody>
           </table>
         </div>
@@ -129,6 +134,7 @@ export async function render() {
   window.clearFilter = () => {
     document.querySelectorAll('#filterPanel input').forEach(i => i.value = '');
     document.getElementById('fHasZ').checked = false;
+    document.getElementById('fHasHost').checked = false;
     document.getElementById('fTag').value = '';
     document.getElementById('fSort').value = 'id|asc';
     currentState.page = 1;
@@ -228,6 +234,7 @@ async function loadData() {
   const tagVal = document.getElementById('fTag')?.value;
   if (tagVal) params.tag = tagVal;
   if (document.getElementById('fHasZ')?.checked) params.has_z = 'true';
+  if (document.getElementById('fHasHost')?.checked) params.has_host = 'true';
 
   try {
     const data = await getTransients(params);
@@ -243,14 +250,14 @@ async function loadData() {
     }
   } catch (err) {
     document.getElementById('tableBody').innerHTML =
-      `<tr><td colspan="10" class="text-center text-danger py-4">加载失败: ${err.message}</td></tr>`;
+      `<tr><td colspan="11" class="text-center text-danger py-4">加载失败: ${err.message}</td></tr>`;
   }
 }
 
 function renderTable(data) {
   const tbody = document.getElementById('tableBody');
   if (!data.items.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="text-center text-secondary py-4">没有匹配的事件</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="text-center text-secondary py-4">没有匹配的事件</td></tr>';
     return;
   }
   tbody.innerHTML = data.items.map(t => `
@@ -265,6 +272,7 @@ function renderTable(data) {
       <td class="small">${t.trigger_instrument || '-'}</td>
       <td>${t.lc_count || 0}</td>
       <td>${t.spectra_count ? `<span class="badge-tag" style="background:rgba(188,140,255,0.15);color:#bc8cff">${t.spectra_count}</span>` : '-'}</td>
+      <td>${t.has_host ? `<span class="badge-tag" style="background:rgba(63,185,80,0.15);color:#3fb950">宿主</span>` : ''}</td>
       <td id="delBtn_${t.id}" style="display:none">
         <button class="btn btn-sm btn-outline-danger py-0 px-1" title="删除"
           onclick="event.stopPropagation(); confirmDelete('${t.id}')">

@@ -10,6 +10,7 @@ const ENTRIES = [
   { no: '04', href: '#/compare',         title: '多源对比',   desc: '多事件光变叠绘、静止系时间与波段筛选' },
   { no: '05', href: '#/filters',         title: '光学滤光片', desc: '滤光片波长参数与 Vega → AB 星等换算' },
   { no: '06', href: '#/new',             title: '新建事件',   desc: '录入新的暂现源事件' },
+  { no: '07', href: '#/stats/hosts',     title: '宿主星系统计', desc: '宿主覆盖率、M*/SFR 分布与宿主红移对比', icon: 'bi-houses' },
 ];
 
 const fmt = (v) => (v == null ? '—' : Number(v).toLocaleString('en-US'));
@@ -49,7 +50,7 @@ export async function render() {
   const entriesHtml = ENTRIES.map(e => `
     <a class="swiss-entry" href="${e.href}">
       <span class="swiss-entry-no">${e.no}</span>
-      <span class="swiss-entry-title">${e.title}</span>
+      <span class="swiss-entry-title">${e.icon ? `<i class="bi ${e.icon} me-1"></i>` : ''}${e.title}</span>
       <span class="swiss-entry-desc">${e.desc}</span>
       <span class="swiss-entry-arrow">→</span>
     </a>`).join('');
@@ -100,6 +101,7 @@ export async function render() {
         ${statBlock(fmt(s.n_transients), '暂现源事件', 'Transients')}
         ${statBlock(fmt(s.n_lightcurves), '光变数据点', 'Data Points')}
         ${statBlock(fmt(s.n_with_redshift), '含红移', 'With Redshift')}
+        ${s.n_hosts != null ? statBlock(fmt(s.n_hosts), '有宿主信息的源', 'With Host') : ''}
         ${statBlock(fmt(s.n_bands), '波段', 'Bands')}
         ${statBlock(fmt(s.n_telescopes), '望远镜', 'Telescopes')}
       </div>

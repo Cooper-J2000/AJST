@@ -1,6 +1,6 @@
 // === Create New Transient ===
 import { app, showLoading, showError } from './layout.js';
-import { createTransient, showToast } from '../api.js';
+import { createTransient, saveHost, showToast } from '../api.js';
 
 export async function render() {
   app.innerHTML = `
@@ -79,6 +79,37 @@ export async function render() {
                   <input type="text" class="form-control" id="fAliases" placeholder="GRB251202A, AT2025xxxx">
                 </div>
               </div>
+              <!-- 宿主星系（可选，可后补） -->
+              <div class="mt-3">
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse"
+                        data-bs-target="#hostCollapse" aria-expanded="false" aria-controls="hostCollapse">
+                  <i class="bi bi-houses"></i> 宿主星系（可选，可后补）
+                </button>
+                <div class="collapse mt-2" id="hostCollapse">
+                  <div class="row g-3 border rounded p-2">
+                    <div class="col-md-4">
+                      <label class="form-label">宿主 RA (度)</label>
+                      <input type="number" class="form-control" id="fHostRa" step="any">
+                    </div>
+                    <div class="col-md-4">
+                      <label class="form-label">宿主 Dec (度)</label>
+                      <input type="number" class="form-control" id="fHostDec" step="any">
+                    </div>
+                    <div class="col-md-2">
+                      <label class="form-label">宿主红移</label>
+                      <input type="number" class="form-control" id="fHostZ" step="any">
+                    </div>
+                    <div class="col-md-2">
+                      <label class="form-label">红移类型</label>
+                      <select class="form-select" id="fHostZType">
+                        <option value="">-</option>
+                        <option value="spec">spec</option>
+                        <option value="phot">phot</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
               <div class="mt-4 d-flex gap-2">
                 <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> 创建事件</button>
                 <a href="#/" class="btn btn-outline-secondary">取消</a>
@@ -129,6 +160,23 @@ export async function render() {
     try {
       await createTransient(data);
       showToast(`事件 ${id} 创建成功！`, 'success');
+      // 宿主星系（任一填写才写入；失败不影响源创建，仅警告）
+      const hostData = {};
+      const hRa = parseFloatOrNull(getId('fHostRa'));
+      const hDec = parseFloatOrNull(getId('fHostDec'));
+      const hZ = parseFloatOrNull(getId('fHostZ'));
+      const hZType = getId('fHostZType');
+      if (hRa != null) hostData.ra = hRa;
+      if (hDec != null) hostData.dec = hDec;
+      if (hZ != null) hostData.redshift = hZ;
+      if (hZType) hostData.redshift_type = hZType;
+      if (Object.keys(hostData).length) {
+        try {
+          await saveHost(id, hostData);
+        } catch (e) {
+          showToast(`宿主信息写入失败（事件已创建，可稍后补录）: ${e.message}`, 'warning');
+        }
+      }
       location.hash = `#/transient/${id}`;
     } catch (err) {
       showToast(`创建失败: ${err.message}`, 'danger');

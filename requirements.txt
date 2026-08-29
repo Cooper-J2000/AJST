@@ -16,3 +16,8 @@ dust_extinction>=1.4
 # VegasAfterglow[mcmc]>=2.0
 # corner>=2.2
 # matplotlib>=3.8
+
+# ── 可选：宿主星系 SED 拟合（宿主星系 tab；模型数据 ~3.7GB 随包附带）──
+# pcigale>=2025.0
+# matplotlib>=3.8
+# 安装后需运行一次 scripts/fetch_svo_filters.py 注册滤光片曲线

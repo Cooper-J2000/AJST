@@ -98,6 +98,8 @@ class Transient(Base):
                                   cascade='all, delete-orphan')
     articles       = relationship('Article', back_populates='transient',
                                   cascade='all, delete-orphan', lazy='dynamic')
+    host_galaxy    = relationship('HostGalaxy', back_populates='transient',
+                                  cascade='all, delete-orphan', uselist=False)
 
     def to_dict(self, include_relations=False):
         d = {
@@ -124,6 +126,7 @@ class Transient(Base):
         if include_relations:
             d['lc_count'] = self.lightcurves.count() if hasattr(self, 'lightcurves') else None
             d['spectra_count'] = self.spectra.count() if hasattr(self, 'spectra') else 0
+            d['has_host'] = self.host_galaxy is not None
         return d
 
 
@@ -356,6 +359,46 @@ class Image(Base):
             'observation_date': self.observation_date.isoformat() if self.observation_date else None,
             'extra_data': self.extra_data or {},
             'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+# ---------- 宿主星系 ----------
+class HostGalaxy(Base):
+    __tablename__ = 'host_galaxies'
+
+    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    transient_id  = Column(String(32), ForeignKey('transients.id', ondelete='CASCADE'),
+                           nullable=False, unique=True, index=True)
+    ra            = Column(Float, nullable=True)         # 宿主坐标（度）
+    dec           = Column(Float, nullable=True)
+    redshift      = Column(Float, nullable=True)         # 宿主红移
+    redshift_err  = Column(Float, nullable=True)         # 光谱红移=0，测光红移有误差
+    redshift_type = Column(String(16), nullable=True)    # 'spec' / 'phot'
+    photometry    = Column(JSONB, default=list)          # [{band, mag, mag_err, mag_sys, source}]
+    derived       = Column(JSONB, default=dict)          # 采纳的拟合参数（m_star/sfr/...）
+    comment       = Column(Text, nullable=True)
+    source        = Column(String(128), nullable=True)   # 录入账户
+    created_at    = Column(DateTime, default=lambda: utcnow())
+    updated_at    = Column(DateTime, default=lambda: utcnow(),
+                           onupdate=lambda: utcnow())
+
+    transient     = relationship('Transient', back_populates='host_galaxy')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'transient_id': self.transient_id,
+            'ra': self.ra,
+            'dec': self.dec,
+            'redshift': self.redshift,
+            'redshift_err': self.redshift_err,
+            'redshift_type': self.redshift_type,
+            'photometry': self.photometry or [],
+            'derived': self.derived or {},
+            'comment': self.comment,
+            'source': self.source,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 
 

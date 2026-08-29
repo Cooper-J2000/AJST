@@ -41,12 +41,13 @@ export async function render() {
                 <th class="f-sort" data-sort="wavelength" style="cursor:pointer">波长 (Å) <span class="sort-icon"></span></th>
                 <th class="f-sort" data-sort="filter_type" style="cursor:pointer">类型 <span class="sort-icon"></span></th>
                 <th class="f-sort" data-sort="vega2ab" style="cursor:pointer">Vega→AB <span class="sort-icon"></span></th>
+                <th>透过率</th>
                 <th>说明</th>
                 <th id="filterEditHeader" style="display:none">编辑</th>
               </tr>
             </thead>
             <tbody id="filterBody">
-              <tr><td colspan="6" class="text-center text-secondary py-4">加载中...</td></tr>
+              <tr><td colspan="7" class="text-center text-secondary py-4">加载中...</td></tr>
             </tbody>
           </table>
         </div>
@@ -125,6 +126,9 @@ async function loadFilters() {
         <td class="fv" data-field="wavelength">${f.wavelength != null ? f.wavelength.toFixed(2) : '-'}</td>
         <td class="fv" data-field="filter_type">${f.filter_type || '-'}</td>
         <td class="fv" data-field="vega2ab">${f.vega2ab != null ? f.vega2ab.toFixed(3) : '0.000'}</td>
+        <td>${f.extra_data && f.extra_data.transmission && f.extra_data.transmission.wl
+          ? `<span class="badge bg-success">曲线 ${f.extra_data.transmission.wl.length} 点</span>`
+          : '<span class="badge bg-secondary">—</span>'}</td>
         <td class="fv" data-field="description" style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${f.description || '-'}</td>
         <td class="filter-edit-cell" style="display:${isAdmin() ? '' : 'none'}">
           <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="filterEditStart('${f.id}')" title="编辑"><i class="bi bi-pencil"></i></button>
@@ -212,6 +216,6 @@ async function loadFilters() {
 
   } catch (err) {
     document.getElementById('filterBody').innerHTML =
-      `<tr><td colspan="6" class="text-center text-danger py-4">加载失败: ${err.message}</td></tr>`;
+      `<tr><td colspan="7" class="text-center text-danger py-4">加载失败: ${err.message}</td></tr>`;
   }
 }

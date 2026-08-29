@@ -100,10 +100,26 @@ export const getFittingJob = (id) => api('GET', `/fitting/jobs/${id}`);
 export const getFittingJobFile = (id, kind) => api('GET', `/fitting/jobs/${id}/files/${kind}`);
 export const deleteFittingJob = (id) => api('DELETE', `/fitting/jobs/${id}`);
 
+// Hosts (宿主星系)
+export const getHost = (tid) => api('GET', `/hosts/${encodeURIComponent(tid)}`);
+export const saveHost = (tid, data) => api('PUT', `/hosts/${encodeURIComponent(tid)}`, data);
+export const deleteHost = (tid) => api('DELETE', `/hosts/${encodeURIComponent(tid)}`);
+
+// HostFit (宿主星系 SED 拟合)
+export const getHostfitConfig = () => api('GET', '/hostfit/config');
+export const submitHostfitJob = (payload) => api('POST', '/hostfit/jobs', payload);
+export const getHostfitJobs = (tid) =>
+  api('GET', `/hostfit/jobs?transient_id=${encodeURIComponent(tid)}`);
+export const getHostfitJob = (id) => api('GET', `/hostfit/jobs/${id}`);
+// 产物文件下载用裸 URL（<a href> / <img src> 直接引用）
+export const hostfitJobFileUrl = (id, kind) => `${API_BASE}/hostfit/jobs/${id}/files/${kind}`;
+export const deleteHostfitJob = (id) => api('DELETE', `/hostfit/jobs/${id}`);
+
 // Stats
 export const getOverview = () => api('GET', '/stats/overview');
 export const getRedshiftDist = () => api('GET', '/stats/redshifts');
 export const getBandCoverage = () => api('GET', '/stats/bands');
+export const getHostStats = () => api('GET', '/stats/hosts');
 
 // GCN (GCN 阅读工具)
 export const getGcnIds = () => api('GET', '/gcn/ids');
