@@ -1153,8 +1153,10 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
   测光红移网格）、任务队列（5s 轮询）、结果展示（best/bayes 参数表 + SED 图 + best_model.fits 下载）。
 - 拟合子系统 `backend/hostfit/`：作业记录复用 `fitting_results` 表（model_name=`pcigale_host`，
   状态在 extra_data.status）；runner 生成 pcigale 输入（AB/Vega/ST → mJy 换算，缺 Vega2AB 或无
-  pcigale 滤光片的波段跳过并警告）→ 子进程 `pcigale run`（模板 sfhdelayed+bc03+dustatt_modified_CF00
-  +redshifting，pdf_analysis）→ 解析 results.txt → matplotlib 生成 sed.png。产物在
+  pcigale 滤光片的波段跳过并警告）→ 子进程 `pcigale run`（基础链 sfhdelayed+bc03
+  +dustatt_modified_CF00+redshifting，pdf_analysis；nebular / dl2014 为前端可勾选的可选模块，
+  参数固定默认值；当前模型组合与网格模型数提示实时显示在前端）→ 解析 results.txt →
+  matplotlib 生成 sed.png。产物在
   `fitting_store/<tid>/hostfit_<jobid>/`，不进数据仓库、全量重建清空（与余辉拟合一致）。
 - 「写入宿主信息」：用户确认后把 bayes 参数写入 `derived`；测光红移模式同时回写
   redshift/redshift_err/redshift_type='phot'。

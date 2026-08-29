@@ -25,6 +25,20 @@ additionalerror = float(min=0.0)
     slope_ISM = cigale_list()
     slope_BC = cigale_list()
     filters = string()
+  [[nebular]]
+    logU = cigale_list()
+    zgas = cigale_list()
+    ne = cigale_list(dtype=int, options=10 & 100 & 1000)
+    f_esc = cigale_list(minvalue=0., maxvalue=1.)
+    f_dust = cigale_list(minvalue=0., maxvalue=1.)
+    lines_width = cigale_list(minvalue=0.)
+    emission = boolean()
+    line_list = string()
+  [[dl2014]]
+    qpah = cigale_list(minvalue=0.47, maxvalue=7.32)
+    umin = cigale_list(minvalue=0.1, maxvalue=50.)
+    alpha = cigale_list(minvalue=1., maxvalue=3.)
+    gamma = cigale_list(minvalue=0., maxvalue=1.)
   [[redshifting]]
     redshift = cigale_list(minvalue=0.)
 [analysis_params]

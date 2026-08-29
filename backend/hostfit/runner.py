@@ -51,7 +51,29 @@ _VARIABLES = ('attenuation.Av_BC, attenuation.Av_ISM, attenuation.mu, '
               'sfh.sfr100Myrs, sfh.tau_main, stellar.m_star, universe.age, '
               'universe.luminosity_distance, universe.redshift')
 
-_SED_MODULES = 'sfhdelayed, bc03, dustatt_modified_CF00, redshifting'
+_SED_MODULES_BASE = ['sfhdelayed', 'bc03']
+
+# 可选模块（前端勾选启用）：(配置键, pcigale 模块名, ini 参数段文本)
+# 参数全部固定为常用默认值，不进网格，避免模型数爆炸
+_OPTIONAL_MODULES = [
+    ('use_nebular', 'nebular', """\
+  [[nebular]]
+    logU = -2.0
+    zgas = 0.02
+    ne = 100
+    f_esc = 0.0
+    f_dust = 0.0
+    lines_width = 300.0
+    emission = True
+"""),
+    ('use_dl2014', 'dl2014', """\
+  [[dl2014]]
+    qpah = 2.50
+    umin = 1.0
+    alpha = 2.0
+    gamma = 0.1
+"""),
+]
 
 
 # ─── 测光 → mJy ───
@@ -167,7 +189,8 @@ def _fmt_list(values):
 
 
 def build_ini(config, bands_pcg):
-    """生成 pcigale.ini 文本（固定模块模板）。"""
+    """生成 pcigale.ini 文本。基础模块 sfhdelayed+bc03+dustatt_modified_CF00
+    +redshifting；nebular / dl2014 由 config 的 use_nebular / use_dl2014 开关启用。"""
     grid = config.get('grid') or {}
     mode = config.get('mode', 'fixed')
     if mode == 'photoz':
@@ -180,9 +203,23 @@ def build_ini(config, bands_pcg):
         b for pcg in bands_pcg for b in (pcg, pcg + '_err'))
     bands_out = ', '.join(bands_pcg)
 
+    # 模块顺序：nebular 紧跟 SSP(bc03)，dl2014 在尘埃吸收之后、redshifting 之前
+    modules = list(_SED_MODULES_BASE)
+    extra_sections = ''
+    for key, mod_name, section in _OPTIONAL_MODULES:
+        if config.get(key):
+            if mod_name == 'nebular':
+                modules.append('nebular')
+            extra_sections += section
+    modules.append('dustatt_modified_CF00')
+    if config.get('use_dl2014'):
+        modules.append('dl2014')
+    modules.append('redshifting')
+    sed_modules = ', '.join(modules)
+
     return f"""data_file = observations.txt
 parameters_file =
-sed_modules = {_SED_MODULES}
+sed_modules = {sed_modules}
 analysis_method = pdf_analysis
 cores = 1
 
@@ -203,7 +240,7 @@ additionalerror = 0.1
     imf = 0
     metallicity = 0.02
     separation_age = 10
-  [[dustatt_modified_CF00]]
+{extra_sections}  [[dustatt_modified_CF00]]
     Av_ISM = {_fmt_list(grid['Av_ISM'])}
     mu = 0.44
     slope_ISM = -0.7

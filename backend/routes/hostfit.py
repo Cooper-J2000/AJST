@@ -30,7 +30,9 @@ _DEFAULTS = {
     'Av_ISM': [0.0, 0.3, 1.0],
     'z_min': 0.0, 'z_max': 2.0, 'z_step': 0.05,
 }
-_MODULES = 'sfhdelayed+bc03+dustatt_modified_CF00+redshifting'
+_MODULES_BASE = 'sfhdelayed+bc03+dustatt_modified_CF00+redshifting'
+# 网页端可勾选的可选模块（config 键 → pcigale 模块名）
+_OPTIONAL_MODULES = {'use_nebular': 'nebular', 'use_dl2014': 'dl2014'}
 
 _MAG_SYSTEMS = ('ab', 'vega', 'st', 'stmag', '', None)
 
@@ -73,7 +75,8 @@ def get_config():
                        if (f.extra_data or {}).get('pcigale_name'))
     finally:
         sess.close()
-    return jsonify({'defaults': _DEFAULTS, 'modules': _MODULES,
+    return jsonify({'defaults': _DEFAULTS, 'modules': _MODULES_BASE,
+                    'optional_modules': _OPTIONAL_MODULES,
                     'available_bands': bands})
 
 
@@ -169,6 +172,9 @@ def _validate(payload, sess):
     if errors:
         return None, (jsonify({'error': 'config 非法', 'details': errors}), 400)
     config['mode'] = mode
+    # 可选模块开关（nebular / dl2014），缺省关闭
+    for key in _OPTIONAL_MODULES:
+        config[key] = bool(config.get(key))
     return config, None
 
 

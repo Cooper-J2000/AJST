@@ -369,13 +369,25 @@ function renderConfigCard() {
       <div class="collapse mt-2" id="hfAdvanced">
         <div class="row g-2">
           <div class="col-12"><label class="small text-secondary mb-0">tau_main (Myr)</label>
-            <input type="text" class="form-control form-control-sm" id="hfTauMain" value="${esc(listStr(dft.tau_main))}"></div>
+            <input type="text" class="form-control form-control-sm hf-grid" id="hfTauMain" value="${esc(listStr(dft.tau_main))}"></div>
           <div class="col-12"><label class="small text-secondary mb-0">age_main (Myr)</label>
-            <input type="text" class="form-control form-control-sm" id="hfAgeMain" value="${esc(listStr(dft.age_main))}"></div>
+            <input type="text" class="form-control form-control-sm hf-grid" id="hfAgeMain" value="${esc(listStr(dft.age_main))}"></div>
           <div class="col-12"><label class="small text-secondary mb-0">Av_ISM (mag)</label>
-            <input type="text" class="form-control form-control-sm" id="hfAvIsm" value="${esc(listStr(dft.Av_ISM))}"></div>
+            <input type="text" class="form-control form-control-sm hf-grid" id="hfAvIsm" value="${esc(listStr(dft.Av_ISM))}"></div>
         </div>
       </div>
+    </div>
+    <div class="small mb-2">
+      <span class="text-secondary">模型组合：</span><code id="hfModuleLine"></code>
+      <div class="form-check mt-1">
+        <input class="form-check-input hf-optmod" type="checkbox" id="hfUseNebular">
+        <label class="form-check-label" for="hfUseNebular">星云发射（nebular）</label>
+      </div>
+      <div class="form-check">
+        <input class="form-check-input hf-optmod" type="checkbox" id="hfUseDl2014">
+        <label class="form-check-label" for="hfUseDl2014">尘埃红外发射（dl2014）</label>
+      </div>
+      <div class="text-secondary mt-1" style="font-size:0.78rem" id="hfGridHint"></div>
     </div>
     <div class="small text-secondary mb-2" id="hfFitHint"></div>
     <button class="btn btn-sm btn-primary w-100" id="hfSubmitBtn" ${authed ? '' : 'disabled'}>
@@ -383,10 +395,63 @@ function renderConfigCard() {
     </button>`;
 
   body.querySelectorAll('input[name="hfMode"]').forEach(r => {
-    r.addEventListener('change', updateSubmitState);
+    r.addEventListener('change', () => { updateGridHint(); updateSubmitState(); });
   });
+  body.querySelectorAll('.hf-grid, .hf-zgrid, .hf-optmod').forEach(el => {
+    el.addEventListener('input', updateGridHint);
+    el.addEventListener('change', updateGridHint);
+  });
+  updateModuleLine();
+  updateGridHint();
   updateSubmitState();
   document.getElementById('hfSubmitBtn').addEventListener('click', submitJob);
+}
+
+// 任务实际使用的模块组合（从任务 config 还原）
+function jobModules(detail) {
+  const base = (_hfConfig && _hfConfig.modules || '').split('+').filter(Boolean);
+  const mods = [];
+  const cfg = detail.config || {};
+  base.forEach(m => {
+    mods.push(m);
+    if (m === 'bc03' && cfg.use_nebular) mods.push('nebular');
+    if (m === 'dustatt_modified_CF00' && cfg.use_dl2014) mods.push('dl2014');
+  });
+  return '模型：' + mods.join(' + ');
+}
+
+// 模型组合展示：基础链 + 勾选的可选模块
+function updateModuleLine() {  const el = document.getElementById('hfModuleLine');
+  if (!el || !_hfConfig) return;
+  const base = (_hfConfig.modules || '').split('+').filter(Boolean);
+  const mods = [];
+  base.forEach(m => {
+    mods.push(m);
+    if (m === 'bc03' && document.getElementById('hfUseNebular')?.checked) mods.push('nebular');
+    if (m === 'dustatt_modified_CF00' && document.getElementById('hfUseDl2014')?.checked) mods.push('dl2014');
+  });
+  el.textContent = mods.join(' + ');
+}
+
+// 网格规模提示：模型数 = tau×age×Av×（测光红移模式的 z 网格数）
+function updateGridHint() {
+  const el = document.getElementById('hfGridHint');
+  if (!el) return;
+  const n = (id) => parseNumList(document.getElementById(id)?.value).length;
+  let models = Math.max(1, n('hfTauMain')) * Math.max(1, n('hfAgeMain')) * Math.max(1, n('hfAvIsm'));
+  const mode = document.querySelector('input[name="hfMode"]:checked')?.value;
+  if (mode === 'photoz') {
+    const zmin = numOrNull(document.getElementById('hfZMin')?.value);
+    const zmax = numOrNull(document.getElementById('hfZMax')?.value);
+    const zstep = numOrNull(document.getElementById('hfZStep')?.value);
+    if (zmin != null && zmax != null && zstep >  0) {
+      models *= Math.floor((zmax - zmin) / zstep) + 1;
+    }
+  }
+  const est = Math.ceil(models / 40);  // 实测约 40 模型/秒
+  el.innerHTML = `模型数约 <b>${models.toLocaleString()}</b>，预计耗时约 ${est} 秒` +
+    (models > 20000 ? ' <span class="text-danger"><i class="bi bi-exclamation-triangle"></i> 网格过大，可能超过 600s 超时被杀</span>'
+      : models > 5000 ? ' <span class="text-warning">网格偏大，注意耗时</span>' : '');
 }
 
 // 勾选测光点 ≥4 且已登录才可提交；不足则禁用并提示
@@ -421,7 +486,9 @@ async function submitJob() {
     age_main: parseNumList(document.getElementById('hfAgeMain')?.value),
     Av_ISM: parseNumList(document.getElementById('hfAvIsm')?.value),
   };
-  const payload = { transient_id: _tid, mode, grid, photometry };
+  const payload = { transient_id: _tid, mode, grid, photometry,
+                    use_nebular: !!document.getElementById('hfUseNebular')?.checked,
+                    use_dl2014: !!document.getElementById('hfUseDl2014')?.checked };
   if (mode === 'fixed') {
     const z = numOrNull(document.getElementById('hfFixedZ')?.value);
     if (z == null) { showToast('固定红移模式需要先在宿主信息中设置并保存红移', 'warning'); return; }
@@ -574,7 +641,8 @@ async function loadResult(jobId) {
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
         <span><i class="bi bi-graph-up-arrow"></i> 拟合结果 — 任务 #${detail.id}
-          <span class="text-secondary small">${detail.mode === 'photoz' ? '测光红移' : '固定红移'} · χ²=${detail.chi_squared != null ? sci3(detail.chi_squared) : '-'}</span></span>
+          <span class="text-secondary small">${detail.mode === 'photoz' ? '测光红移' : '固定红移'} · χ²=${detail.chi_squared != null ? sci3(detail.chi_squared) : '-'}</span>
+          <div class="text-secondary" style="font-size:0.72rem">${esc(jobModules(detail))}</div></span>
         ${authed && done ? `<button class="btn btn-sm btn-outline-success" id="hfWriteHost">
           <i class="bi bi-box-arrow-in-down"></i> 写入宿主信息</button>` : ''}
       </div>
