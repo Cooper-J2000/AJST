@@ -1,0 +1,21 @@
+{
+  "description": "单成分正向激波 FS (powerlaw-wing, ISM, 宿主消光 LMC, on-axis)",
+  "model": "fs",
+  "fit_engine": "fitter",
+  "jet": "powerlaw_wing",
+  "medium": "ism",
+  "extinction": "lmc",
+  "params": [
+    {"name": "theta_c", "lower": 0.01, "upper": 0.5, "scale": "log"},
+    {"name": "E_iso_w", "lower": 1e51, "upper": 1e55, "scale": "log"},
+    {"name": "Gamma0_w", "lower": 30, "upper": 1000, "scale": "log"},
+    {"name": "k_e", "lower": 0, "upper": 8, "scale": "linear"},
+    {"name": "k_g", "lower": 0, "upper": 8, "scale": "linear"},
+    {"name": "theta_v", "lower": 0, "upper": 0, "scale": "fixed"},
+    {"name": "p", "lower": 2.1, "upper": 2.9, "scale": "linear"},
+    {"name": "eps_e", "lower": 0.001, "upper": 0.5, "scale": "log"},
+    {"name": "eps_B", "lower": 1e-6, "upper": 0.1, "scale": "log"},
+    {"name": "n_ism", "lower": 0.0001, "upper": 100, "scale": "log"},
+    {"name": "A_V", "lower": 0, "upper": 2, "scale": "linear"}
+  ]
+}

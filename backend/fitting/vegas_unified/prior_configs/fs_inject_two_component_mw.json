@@ -1,0 +1,26 @@
+{
+  "description": "正向激波+磁星注入 FS+inject (two-component, ISM, 宿主消光 MW, on-axis); L0[erg/s] t0[s] q=制动指数",
+  "model": "fs_inject",
+  "fit_engine": "fitter",
+  "jet": "two_component",
+  "medium": "ism",
+  "extinction": "mw",
+  "fitter_kwargs": {"magnetar": true},
+  "params": [
+    {"name": "theta_c", "lower": 0.005, "upper": 0.3, "scale": "log"},
+    {"name": "E_iso", "lower": 1e51, "upper": 1e55, "scale": "log"},
+    {"name": "Gamma0", "lower": 50, "upper": 1000, "scale": "log"},
+    {"name": "theta_w", "lower": 0.05, "upper": 0.6, "scale": "log"},
+    {"name": "E_iso_w", "lower": 1e51, "upper": 1e55, "scale": "log"},
+    {"name": "Gamma0_w", "lower": 30, "upper": 1000, "scale": "log"},
+    {"name": "theta_v", "lower": 0, "upper": 0, "scale": "fixed"},
+    {"name": "p", "lower": 2.1, "upper": 2.9, "scale": "linear"},
+    {"name": "eps_e", "lower": 0.001, "upper": 0.5, "scale": "log"},
+    {"name": "eps_B", "lower": 1e-6, "upper": 0.1, "scale": "log"},
+    {"name": "L0", "lower": 1e46, "upper": 1e52, "scale": "log"},
+    {"name": "t0", "lower": 1000, "upper": 100000, "scale": "log"},
+    {"name": "q", "lower": 1.5, "upper": 3, "scale": "linear"},
+    {"name": "n_ism", "lower": 0.0001, "upper": 100, "scale": "log"},
+    {"name": "A_V", "lower": 0, "upper": 2, "scale": "linear"}
+  ]
+}

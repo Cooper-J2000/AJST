@@ -5,7 +5,7 @@
   1. prepare_data(GRB201103B) 数据摘要
   2. config_schema / validate_config 合法与非法组合（vegas_unified，8 个 case）
   3. test_client 走 API 全流程：登录 → engines → 提交小规模拟合
-     （case=fs_smc，nsteps=400 nburn=200 npool=4）
+     （fs + tophat + ism + smc 消光，nsteps=400 nburn=200 npool=4）
      → 轮询 → 详情 → 三个产物文件 → DELETE
   4. 物理合理性检查：E_iso ∈ [1e50, 1e55]，p ∈ [2, 3]，A_V ∈ [0, 2]，chi2 有限
 
@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 TRANSIENT = 'GRB201103B'
 FIT_CONFIG = {
-    'case': 'fs_smc',
+    'model': 'fs', 'jet': 'tophat', 'medium': 'ism', 'extinction': 'smc',
     'sampler': {'nsteps': 400, 'nburn': 200, 'top_k': 10, 'npool': 4},
 }
 POLL_INTERVAL = 10
@@ -35,6 +35,18 @@ def check(name, cond, detail=''):
     print(f'[{tag}] {name}' + (f'  {detail}' if detail else ''))
     if not cond:
         failures.append(name)
+
+
+def _case_name(model, jet='tophat', medium='ism', extinction='none'):
+    """四轴 → case 名（与引擎 _case_name 规则一致）"""
+    parts = [model]
+    if jet != 'tophat':
+        parts.append(jet)
+    if medium == 'wind':
+        parts.append('wind')
+    if extinction != 'none':
+        parts.append(extinction)
+    return '_'.join(parts)
 
 
 def main():
@@ -69,17 +81,37 @@ def main():
     schema = eng.config_schema()
     json.dumps(schema)
     check('schema JSON 可序列化', True)
-    cases = schema['options']['case']
-    check('8 个模型情形', len(cases) == 8, str(cases))
+    opts = schema['options']
+    check('四个物理轴', set(opts) == {'model', 'jet', 'medium', 'extinction'},
+          str({k: len(v) for k, v in opts.items()}))
     check('schema 含默认先验', 'E_iso' in schema['default_config']['priors'])
-    ok = all(eng.validate_config({'case': c}) == [] for c in cases)
-    check('全部 case 默认配置合法', ok,
-          str({c: eng.validate_config({'case': c}) for c in cases
-               if eng.validate_config({'case': c})}))
-    check('合法组合 fs_smc（宿主消光）',
+
+    # 组合覆盖：224 个四轴组合中恰有 fs_inject+powerlaw_wing 的 8 个不可用
+    import itertools
+    pbc = schema['priors_by_case']
+    missing = [_case_name(m, j, md, e)
+               for m, j, md, e in itertools.product(
+                   opts['model'], opts['jet'], opts['medium'], opts['extinction'])
+               if _case_name(m, j, md, e) not in pbc]
+    check('可用组合 216 = 224 - 8', len(pbc) == 216 and len(missing) == 8,
+          f'缺失: {missing}')
+    check('缺失组合全是 fs_inject+powerlaw_wing',
+          all(n.startswith('fs_inject_powerlaw_wing') for n in missing))
+
+    # 全部 216 个组合的默认配置合法
+    bad = {n: eng.validate_config({'case': n}) for n in pbc}
+    bad = {n: e for n, e in bad.items() if e}
+    check('全部组合默认配置合法', not bad, str(dict(list(bad.items())[:3])))
+    check('合法组合 fs+tophat+ism+smc（宿主消光）',
           eng.validate_config(dict(FIT_CONFIG)) == [])
-    errs = eng.validate_config({'case': 'warp'})
-    check('未知 case → 报错', len(errs) > 0, errs[0][:60])
+    errs = eng.validate_config({'model': 'fs_inject', 'jet': 'powerlaw_wing',
+                                'medium': 'ism', 'extinction': 'none'})
+    check('不支持组合 → 明确报错', len(errs) > 0 and '不支持' in errs[0],
+          errs[0][:70] if errs else '')
+    errs = eng.validate_config({'model': 'fs', 'jet': 'warp'})
+    check('未知喷流 → 报错', len(errs) > 0, errs[0][:60])
+    check('旧别名 two_comp_fs 兼容',
+          eng.validate_config({'case': 'two_comp_fs'}) == [])
     errs = eng.validate_config({'case': 'fs',
                                 'priors': {'L0': {'min': 1e46, 'max': 1e52,
                                                   'scale': 'log'}}})
@@ -88,6 +120,15 @@ def main():
                                 'priors': {'E_iso': {'min': -1, 'max': 1e55,
                                                      'scale': 'log'}}})
     check('log 先验 min<=0 → 报错', len(errs) > 0)
+    # 约束分派：two_component 喷流与 frs_plus_fs 拓扑走自定义外壳
+    ci = schema['case_info']
+    check('two_component 组合走 custom',
+          ci['fs_two_component']['engine'] == 'custom' and
+          ci['fs_two_component']['constraint'])
+    check('frs_plus_fs 组合走 custom',
+          ci['frs_plus_fs']['engine'] == 'custom' and
+          ci['frs_plus_fs']['constraint'])
+    check('普通组合走 fitter', ci['fs_gaussian_wind_lmc']['engine'] == 'fitter')
     # magnetar=true 但先验缺 L0：直接交给包内规则验证
     from VegasAfterglow import Fitter, ParamDef, Scale
     f = Fitter(z=1.0, lumi_dist=1e28, jet='tophat', medium='ism', magnetar=True)
@@ -124,7 +165,7 @@ def main():
     check('不存在的源 → 404', r.status_code == 404)
     r = client.post('/api/fitting/jobs', json={
         'transient_id': TRANSIENT, 'engine': 'vegas_unified',
-        'config': {'case': 'warp'}})
+        'config': {'model': 'fs', 'jet': 'warp'}})
     check('非法 config → 400', r.status_code == 400)
 
     if skip_fit:
@@ -160,7 +201,8 @@ def main():
         sys.exit(1)
 
     # 详情字段
-    check('详情含 config', detail.get('config', {}).get('case') == 'fs_smc')
+    cfg = detail.get('config', {})
+    check('详情含 config', cfg.get('model') == 'fs' and cfg.get('extinction') == 'smc')
     check('详情含 files 链接', set(detail.get('files', {})) >=
           {'h5', 'corner', 'lc_model'}, str(detail.get('files')))
     check('warnings 字段存在', isinstance(detail.get('warnings'), list))

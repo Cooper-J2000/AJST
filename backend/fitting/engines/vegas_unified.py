@@ -1,24 +1,33 @@
 """VegasAfterglow 组合模型引擎（修改版拟合程序接入）。
 
-对应作者修改版拟合工作区（Vegas_run_unified.ipynb / run_batch_fit.py）的网页化：
-模型组合按"情形"(case) 选择，先验模板来自随代码分发的
-fitting/vegas_unified/prior_configs/<case>.json（先验的唯一来源），带联合物理约束
-的情形（frs_plus_fs / two_comp_fs）自动改走自定义 MCMC 外壳
-（fitting/vegas_unified/custom_mcmc.py，内置 Fitter 不支持联合先验）。
+对应作者修改版拟合工作区（Vegas_run_unified.ipynb / run_batch_fit.py）的网页化。
+模型组合由四个并列的物理轴自由选择：
+
+  成分拓扑 model      : fs / fs_rs / fs_inject / frs_plus_fs
+  喷流结构 jet        : tophat / gaussian / powerlaw / two_component /
+                        step_powerlaw / powerlaw_wing / uniform
+  环境介质 medium     : ism / wind
+  宿主消光 extinction : none / smc / lmc / mw
+
+共 224 种组合，其去核心包不支持磁星注入的 fs_inject + powerlaw_wing 8 种，
+可用 216 种——每种组合的先验模板对应随代码分发的一个 JSON：
+fitting/vegas_unified/prior_configs/<case>.json（先验的唯一来源），case 名按
+``<model>[_<jet>][_wind][_<extinction>]`` 规则拼出（缺省轴 tophat/ism/无消光
+不出现在名字里）。带联合物理约束的组合（frs_plus_fs 的 Gamma0 > Gamma02；
+任何 two_component 喷流的 theta_c < theta_w 且 Gamma0 > Gamma0_w）自动改走
+自定义 MCMC 外壳（fitting/vegas_unified/custom_mcmc.py，内置 Fitter 不支持
+联合先验）。
 
 config 结构：
 {
-  case: prior_configs/ 下的任一情形名（fs / fs_rs / fs_inject / frs_plus_fs /
-        two_comp_fs / fs_gaussian / fs_wind / fs_smc），
+  model: 'fs', jet: 'tophat', medium: 'ism', extinction: 'none',
   priors: {参数名: {min, max, scale: 'log' | 'linear' | 'fixed'}},   # 缺省用模板
   sampler: {nsteps, nburn, seed, top_k, npool}
 }
+（兼容旧式 {case: '<case名>'} 配置；two_comp_fs 为 fs + two_component 的别名。）
 数据约定：data 为 jobs.prepare_data() 的输出，流量单位 mJy，时间 s，频率 Hz。
 
-通用约定（与修改版工作区一致）：xi_e=1、on-axis（theta_v 固定 0，可在 JSON 放开）；
-喷流结构 / 环境介质 / 宿主消光三个物理轴由 prior JSON 顶层字段
-jet / medium / extinction 选择（缺省 tophat / ism / 无消光），成分开关
-（rvs_shock / magnetar）由 fitter_kwargs 字段给出。
+通用约定（与修改版工作区一致）：xi_e=1、on-axis（theta_v 固定 0，可在 JSON 放开）。
 """
 import json
 import math
@@ -28,7 +37,8 @@ import time
 import numpy as np
 
 from .base import BaseEngine, register
-from ..vegas_unified import (CONSTRAINTS, clean_dataframe, compute_metrics,
+from ..vegas_unified import (CONSTRAINTS, EXTINCTION_LAWS, JET_TYPES,
+                             MEDIUM_TYPES, clean_dataframe, compute_metrics,
                              make_flux_functions, plot_corner, required_params,
                              run_mcmc, save_products)
 from ..vegas_unified.custom_mcmc import _to_physical
@@ -43,40 +53,66 @@ _SAMPLER_DEFAULTS = {'nsteps': 20000, 'nburn': 6000, 'seed': 42, 'top_k': 10,
                      'npool': 4}
 _NPOOL_MAX = 8
 
-# 展示用模型情形标签（未列出的新情形回退为情形名本身）
-_CASE_LABELS = {
-    'fs': '单成分正向激波 FS',
-    'fs_rs': '正向+反向激波 FS+RS',
-    'fs_inject': '正向激波+磁星注入 FS+inject',
-    'frs_plus_fs': '正反激波对+独立正向激波 FS+RS+FS',
-    'two_comp_fs': '双成分正向激波 two-component FS',
-    'fs_gaussian': '单成分正向激波 FS（gaussian 喷流）',
-    'fs_wind': '单成分正向激波 FS（wind 星风介质）',
-    'fs_smc': '单成分正向激波 FS + 宿主消光 SMC',
+# 四个物理轴的合法取值与展示标签
+MODELS = ('fs', 'fs_rs', 'fs_inject', 'frs_plus_fs')
+JETS = tuple(JET_TYPES)
+MEDIA = tuple(MEDIUM_TYPES)
+EXTINCTIONS = ('none',) + tuple(EXTINCTION_LAWS)
+
+_AXIS_LABELS = {
+    'model': {
+        'fs': '单成分正向激波 FS',
+        'fs_rs': '正向+反向激波 FS+RS',
+        'fs_inject': '正向激波+磁星注入 FS+inject',
+        'frs_plus_fs': '正反激波对+独立正向激波 FS+RS+FS',
+    },
+    'jet': {
+        'tophat': 'top-hat 顶帽',
+        'gaussian': 'gaussian 高斯',
+        'powerlaw': 'powerlaw 幂律',
+        'two_component': 'two-component 双成分（窄芯+宽翼）',
+        'step_powerlaw': 'step-powerlaw 阶跃幂律',
+        'powerlaw_wing': 'powerlaw-wing 幂律翼',
+        'uniform': 'uniform 球对称',
+    },
+    'medium': {'ism': '均匀 ISM', 'wind': 'wind 星风'},
+    'extinction': {'none': '无', 'smc': 'SMC', 'lmc': 'LMC', 'mw': 'MW（银河系型）'},
 }
 
+# 已知不支持的组合（核心包限制）：(model, jet) -> 原因
+_UNSUPPORTED = {
+    ('fs_inject', 'powerlaw_wing'): '核心包不支持 powerlaw_wing 喷流的磁星注入',
+}
 
-class _redirect_stdio:
-    """把 fd 级的 stdout/stderr（含 C++/tqdm 输出）重定向到日志文件"""
+# 旧情形名别名（兼容 2026-08-30 版配置与历史任务名）
+_CASE_ALIAS = {'two_comp_fs': 'fs_two_component'}
 
-    def __init__(self, fp):
-        self._fp = fp
 
-    def __enter__(self):
-        self._saved = [os.dup(1), os.dup(2)]
-        os.dup2(self._fp.fileno(), 1)
-        os.dup2(self._fp.fileno(), 2)
-        return self
+def _case_name(model, jet='tophat', medium='ism', extinction=None):
+    """四轴 → prior JSON 文件名（缺省轴 tophat/ism/无消光 不出现在名字里）"""
+    parts = [model]
+    if jet and jet != 'tophat':
+        parts.append(jet)
+    if medium == 'wind':
+        parts.append('wind')
+    if extinction and extinction != 'none':
+        parts.append(extinction)
+    return '_'.join(parts)
 
-    def __exit__(self, *exc):
-        for fd, saved in zip((1, 2), self._saved):
-            os.dup2(saved, fd)
-            os.close(saved)
-        return False
+
+def _resolve_case(config):
+    """config → case 名：优先旧式 case 字段（含别名），否则按四轴拼"""
+    case = config.get('case')
+    if case:
+        return _CASE_ALIAS.get(case, case)
+    return _case_name(config.get('model', 'fs'),
+                      config.get('jet', 'tophat'),
+                      config.get('medium', 'ism'),
+                      config.get('extinction', 'none'))
 
 
 def _cases():
-    """全部模型情形：枚举 prior_configs/*.json（与 run_batch_fit.py 做法一致）"""
+    """全部可用组合：枚举 prior_configs/*.json（与 run_batch_fit.py 做法一致）"""
     return sorted(os.path.splitext(f)[0]
                   for f in os.listdir(_PRIOR_DIR) if f.endswith('.json'))
 
@@ -88,7 +124,7 @@ def _load_prior_file(case):
 
 
 def _template_priors(case):
-    """该情形的默认先验字典 {名: {min, max, scale}}，保持 JSON 内参数顺序"""
+    """该组合的默认先验字典 {名: {min, max, scale}}，保持 JSON 内参数顺序"""
     return {p['name']: {'min': p['lower'], 'max': p['upper'], 'scale': p['scale']}
             for p in _load_prior_file(case)['params']}
 
@@ -105,13 +141,15 @@ def _fitter_kwargs(case):
 
 
 def _constraint_for(case):
-    """该情形的联合物理约束 (callable, 描述)：按 case 名或喷流结构名命中"""
-    jet = _load_prior_file(case).get('jet', 'tophat')
-    return CONSTRAINTS.get(case) or CONSTRAINTS.get(jet) or (None, None)
+    """该组合的联合物理约束 (callable, 描述)：按成分拓扑名或喷流结构名命中"""
+    cfg = _load_prior_file(case)
+    model = cfg.get('model', case)
+    jet = cfg.get('jet', 'tophat')
+    return CONSTRAINTS.get(model) or CONSTRAINTS.get(jet) or (None, None)
 
 
 def _effective_engine(case):
-    """实际拟合引擎：先验 JSON 的 fit_engine，但带联合约束的情形必须走自定义外壳"""
+    """实际拟合引擎：先验 JSON 的 fit_engine，但带联合约束的组合必须走自定义外壳"""
     engine = _load_prior_file(case).get('fit_engine', 'fitter')
     if _constraint_for(case)[0] is not None:
         return 'custom'
@@ -120,8 +158,7 @@ def _effective_engine(case):
 
 def merge_priors(config):
     """模板 + 用户覆盖（仅覆盖已有参数的值，不改变参数集合与顺序）"""
-    case = config.get('case', 'fs')
-    priors = _template_priors(case)
+    priors = _template_priors(_resolve_case(config))
     for name, p in (config.get('priors') or {}).items():
         if name in priors:
             priors[name] = {**priors[name], **p}
@@ -160,6 +197,25 @@ def _bands_to_dataframe(bands):
     return clean_dataframe(pd.DataFrame(rows))
 
 
+class _redirect_stdio:
+    """把 fd 级的 stdout/stderr（含 C++/tqdm 输出）重定向到日志文件"""
+
+    def __init__(self, fp):
+        self._fp = fp
+
+    def __enter__(self):
+        self._saved = [os.dup(1), os.dup(2)]
+        os.dup2(self._fp.fileno(), 1)
+        os.dup2(self._fp.fileno(), 2)
+        return self
+
+    def __exit__(self, *exc):
+        for fd, saved in zip((1, 2), self._saved):
+            os.dup2(saved, fd)
+            os.close(saved)
+        return False
+
+
 @register
 class VegasUnifiedEngine(BaseEngine):
     name = 'vegas_unified'
@@ -175,31 +231,36 @@ class VegasUnifiedEngine(BaseEngine):
             return None
 
     def model_label(self, config):
-        return f"{self.name}:{config.get('case', 'fs')}"
+        return f"{self.name}:{_resolve_case(config)}"
 
     # ── 配置模式（供前端渲染表单） ──
     def config_schema(self):
         case_info = {}
         for case in _cases():
             cfg = _load_prior_file(case)
-            constraint_desc = _constraint_for(case)[1]
             case_info[case] = {
-                'label': _CASE_LABELS.get(case, case),
                 'description': cfg.get('description', ''),
                 'engine': _effective_engine(case),
-                'constraint': constraint_desc,
+                'constraint': _constraint_for(case)[1],
             }
         return {
             'name': self.name,
             'label': self.label,
-            'options': {'case': _cases()},
+            # 四个并列物理轴的取值与标签
+            'options': {'model': list(MODELS), 'jet': list(JETS),
+                        'medium': list(MEDIA), 'extinction': list(EXTINCTIONS)},
+            'option_labels': _AXIS_LABELS,
+            # 不支持的组合（前端选中时给出明确提示并禁止提交）
+            'unsupported': [{'model': m, 'jet': j, 'reason': r}
+                            for (m, j), r in _UNSUPPORTED.items()],
             'case_info': case_info,
             'default_config': {
-                'case': 'fs_rs',
-                'priors': _template_priors('fs_rs'),
+                'model': 'fs', 'jet': 'tophat', 'medium': 'ism',
+                'extinction': 'none',
+                'priors': _template_priors('fs'),
                 'sampler': dict(_SAMPLER_DEFAULTS),
             },
-            # 各情形的完整默认先验，前端切换 case 时整套重建
+            # 全部组合的完整默认先验，前端切换任一轴时整套重建
             'priors_by_case': {case: _template_priors(case) for case in _cases()},
             'sampler': {**_SAMPLER_DEFAULTS, 'npool_max': _NPOOL_MAX},
         }
@@ -207,15 +268,34 @@ class VegasUnifiedEngine(BaseEngine):
     # ── 配置校验 ──
     def validate_config(self, config):
         errors = []
-        case = config.get('case', 'fs')
+        case = _resolve_case(config)
+        model = config.get('model', 'fs')
+        jet = config.get('jet', 'tophat')
+        medium = config.get('medium', 'ism')
+        extinction = config.get('extinction', 'none')
+        if not config.get('case'):
+            # 四轴式配置：逐轴校验 + 不支持组合的明确提示
+            if model not in MODELS:
+                errors.append(f'未知成分拓扑: {model}（可选: {list(MODELS)}）')
+            if jet not in JETS:
+                errors.append(f'未知喷流结构: {jet}（可选: {list(JETS)}）')
+            if medium not in MEDIA:
+                errors.append(f'未知环境介质: {medium}（可选: {list(MEDIA)}）')
+            if extinction not in EXTINCTIONS:
+                errors.append(f'未知宿主消光: {extinction}（可选: {list(EXTINCTIONS)}）')
+            if errors:
+                return errors
+            reason = _UNSUPPORTED.get((model, jet))
+            if reason:
+                return [f'不支持的组合: {model} + {jet}（{reason}）']
         if case not in _cases():
-            return [f'未知模型情形: {case}']
+            return [f'未知模型组合: {case}']
 
         template = _template_priors(case)
         priors = merge_priors(config)
         for name, p in (config.get('priors') or {}).items():
             if name not in template:
-                errors.append(f'{name}: 不属于情形 {case} 的参数')
+                errors.append(f'{name}: 不属于组合 {case} 的参数')
         for name, p in priors.items():
             if p.get('scale') not in ('log', 'linear', 'fixed'):
                 errors.append(f'{name}: scale 须为 log/linear/fixed')
@@ -286,7 +366,7 @@ class VegasUnifiedEngine(BaseEngine):
         import astropy.units as u
         from VegasAfterglow import Scale
 
-        case = config.get('case', 'fs')
+        case = _resolve_case(config)
         prior_cfg = _load_prior_file(case)
         model_case = prior_cfg.get('model', case)   # 成分拓扑（fs_smc → fs 等）
         jet = prior_cfg.get('jet', 'tophat')
@@ -327,7 +407,8 @@ class VegasUnifiedEngine(BaseEngine):
                    else '不考虑宿主消光')
         header = [
             f'模型({case}): {prior_cfg.get("description", "")}',
-            f'物理轴: jet={jet}, medium={medium}, {ext_txt}; xi_e 固定为 1',
+            f'物理轴: model={model_case}, jet={jet}, medium={medium}, '
+            f'{ext_txt}; xi_e 固定为 1',
             f'数据: {len(df)} 点 / {df["nu_hz"].nunique()} 个频率'
             f'（单色流量密度, 已剔除 t<=0 点）',
             f'红移 z = {z},  光度距离 = {lumi_dist:.4e} cm',

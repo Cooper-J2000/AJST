@@ -271,11 +271,25 @@ async function loadLightcurveBands() {
   }
 }
 
-// ─── 先验模板：按所选情形从 schema 重建（切换情形即重置为默认模板） ───
+// 四轴 → case 名（与后端 _case_name 规则一致：缺省轴 tophat/ism/none 不入名）
+function resolveCaseName(sel) {
+  const parts = [sel.model];
+  if (sel.jet && sel.jet !== 'tophat') parts.push(sel.jet);
+  if (sel.medium === 'wind') parts.push('wind');
+  if (sel.extinction && sel.extinction !== 'none') parts.push(sel.extinction);
+  return parts.join('_');
+}
+
+// 不支持的组合（如 fs_inject + powerlaw_wing）：返回原因，支持则返回 null
+function unsupportedReason(schema, sel) {
+  const u = (schema.unsupported || []).find(x => x.model === sel.model && x.jet === sel.jet);
+  return u ? u.reason : null;
+}
+
+// ─── 先验模板：按所选四轴组合从 schema 重建（切换组合即重置为默认模板） ───
 function buildPriorsFromTemplate(schema, sel) {
-  // case 型引擎（vegas_unified）：每种模型情形一整套先验，整套切换
   const pri = {};
-  for (const [k, v] of Object.entries(schema.priors_by_case[sel.case] || {})) {
+  for (const [k, v] of Object.entries(schema.priors_by_case[resolveCaseName(sel)] || {})) {
     pri[k] = { ...v };
   }
   return pri;
@@ -359,9 +373,12 @@ export function destroyFittingTab() {
 
 // ─── 拟合配置区 ───
 function _caseInfoHtml(schema) {
-  const info = ((schema.case_info || {})[_modelSel.case]) || {};
+  const reason = unsupportedReason(schema, _modelSel);
+  if (reason) return `不支持的组合：${_modelSel.model} + ${_modelSel.jet}（${reason}）`;
+  const caseName = resolveCaseName(_modelSel);
+  const info = ((schema.case_info || {})[caseName]) || {};
   const engTxt = info.engine === 'custom' ? '自定义 MCMC 外壳' : '内置 Fitter';
-  let txt = `${info.description || ''} 〔拟合引擎: ${engTxt}〕`;
+  let txt = `${caseName}：${info.description || ''} 〔拟合引擎: ${engTxt}〕`;
   if (info.constraint) txt += ` 联合约束: ${info.constraint}`;
   return txt;
 }
@@ -378,19 +395,29 @@ function renderConfig() {
   const schema = eng.schema;
   const dc = schema.default_config;
   const opts = schema.options || {};
+  const labels = schema.option_labels || {};
   if (!_modelSel) {
-    _modelSel = { case: dc.case };
+    _modelSel = { model: dc.model, jet: dc.jet, medium: dc.medium, extinction: dc.extinction };
   }
   const sp = schema.sampler || {};
   const authed = isAuthed();
 
-  const modelControls = `
-      <div class="col-12">
-        <label class="form-label small mb-1">模型组合 (case)</label>
-        <select class="form-select form-select-sm fit-model-sel" id="fitCase">
-          ${opts.case.map(c => `<option value="${c}" ${c === _modelSel.case ? 'selected' : ''}>${c} — ${esc(((schema.case_info || {})[c] || {}).label || '')}</option>`).join('')}
+  // 四个并列物理轴下拉：成分拓扑 × 喷流 × 介质 × 消光
+  const axisSelect = (axis, id, title) => `
+      <div class="col-6">
+        <label class="form-label small mb-1">${title}</label>
+        <select class="form-select form-select-sm fit-model-sel" id="${id}">
+          ${(opts[axis] || []).map(v => `<option value="${v}" ${v === _modelSel[axis] ? 'selected' : ''}>${v} — ${esc(((labels[axis] || {})[v]) || '')}</option>`).join('')}
         </select>
-        <div class="text-secondary mt-1" style="font-size:0.72rem" id="fitCaseInfo">${esc(_caseInfoHtml(schema))}</div>
+      </div>`;
+  const unsupported = unsupportedReason(schema, _modelSel);
+  const modelControls = `
+      ${axisSelect('model', 'fitModel', '成分拓扑 (model)')}
+      ${axisSelect('jet', 'fitJet', '喷流结构 (jet)')}
+      ${axisSelect('medium', 'fitMedium', '环境介质 (medium)')}
+      ${axisSelect('extinction', 'fitExtinction', '宿主消光 (extinction)')}
+      <div class="col-12">
+        <div class="${unsupported ? 'text-danger' : 'text-secondary'} mt-1" style="font-size:0.72rem" id="fitCaseInfo">${esc(_caseInfoHtml(schema))}</div>
       </div>`;
 
   const seedInput = ('seed' in sp) ? `
@@ -409,7 +436,7 @@ function renderConfig() {
       </div>
       ${modelControls}
       <div class="col-12 mt-2">
-        <label class="form-label small mb-1"><i class="bi bi-sliders"></i> 先验（切换情形会重置为默认模板，可手动修改）</label>
+        <label class="form-label small mb-1"><i class="bi bi-sliders"></i> 先验（切换组合会重置为默认模板，可手动修改）</label>
         <div class="table-scroll" style="max-height:260px;overflow-y:auto">
           <table class="table table-sm mb-0" style="font-size:0.78rem">
             <thead><tr><th>参数</th><th>min</th><th>max</th><th>scale</th></tr></thead>
@@ -433,7 +460,7 @@ function renderConfig() {
         <div class="text-secondary mt-1" style="font-size:0.72rem">步数越大耗时越长（分钟~十分钟级）</div>
       </div>
       <div class="col-12 mt-2">
-        <button class="btn btn-sm btn-primary w-100" id="fitSubmitBtn" ${authed ? '' : 'disabled'}>
+        <button class="btn btn-sm btn-primary w-100" id="fitSubmitBtn" ${authed && !unsupported ? '' : 'disabled'}>
           <i class="bi bi-play-fill"></i> 提交拟合
         </button>
       </div>
@@ -448,12 +475,24 @@ function renderConfig() {
     renderConfig();
   });
 
-  // 情形切换 → 重置先验为默认模板
+  // 任一物理轴切换 → 重置先验为默认模板；不支持的组合给出提示并禁用提交
   body.querySelectorAll('.fit-model-sel').forEach(el => {
     el.addEventListener('change', () => {
-      _modelSel = { case: document.getElementById('fitCase').value };
+      _modelSel = {
+        model: document.getElementById('fitModel').value,
+        jet: document.getElementById('fitJet').value,
+        medium: document.getElementById('fitMedium').value,
+        extinction: document.getElementById('fitExtinction').value,
+      };
+      const reason = unsupportedReason(schema, _modelSel);
       const infoEl = document.getElementById('fitCaseInfo');
-      if (infoEl) infoEl.textContent = _caseInfoHtml(schema);
+      if (infoEl) {
+        infoEl.textContent = _caseInfoHtml(schema);
+        infoEl.classList.toggle('text-danger', !!reason);
+        infoEl.classList.toggle('text-secondary', !reason);
+      }
+      const btn = document.getElementById('fitSubmitBtn');
+      if (btn) btn.disabled = !isAuthed() || !!reason;
       renderPriorsTable();
     });
   });
@@ -709,6 +748,8 @@ async function submitJob() {
   if (!isAuthed()) { showToast('请先登录', 'warning'); return; }
   const schema = currentSchema();
   if (!schema) { showToast('引擎配置未加载', 'danger'); return; }
+  const reason = unsupportedReason(schema, _modelSel);
+  if (reason) { showToast(`不支持的组合：${reason}`, 'warning'); return; }
 
   // 收集先验（含手动修改）
   const template = buildPriorsFromTemplate(schema, _modelSel);

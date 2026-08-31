@@ -1,0 +1,27 @@
+{
+  "description": "正向+反向激波 FS+RS (two-component, wind 星风介质, 宿主消光 SMC, on-axis); tau=引擎持续时间[s]控制RS壳层厚度",
+  "model": "fs_rs",
+  "fit_engine": "fitter",
+  "jet": "two_component",
+  "medium": "wind",
+  "extinction": "smc",
+  "fitter_kwargs": {"rvs_shock": true},
+  "params": [
+    {"name": "theta_c", "lower": 0.005, "upper": 0.3, "scale": "log"},
+    {"name": "E_iso", "lower": 1e51, "upper": 1e55, "scale": "log"},
+    {"name": "Gamma0", "lower": 50, "upper": 1000, "scale": "log"},
+    {"name": "theta_w", "lower": 0.05, "upper": 0.6, "scale": "log"},
+    {"name": "E_iso_w", "lower": 1e51, "upper": 1e55, "scale": "log"},
+    {"name": "Gamma0_w", "lower": 30, "upper": 1000, "scale": "log"},
+    {"name": "tau", "lower": 0.1, "upper": 10000, "scale": "log"},
+    {"name": "theta_v", "lower": 0, "upper": 0, "scale": "fixed"},
+    {"name": "p", "lower": 2.1, "upper": 2.9, "scale": "linear"},
+    {"name": "eps_e", "lower": 0.001, "upper": 0.5, "scale": "log"},
+    {"name": "eps_B", "lower": 1e-6, "upper": 0.1, "scale": "log"},
+    {"name": "p_r", "lower": 2.1, "upper": 2.9, "scale": "linear"},
+    {"name": "eps_e_r", "lower": 0.001, "upper": 0.5, "scale": "log"},
+    {"name": "eps_B_r", "lower": 1e-6, "upper": 0.1, "scale": "log"},
+    {"name": "A_star", "lower": 0.001, "upper": 100, "scale": "log"},
+    {"name": "A_V", "lower": 0, "upper": 2, "scale": "linear"}
+  ]
+}
