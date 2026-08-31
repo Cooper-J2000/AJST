@@ -2,6 +2,8 @@
 
 A lightweight, self-hostable web database for GRB afterglows and other transients.
 
+![homepage](fig/homepage.png)
+
 **Status: active development — not a finished product.** AJST is a personal
 project, built and maintained by one person on a personal computer through
 vibe coding powered by the [Kimi-K3](https://www.kimi.com/news/kimi-k3) model. Development time and model quota are
