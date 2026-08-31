@@ -412,10 +412,10 @@ function renderConfig() {
       </div>`;
   const unsupported = unsupportedReason(schema, _modelSel);
   const modelControls = `
-      ${axisSelect('model', 'fitModel', '成分拓扑 (model)')}
-      ${axisSelect('jet', 'fitJet', '喷流结构 (jet)')}
-      ${axisSelect('medium', 'fitMedium', '环境介质 (medium)')}
-      ${axisSelect('extinction', 'fitExtinction', '宿主消光 (extinction)')}
+      ${axisSelect('model', 'fitAxModel', '成分拓扑 (model)')}
+      ${axisSelect('jet', 'fitAxJet', '喷流结构 (jet)')}
+      ${axisSelect('medium', 'fitAxMedium', '环境介质 (medium)')}
+      ${axisSelect('extinction', 'fitAxExtinction', '宿主消光 (extinction)')}
       <div class="col-12">
         <div class="${unsupported ? 'text-danger' : 'text-secondary'} mt-1" style="font-size:0.72rem" id="fitCaseInfo">${esc(_caseInfoHtml(schema))}</div>
       </div>`;
@@ -479,10 +479,10 @@ function renderConfig() {
   body.querySelectorAll('.fit-model-sel').forEach(el => {
     el.addEventListener('change', () => {
       _modelSel = {
-        model: document.getElementById('fitModel').value,
-        jet: document.getElementById('fitJet').value,
-        medium: document.getElementById('fitMedium').value,
-        extinction: document.getElementById('fitExtinction').value,
+        model: document.getElementById('fitAxModel').value,
+        jet: document.getElementById('fitAxJet').value,
+        medium: document.getElementById('fitAxMedium').value,
+        extinction: document.getElementById('fitAxExtinction').value,
       };
       const reason = unsupportedReason(schema, _modelSel);
       const infoEl = document.getElementById('fitCaseInfo');
