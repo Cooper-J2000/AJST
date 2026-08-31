@@ -3,7 +3,8 @@ GET    /api/fitting/engines                  — 引擎列表（含配置模式�
 POST   /api/fitting/jobs                     — 提交拟合任务（需登录）
 GET    /api/fitting/jobs?transient_id=       — 任务列表
 GET    /api/fitting/jobs/<id>                — 任务详情（config/参数/warnings/文件链接）
-GET    /api/fitting/jobs/<id>/files/<kind>   — 产物文件（kind = h5 | corner | lc_model）
+GET    /api/fitting/jobs/<id>/files/<kind>   — 产物文件（kind = h5 | corner | lc_model |
+                                                lc_plot | lc_ratio | metrics）
 DELETE /api/fitting/jobs/<id>                — 删除任务（需登录，仅 done/failed/interrupted）
 """
 import os
@@ -21,6 +22,9 @@ _FILE_KINDS = {
     'h5': ('chain_record.h5', 'application/octet-stream'),
     'corner': ('corner.png', 'image/png'),
     'lc_model': ('lc_model.json', 'application/json'),
+    'lc_plot': ('lc_plot.png', 'image/png'),
+    'lc_ratio': ('lc_ratio_plot.png', 'image/png'),
+    'metrics': ('metrics.txt', 'text/plain; charset=utf-8'),
 }
 
 
@@ -72,7 +76,7 @@ def submit_job():
     """提交拟合任务：{transient_id, engine, config}"""
     payload = request.get_json(force=True, silent=True) or {}
     transient_id = payload.get('transient_id')
-    engine_name = payload.get('engine', 'vegas_fs')
+    engine_name = payload.get('engine', 'vegas_unified')
     config = payload.get('config') or {}
     if not transient_id:
         abort(400, description='缺少 transient_id')

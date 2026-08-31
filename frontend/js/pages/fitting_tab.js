@@ -18,6 +18,7 @@ let _pollTimer = null;
 let _chart = null;
 let _selectedId = null;     // 当前展开结果的任务 id
 let _modelSel = null;       // 当前模型情形选择
+let _engineName = null;     // 当前选中的拟合引擎
 let _lcBands = null;        // {band: [{x,y,err,isUL,id}]} 光变数据（mJy），叠加图/数据选取用
 let _bandColorMap = {};     // band → color
 let _axisRange = { xmin: null, xmax: null, ymin: null, ymax: null };  // 叠加图手动范围
@@ -272,21 +273,11 @@ async function loadLightcurveBands() {
 
 // ─── 先验模板：按所选情形从 schema 重建（切换情形即重置为默认模板） ───
 function buildPriorsFromTemplate(schema, sel) {
-  const pbo = schema.priors_by_option || {};
+  // case 型引擎（vegas_unified）：每种模型情形一整套先验，整套切换
   const pri = {};
-  // 基础先验（default_config 为 tophat+ism 模板，medium 专属参数按选项重建）
-  for (const [k, v] of Object.entries(schema.default_config.priors || {})) {
-    if (k === 'n_ism' || k === 'A_star') continue;
+  for (const [k, v] of Object.entries(schema.priors_by_case[sel.case] || {})) {
     pri[k] = { ...v };
   }
-  const merge = (obj) => {
-    for (const [k, v] of Object.entries(obj || {})) pri[k] = { ...v };
-  };
-  merge((pbo.jet_extra || {})[sel.jet]);
-  merge((pbo.medium || {})[sel.medium]);
-  if (sel.rvs_shock) merge(pbo.rvs_shock);
-  if (sel.magnetar) merge(pbo.magnetar);
-  if (sel.extinction !== 'none') merge(pbo.extinction);
   return pri;
 }
 
@@ -367,6 +358,14 @@ export function destroyFittingTab() {
 }
 
 // ─── 拟合配置区 ───
+function _caseInfoHtml(schema) {
+  const info = ((schema.case_info || {})[_modelSel.case]) || {};
+  const engTxt = info.engine === 'custom' ? '自定义 MCMC 外壳' : '内置 Fitter';
+  let txt = `${info.description || ''} 〔拟合引擎: ${engTxt}〕`;
+  if (info.constraint) txt += ` 联合约束: ${info.constraint}`;
+  return txt;
+}
+
 function renderConfig() {
   const body = document.getElementById('fitConfigBody');
   if (!body) return;
@@ -374,22 +373,29 @@ function renderConfig() {
     body.innerHTML = '<div class="text-secondary small">无可用拟合引擎</div>';
     return;
   }
-  const eng = _engines[0];
+  const eng = _engines.find(e => e.name === _engineName) || _engines[0];
+  _engineName = eng.name;
   const schema = eng.schema;
   const dc = schema.default_config;
-  const opts = schema.options;
+  const opts = schema.options || {};
   if (!_modelSel) {
-    _modelSel = {
-      jet: dc.jet, medium: dc.medium,
-      rvs_shock: !!dc.rvs_shock, magnetar: !!dc.magnetar,
-      extinction: dc.extinction,
-    };
+    _modelSel = { case: dc.case };
   }
   const sp = schema.sampler || {};
   const authed = isAuthed();
 
-  const optHtml = (list, cur) => list.map(o =>
-    `<option value="${o}" ${o === cur ? 'selected' : ''}>${o}</option>`).join('');
+  const modelControls = `
+      <div class="col-12">
+        <label class="form-label small mb-1">模型组合 (case)</label>
+        <select class="form-select form-select-sm fit-model-sel" id="fitCase">
+          ${opts.case.map(c => `<option value="${c}" ${c === _modelSel.case ? 'selected' : ''}>${c} — ${esc(((schema.case_info || {})[c] || {}).label || '')}</option>`).join('')}
+        </select>
+        <div class="text-secondary mt-1" style="font-size:0.72rem" id="fitCaseInfo">${esc(_caseInfoHtml(schema))}</div>
+      </div>`;
+
+  const seedInput = ('seed' in sp) ? `
+          <div class="col-3"><label class="small text-secondary mb-0">seed</label>
+            <input type="number" class="form-control form-control-sm" id="fitSeed" value="${sp.seed ?? 42}" min="0"></div>` : '';
 
   body.innerHTML = `
     ${authed ? '' : `<div class="alert alert-warning py-2 small mb-3">
@@ -398,31 +404,10 @@ function renderConfig() {
       <div class="col-12">
         <label class="form-label small mb-1">引擎</label>
         <select class="form-select form-select-sm" id="fitEngine">
-          ${_engines.map(e => `<option value="${esc(e.name)}">${esc(e.label)} (${esc(e.name)})</option>`).join('')}
+          ${_engines.map(e => `<option value="${esc(e.name)}" ${e.name === _engineName ? 'selected' : ''}>${esc(e.label)} (${esc(e.name)})</option>`).join('')}
         </select>
       </div>
-      <div class="col-6">
-        <label class="form-label small mb-1">喷流结构 (jet)</label>
-        <select class="form-select form-select-sm fit-model-sel" id="fitJet">${optHtml(opts.jet, _modelSel.jet)}</select>
-      </div>
-      <div class="col-6">
-        <label class="form-label small mb-1">环境介质 (medium)</label>
-        <select class="form-select form-select-sm fit-model-sel" id="fitMedium">${optHtml(opts.medium, _modelSel.medium)}</select>
-      </div>
-      <div class="col-6">
-        <label class="form-label small mb-1">宿主消光 (extinction)</label>
-        <select class="form-select form-select-sm fit-model-sel" id="fitExtinction">${optHtml(opts.extinction, _modelSel.extinction)}</select>
-      </div>
-      <div class="col-6 d-flex align-items-end gap-3 pb-1">
-        <div class="form-check form-switch">
-          <input class="form-check-input fit-model-sel" type="checkbox" id="fitRvs" ${_modelSel.rvs_shock ? 'checked' : ''}>
-          <label class="form-check-label small" for="fitRvs">反向激波</label>
-        </div>
-        <div class="form-check form-switch">
-          <input class="form-check-input fit-model-sel" type="checkbox" id="fitMagnetar" ${_modelSel.magnetar ? 'checked' : ''}>
-          <label class="form-check-label small" for="fitMagnetar">磁星</label>
-        </div>
-      </div>
+      ${modelControls}
       <div class="col-12 mt-2">
         <label class="form-label small mb-1"><i class="bi bi-sliders"></i> 先验（切换情形会重置为默认模板，可手动修改）</label>
         <div class="table-scroll" style="max-height:260px;overflow-y:auto">
@@ -443,6 +428,7 @@ function renderConfig() {
             <input type="number" class="form-control form-control-sm" id="fitTopK" value="${sp.top_k ?? 10}" min="1"></div>
           <div class="col-3"><label class="small text-secondary mb-0">npool</label>
             <input type="number" class="form-control form-control-sm" id="fitNpool" value="${sp.npool ?? 4}" min="1" max="${sp.npool_max ?? 8}"></div>
+          ${seedInput}
         </div>
         <div class="text-secondary mt-1" style="font-size:0.72rem">步数越大耗时越长（分钟~十分钟级）</div>
       </div>
@@ -455,16 +441,19 @@ function renderConfig() {
 
   renderPriorsTable();
 
+  // 引擎切换 → 重置模型选择与先验，重渲染配置卡
+  document.getElementById('fitEngine').addEventListener('change', (ev) => {
+    _engineName = ev.target.value;
+    _modelSel = null;
+    renderConfig();
+  });
+
   // 情形切换 → 重置先验为默认模板
   body.querySelectorAll('.fit-model-sel').forEach(el => {
     el.addEventListener('change', () => {
-      _modelSel = {
-        jet: document.getElementById('fitJet').value,
-        medium: document.getElementById('fitMedium').value,
-        extinction: document.getElementById('fitExtinction').value,
-        rvs_shock: document.getElementById('fitRvs').checked,
-        magnetar: document.getElementById('fitMagnetar').checked,
-      };
+      _modelSel = { case: document.getElementById('fitCase').value };
+      const infoEl = document.getElementById('fitCaseInfo');
+      if (infoEl) infoEl.textContent = _caseInfoHtml(schema);
       renderPriorsTable();
     });
   });
@@ -736,15 +725,19 @@ async function submitJob() {
     }
   });
 
+  const samplerCfg = {
+    nsteps: parseInt(document.getElementById('fitNsteps').value, 10) || 2000,
+    nburn: parseInt(document.getElementById('fitNburn').value, 10) || 1000,
+    top_k: parseInt(document.getElementById('fitTopK').value, 10) || 10,
+    npool: parseInt(document.getElementById('fitNpool').value, 10) || 4,
+  };
+  const seedEl = document.getElementById('fitSeed');   // 仅 case 型引擎渲染
+  if (seedEl) samplerCfg.seed = parseInt(seedEl.value, 10) || 42;
+
   const config = {
     ..._modelSel,
     priors,
-    sampler: {
-      nsteps: parseInt(document.getElementById('fitNsteps').value, 10) || 2000,
-      nburn: parseInt(document.getElementById('fitNburn').value, 10) || 1000,
-      top_k: parseInt(document.getElementById('fitTopK').value, 10) || 10,
-      npool: parseInt(document.getElementById('fitNpool').value, 10) || 4,
-    },
+    sampler: samplerCfg,
   };
   const engine = document.getElementById('fitEngine').value;
   const ds = collectDataSelection();
@@ -925,8 +918,12 @@ async function loadResult(jobId) {
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
         <span><i class="bi bi-graph-up-arrow"></i> 拟合结果 — 任务 #${detail.id} <span class="text-secondary small">${esc(detail.model_name)}</span></span>
-        ${detail.files && detail.files.h5 ? `<a class="btn btn-sm btn-outline-secondary" href="${detail.files.h5}" title="下载采样链 h5">
-          <i class="bi bi-download"></i> chain_record.h5</a>` : ''}
+        <span class="d-flex gap-1">
+          ${detail.files && detail.files.metrics ? `<a class="btn btn-sm btn-outline-secondary" href="${detail.files.metrics}" target="_blank" title="查看 metrics.txt">
+            <i class="bi bi-file-text"></i> metrics</a>` : ''}
+          ${detail.files && detail.files.h5 ? `<a class="btn btn-sm btn-outline-secondary" href="${detail.files.h5}" title="下载采样链 h5">
+            <i class="bi bi-download"></i> chain_record.h5</a>` : ''}
+        </span>
       </div>
       <div class="card-body">
         <div class="row g-3">
@@ -971,6 +968,18 @@ async function loadResult(jobId) {
             <div class="small text-secondary mb-1">角图 (corner)</div>
             <img src="${detail.files.corner}" class="img-fluid rounded border" alt="corner plot"
                  onerror="this.parentElement.innerHTML='<div class=\\'text-secondary small\\'>角图加载失败</div>'">
+          </div>
+        </div>` : ''}
+        ${detail.files && detail.files.lc_plot ? `
+        <div class="row mt-3">
+          <div class="col-lg-10 mx-auto">
+            <div class="small text-secondary mb-1">光变拟合图（错位分波段，虚线为成分拆分）</div>
+            <img src="${detail.files.lc_plot}" class="img-fluid rounded border" alt="lightcurve plot"
+                 onerror="this.parentElement.innerHTML='<div class=\\'text-secondary small\\'>光变图加载失败</div>'">
+            ${detail.files.lc_ratio ? `
+            <div class="small text-secondary mt-2 mb-1">光变拟合图 + data/model 比值子图</div>
+            <img src="${detail.files.lc_ratio}" class="img-fluid rounded border" alt="lightcurve ratio plot"
+                 onerror="this.style.display='none'">` : ''}
           </div>
         </div>` : ''}
       </div>

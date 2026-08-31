@@ -26,6 +26,10 @@ class BaseEngine:
         """返回错误信息列表；空列表表示配置合法。默认不校验。"""
         return []
 
+    def model_label(self, config):
+        """返回完整的 fitting_results.model_name；None = 用默认的 jet-medium 命名"""
+        return None
+
     def run(self, config, data, workdir, log):
         raise NotImplementedError
 

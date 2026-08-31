@@ -1,0 +1,21 @@
+{
+  "description": "双成分正向激波 two-component FS (TwoComponentJet: 窄芯+宽翼, ISM, on-axis)",
+  "model": "fs",
+  "fit_engine": "fitter",
+  "jet": "two_component",
+  "medium": "ism",
+  "extinction": null,
+  "params": [
+    {"name": "theta_c",  "lower": 0.005, "upper": 0.3,  "scale": "log"},
+    {"name": "E_iso",    "lower": 1e51,  "upper": 1e55, "scale": "log"},
+    {"name": "Gamma0",   "lower": 50,    "upper": 1000, "scale": "log"},
+    {"name": "theta_w",  "lower": 0.05,  "upper": 0.6,  "scale": "log"},
+    {"name": "E_iso_w",  "lower": 1e51,  "upper": 1e55, "scale": "log"},
+    {"name": "Gamma0_w", "lower": 30,     "upper": 1000, "scale": "log"},
+    {"name": "theta_v",  "lower": 0.0,   "upper": 0.0,  "scale": "fixed"},
+    {"name": "n_ism",    "lower": 1e-4,  "upper": 1e3,  "scale": "log"},
+    {"name": "p",        "lower": 2.1,  "upper": 2.9,  "scale": "linear"},
+    {"name": "eps_e",    "lower": 1e-3,  "upper": 0.5,  "scale": "log"},
+    {"name": "eps_B",    "lower": 1e-6,  "upper": 0.1,  "scale": "log"}
+  ]
+}

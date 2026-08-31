@@ -58,7 +58,10 @@ Web UI (all local, no build step):
 - **Filters management** — photometric filter definitions (admin-editable)
 - **Afterglow fitting** — submit and monitor
   [VegasAfterglow](https://github.com/YihanWangAstro/VegasAfterglow) MCMC fits
-  from the detail page (optional dependency)
+  from the detail page (optional dependency); a preset-combination engine
+  (`vegas_unified`) with curated priors, selectable jet structure / circumburst
+  medium / host extinction, and joint physical constraints (e.g. FS+RS pair plus
+  a standalone FS, two-component jet)
 - **Host galaxies** — per-source host coordinates, redshift (spectroscopic or
   photometric) and multi-band photometry (AB/Vega/ST mag systems), plus a
   built-in [pcigale](https://cigale.lam.fr) SED-fitting tab: fixed-z or

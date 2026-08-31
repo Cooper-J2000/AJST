@@ -337,7 +337,7 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | POST | `/api/fitting/jobs` | 提交余辉拟合任务（异步） | 登录 |
 | GET | `/api/fitting/jobs` | 拟合任务列表（`?transient_id=` 过滤） | 否 |
 | GET | `/api/fitting/jobs/<id>` | 任务详情（状态/参数估计/产物清单） | 否 |
-| GET | `/api/fitting/jobs/<id>/files/<kind>` | 下载产物（`h5` 采样链 / `corner` 角图 / `lc_model` 模型光变） | 否 |
+| GET | `/api/fitting/jobs/<id>/files/<kind>` | 下载产物（`h5` 采样链 / `corner` 角图 / `lc_model` 模型光变；vegas_unified 另有 `metrics` / `lc_plot` / `lc_ratio`，见 §8.21） | 否 |
 | DELETE | `/api/fitting/jobs/<id>` | 删除任务记录及产物 | 管理员 |
 | GET | `/api/ingest/resolve` | 解析目标源（名称/别名精确 + 坐标锥形，只查不建，见 §8.16） | Bearer token |
 | POST | `/api/ingest/photometry` | STDWeb 测光点接入（解析/映射/去重/单事务入库，见 §8.16） | Bearer token |
@@ -477,9 +477,13 @@ frontend/
 backend/fitting/
 ├── engines/
 │   ├── base.py           # 拟合引擎注册表（可继续注册新引擎）
-│   └── vegas_fs.py       # VegasAfterglow 正向激波引擎（先验模板/情形校验/MCMC 执行）
+│   └── vegas_unified.py  # 组合模型引擎（8 种 case 定制先验 + 联合约束，见 §8.21）
+├── vegas_unified/        # 修改版拟合程序 vendored 副本
+│   ├── custom_mcmc.py    # 自定义 MCMC 外壳（联合约束情形）+ 模型构建 + 绘图
+│   └── prior_configs/    # 8 种 case 的默认先验与描述（JSON，唯一来源）
 └── jobs.py               # 单 worker 异步任务队列 + prepare_data 数据准备
 backend/fitting_store/    # 拟合产物：<transient_id>/<任务id>/{chain_record.h5, corner.png, lc_model.json, run.log}
+                          #   另有 metrics.txt / lc_plot.png / lc_ratio_plot.png
 ```
 
 ### 6.5 光谱图 TNS 风格功能（v2.7 新增）
@@ -924,7 +928,9 @@ t0 补全、GRB 编号关联；终态 `transients_cleaned.csv` 2794 行；审查
 - `engines/base.py`：拟合引擎注册表——引擎声明元信息（模型情形选项、默认先验、采样缺省）、
   校验配置、执行拟合；设计目标是**可继续添加更多拟合引擎**（新引擎实现同一接口并注册即可，
   前端配置区与 API 自动跟随）
-- `engines/vegas_fs.py`：VegasAfterglow 正向激波引擎（可选反向激波/磁星/宿主消光）
+- `engines/vegas_unified.py`：组合模型引擎，**唯一的余辉拟合引擎**（8 种定制先验
+  情形 + 联合物理约束，自定义 MCMC 外壳，见 §8.21；v2.5 时期的旧引擎 `vegas_fs`
+  已于 2026-08-31 退役下线，历史任务结果仍可查看，只是不能再提交）
 - `jobs.py`：单 worker 异步任务队列（后台线程串行执行）；任务记录写 `fitting_results` 表，
   产物存 `backend/fitting_store/<transient_id>/<任务id>/`
   （`chain_record.h5` 采样链、`corner.png` 角图、`lc_model.json` 模型光变 + 1σ 置信带、`run.log`）
@@ -932,16 +938,13 @@ t0 补全、GRB 编号关联；终态 `transients_cleaned.csv` 2794 行；审查
 **依赖**：运行环境需 `pip install "VegasAfterglow[mcmc]"`（2.0.6，
 附带 bilby / emcee / dynesty / corner）。
 
-**模型情形**：`jet`（tophat / gaussian / powerlaw）× `medium`（ism / wind）×
-开关（`rvs_shock` / `magnetar`）× `extinction`（none / smc / lmc / mw）。先验模板内置：
-
-- 基础盘：`E_iso` / `Gamma0` / `theta_c` / `n_ism`（wind 时为 `A_star`）/ `p` / `eps_e` / `eps_B` / `xi_e`
-- `rvs_shock` 开：+ `tau` 及反向激波四参数
-- `magnetar` 开：+ `L0` / `t0` / `q`
-- `extinction` 非 none：+ `A_V`
+**模型情形**：按"情形"(case) 整套选择，共 8 种（`fs` / `fs_rs` / `fs_inject` /
+`frs_plus_fs` / `two_comp_fs` / `fs_gaussian` / `fs_wind` / `fs_smc`），默认先验与
+描述的唯一来源是 `fitting/vegas_unified/prior_configs/<case>.json`（详见 §8.21）。
 
 每条先验形如 `{min, max, scale: log|linear|fixed}`，前端先验编辑器可逐条修改或固定；
-采样设置含 `nsteps` / `nburn` / `top_k` / `npool`（默认 2000 / 1000 / 10 / 4，npool 上限 8）。
+采样设置含 `nsteps` / `nburn` / `top_k` / `npool` / `seed`（默认 20000 / 6000 / 10 / 4 /
+42，npool 上限 8；网页上请按数据量调小步数）。
 
 **数据准备**（`jobs.prepare_data()`）：
 
@@ -1166,6 +1169,48 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
 - 权限：查看公开；宿主信息编辑/提交拟合/写回=登录；删除宿主/删除任务=管理员。
 - 列表页「宿主」徽章 + `has_host` 筛选；新建事件页可折叠宿主字段；首页与统计子页
   `/stats/hosts`（覆盖率、M*/SFR 分布、宿主 z vs 暂现源 z 散点）。
+
+### 8.21 组合模型余辉拟合引擎 vegas_unified（2026-08-30 新增；2026-08-31 起为唯一余辉拟合引擎）
+
+接入作者修改版拟合工作区（`Vegas_run_unified.ipynb` / `run_batch_fit.py` 的网页化），
+2026-08-31 起取代旧 `vegas_fs` 引擎成为唯一的余辉拟合引擎（历史 `vegas_fs:*` 任务
+结果仍可查看，不能再提交；API 默认引擎已改为 `vegas_unified`），共用任务队列、
+`fitting_results` 表与"余辉拟合"标签页。
+
+- **模型组合按"情形"(case) 整套选择**（`fitting/vegas_unified/prior_configs/<case>.json`
+  为默认先验与描述的唯一来源，随代码分发，共 8 种）：
+  `fs`（单成分正向激波）、`fs_rs`（正向+反向激波）、`fs_inject`（正向激波+磁星注入）、
+  `frs_plus_fs`（正反激波对+独立正向激波，共用 n_ism，17 自由参数）、
+  `two_comp_fs`（TwoComponentJet 窄芯+宽翼）、`fs_gaussian`（gaussian 喷流）、
+  `fs_wind`（wind 星风介质，n_ism→A_star）、`fs_smc`（宿主消光 Pei92 SMC + A_V）。
+  通用约定：xi_e=1、on-axis（theta_v 固定 0，可在 JSON 放开）；喷流结构 / 环境介质 /
+  宿主消光三个物理轴由先验 JSON 顶层字段 `jet` / `medium` / `extinction` 选择
+  （缺省 tophat / ism / 无消光），成分开关（`rvs_shock` / `magnetar`）由可选的
+  `fitter_kwargs` 字段给出；喷流/介质/消光的合法取值注册表见
+  `custom_mcmc.JET_TYPES`（7 种）/ `MEDIUM_TYPES`（ism/wind）/ `EXTINCTION_LAWS`
+  （smc/lmc/mw）。
+- **联合物理约束**：`frs_plus_fs` 约束 `Gamma0 > Gamma02`，`two_comp_fs` 约束
+  `theta_c < theta_w 且 Gamma0 > Gamma0_w`（`custom_mcmc.CONSTRAINTS`，按 case 名
+  或 jet 名均可命中）。内置 Fitter 的先验逐参数独立、无法表达联合约束，带约束的情形
+  自动改走**自定义 MCMC 外壳**（`fitting/vegas_unified/custom_mcmc.py`，直接调
+  `VegasAfterglow.Model` 构建似然、emcee 驱动，0.7·DEMove+0.3·DESnookerMove，
+  线性流量 chi2 与 2.0.6 内置 Fitter 一致）；其余情形走内置 Fitter（按先验 JSON 的
+  `fit_engine` 分派）。
+- **采样设置**含 `seed`（默认 42）；默认 nsteps/nburn = 20000/6000
+  （与修改版工作区一致，网页上请按数据量调小）。
+- **产物**在 `fitting_store/<tid>/<job_id>/`：`chain_record.h5`（fitter 路径为 bilby
+  格式，custom 路径为完整链+数据+配置，均可用 `custom_mcmc.load_chain_h5` 读回重画）、
+  `corner.png`、`lc_model.json`（同 §8.14 前端契约）、以及 custom_mcmc 风格的
+  `metrics.txt` / `lc_plot.png`（错位分波段+成分虚线拆分）/ `lc_ratio_plot.png`
+  （+data/model 比值子图）；后三种的下载/查看通过
+  `/api/fitting/jobs/<id>/files/{metrics,lc_plot,lc_ratio}`。
+- 任务记录命名 `vegas_unified:<case>`（`BaseEngine.model_label()`，jobs.py 优先采用）。
+- 前端：配置卡显示"模型组合"下拉（含中文标签）、当前情形的描述/实际拟合引擎/联合
+  约束提示、seed 输入；先验表按 case 从 `priors_by_case` 整套重建。
+- 源码出处注释在 `custom_mcmc.py` 模块头；与原版差异仅：去掉 dataloader 依赖
+  （数据由 `jobs.prepare_data()` 供给）、`run_mcmc` 增加 `n_workers` 形参。
+  修改版工作区与 vendored 副本各自独立演化，同步靠人工拷贝（本次同步至工作区
+  2026-08-31 状态：8 个先验 JSON、jet/medium/extinction 三轴 schema）。
 
 ---
 

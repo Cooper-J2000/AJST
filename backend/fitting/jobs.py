@@ -2,7 +2,7 @@
 
 - 单 worker 线程池串行执行（MCMC 重负载，排队即可）。
 - 任务记录落在 fitting_results 表：
-    model_name  = 'vegas_fs:<jet>-<medium>'
+    model_name  = 'vegas_unified:<case>'（历史任务为 'vegas_fs:<jet>-<medium>'）
     parameters  = 最佳参数 {名: {v, err}}
     chi_squared = chi2（未除 dof）
     extra_data  = {engine, config, status, error, runtime_s, dof, bic, aic,
@@ -236,7 +236,8 @@ def _set_status(sess, row, status, **extra):
 def create_job(transient_id, engine_name, config, warnings=None, created_by=None):
     """建任务（pending）并入队，返回任务 id。调用方需已完成校验。"""
     engine = get_engine(engine_name)
-    model_name = f"{engine_name}:{config.get('jet', 'tophat')}-{config.get('medium', 'ism')}"
+    model_name = engine.model_label(config) or \
+        f"{engine_name}:{config.get('jet', 'tophat')}-{config.get('medium', 'ism')}"
     sess = get_session()
     try:
         row = FittingResult(
@@ -286,7 +287,10 @@ def _run_job(job_id):
             result = engine.run(ed.get('config') or {}, data, workdir, log=None)
             files = {}
             for kind, fname in (('h5', 'chain_record.h5'), ('corner', 'corner.png'),
-                                ('lc_model', 'lc_model.json')):
+                                ('lc_model', 'lc_model.json'),
+                                ('lc_plot', 'lc_plot.png'),
+                                ('lc_ratio', 'lc_ratio_plot.png'),
+                                ('metrics', 'metrics.txt')):
                 if os.path.exists(os.path.join(workdir, fname)):
                     files[kind] = fname
             row.parameters = result['params']
