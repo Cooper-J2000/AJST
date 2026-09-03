@@ -247,6 +247,11 @@ body {
   border-radius: 8px;
   overflow: hidden;
   background: #000;
+  /* Aladin 内部控件/弹层最高 z-index 仅 1000，低于 sticky navbar(1020)；
+     抬升整个组件的层叠上下文，避免全屏（CSS fixed 实现）或短视口滚动时
+     顶排按钮（全屏/关闭等）被页面总页眉遮挡无法点击 */
+  position: relative;
+  z-index: 1030;
 }
 
 /* LC chart container */

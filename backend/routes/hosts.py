@@ -7,11 +7,12 @@ from flask import Blueprint, jsonify, request, abort
 
 from app import get_session, require_auth, require_admin, current_username
 from models import Transient, HostGalaxy
+from coords import parse_ra, parse_dec
 
 hosts_bp = Blueprint('hosts', __name__)
 
-# PUT 可写字段（photometry 整体替换；derived 浅合并；其余直接赋值）
-_SCALAR_FIELDS = ('ra', 'dec', 'redshift', 'redshift_err', 'comment')
+# PUT 可写字段（photometry 整体替换；derived 浅合并；其余直接赋值；ra/dec 单独走坐标解析）
+_SCALAR_FIELDS = ('redshift', 'redshift_err', 'comment')
 _REDSHIFT_TYPES = ('spec', 'phot', None)
 
 
@@ -36,7 +37,18 @@ def upsert_host(transient_id):
     if 'redshift_type' in body and body['redshift_type'] not in _REDSHIFT_TYPES:
         abort(400, description="redshift_type 必须为 'spec' / 'phot' / null")
     if 'photometry' in body and not isinstance(body['photometry'], list):
-        abort(400, description='photometry 必须是数组 [{band, mag, mag_err, mag_sys, source}]')
+        abort(400, description='photometry 必须是数组 [{band, mag, mag_err, mag_sys, source, upperlimit}]')
+    if isinstance(body.get('photometry'), list):
+        for p in body['photometry']:
+            if not isinstance(p, dict) or not p.get('band') or p.get('mag') is None:
+                abort(400, description='photometry 每项必须含 band 与 mag')
+            # upperlimit 缺省 false；mag_err 允许为空（后续处理按 0.2 mag，不落库）
+            p['upperlimit'] = bool(p.get('upperlimit'))
+            if p.get('mag_err') is not None:
+                try:
+                    p['mag_err'] = float(p['mag_err'])
+                except (TypeError, ValueError):
+                    abort(400, description=f"波段 {p.get('band')}: mag_err 非法")
     if 'derived' in body and not isinstance(body['derived'], dict):
         abort(400, description='derived 必须是对象')
 
@@ -54,6 +66,14 @@ def upsert_host(transient_id):
         for field in _SCALAR_FIELDS:
             if field in body:
                 setattr(host, field, body[field])
+        # 坐标支持十进制度或时分秒字符串，入库统一转度
+        try:
+            if 'ra' in body:
+                host.ra = parse_ra(body['ra'])
+            if 'dec' in body:
+                host.dec = parse_dec(body['dec'])
+        except ValueError as e:
+            abort(400, description=str(e))
         if 'redshift_type' in body:
             host.redshift_type = body['redshift_type']
         if 'photometry' in body:

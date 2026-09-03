@@ -10,6 +10,7 @@ from flask import Blueprint, request, jsonify
 from sqlalchemy import cast, String, or_
 from app import get_session, require_auth, require_admin
 from models import Transient, Tag, TransientTag, HostGalaxy, utcnow
+from coords import parse_ra, parse_dec
 from datetime import datetime
 import extinction
 
@@ -193,10 +194,15 @@ def delete_transient(tid):
 def _apply_transient_fields(t, body):
     """将请求体字段映射到模型（可扩展）。
     约定：传 null 或空字符串 = 清空该字段；不传 = 保持不变。"""
-    for field in ('ra', 'dec', 'redshift', 'pos_error'):
+    for field in ('redshift', 'pos_error'):
         if field in body:
             v = body[field]
             setattr(t, field, float(v) if v not in (None, '') else None)
+    # 坐标支持十进制度或时分秒字符串，入库统一转度（非法值抛 ValueError → 400）
+    if 'ra' in body:
+        t.ra = parse_ra(body['ra'])
+    if 'dec' in body:
+        t.dec = parse_dec(body['dec'])
     for field in ('trigger_instrument', 'redshift_type', 'redshift_ref',
                   'pos_error_unit', 'pos_ref'):
         if field in body:

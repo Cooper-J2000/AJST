@@ -4,17 +4,20 @@
 // 三个卡片：宿主信息（查看/编辑/测光表）、拟合配置（CIGALE 网格）、拟合任务与结果。
 import {
   isAuthed, isAdmin, showToast,
-  getHost, saveHost,
+  getHost, saveHost, getFilters,
   getHostfitConfig, submitHostfitJob, getHostfitJobs, getHostfitJob,
   hostfitJobFileUrl, deleteHostfitJob,
 } from '../api.js';
+import { parseRA, parseDec, attachCoordHint } from '../coords.js';
 
 const POLL_INTERVAL = 5000;
 const MIN_FIT_POINTS = 4;   // 参与拟合的勾选测光点下限
+const DEFAULT_MAG_ERR = 0.2; // 非上限且未填误差的点，后续处理（拟合/统计）按 0.2 mag，不落库
 
 let _tid = null;
 let _host = null;           // GET /hosts/<tid> 结果；null = 无记录(404)
-let _photRows = [];         // 测光表编辑状态 [{use,band,mag,mag_err,mag_sys,source}]
+let _photRows = [];         // 测光表编辑状态 [{use,band,mag,mag_err,mag_sys,source,upperlimit}]
+let _bandList = null;       // GET /filters 缓存（测光 band 下拉/补全候选）
 let _hfConfig = null;       // GET /hostfit/config 缓存
 let _jobs = [];
 let _pollTimer = null;
@@ -138,7 +141,14 @@ export async function initHostfitTab(container, tid) {
 
   document.getElementById('hfRefreshBtn').addEventListener('click', () => refreshJobs());
 
-  // 宿主信息（404 = 无记录，正常情况）与拟合配置并行加载
+  // 宿主信息（404 = 无记录，正常情况）与波段列表并行加载
+  try {
+    if (!_bandList) {
+      const fl = await getFilters().catch(() => []);
+      // 按波长升序作为候选顺序
+      _bandList = (fl || []).slice().sort((a, b) => (a.wavelength || 0) - (b.wavelength || 0)).map(f => f.id);
+    }
+  } catch { _bandList = []; }
   try {
     _host = await getHost(tid);
   } catch (e) {
@@ -149,6 +159,7 @@ export async function initHostfitTab(container, tid) {
     use: true,
     band: p.band ?? '', mag: p.mag ?? null, mag_err: p.mag_err ?? null,
     mag_sys: p.mag_sys || 'AB', source: p.source ?? '',
+    upperlimit: p.upperlimit === true,
   }));
   renderHostCard();
 
@@ -190,10 +201,10 @@ function renderHostCard() {
       <i class="bi bi-lock"></i> 未登录：可浏览宿主信息与拟合结果，保存/提交需要先登录。</div>`}
     ${!_host ? `<div class="text-secondary small mb-2">暂无宿主记录，填写并保存即创建。</div>` : ''}
     <div class="row g-2 small">
-      <div class="col-6"><label class="form-label small mb-1">RA (度)</label>
-        <input type="number" class="form-control form-control-sm" id="hfRa" step="any" value="${h.ra ?? ''}"></div>
-      <div class="col-6"><label class="form-label small mb-1">Dec (度)</label>
-        <input type="number" class="form-control form-control-sm" id="hfDec" step="any" value="${h.dec ?? ''}"></div>
+      <div class="col-6"><label class="form-label small mb-1">RA</label>
+        <input type="text" class="form-control form-control-sm" id="hfRa" value="${h.ra ?? ''}" placeholder="度 或 08h08m27.4s"></div>
+      <div class="col-6"><label class="form-label small mb-1">Dec</label>
+        <input type="text" class="form-control form-control-sm" id="hfDec" value="${h.dec ?? ''}" placeholder="度 或 +40d36m44.8s"></div>
       <div class="col-4"><label class="form-label small mb-1">红移</label>
         <input type="number" class="form-control form-control-sm" id="hfZ" step="any" value="${h.redshift ?? ''}"></div>
       <div class="col-4"><label class="form-label small mb-1">红移误差</label>
@@ -212,25 +223,31 @@ function renderHostCard() {
       ${d.fit_at ? `<span class="text-secondary" style="font-size:0.72rem">（任务 #${d.job_id ?? '?'}，${fmtTime(d.fit_at)}）</span>` : ''}
     </div>` : ''}
     <div class="d-flex justify-content-between align-items-center mt-3 mb-1">
-      <label class="form-label small mb-0"><i class="bi bi-camera"></i> 宿主测光（勾选行参与拟合）</label>
+      <label class="form-label small mb-0"><i class="bi bi-camera"></i> 宿主测光（勾选行参与拟合；上限行不参与拟合）</label>
       <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hfAddPhotRow"><i class="bi bi-plus-lg"></i> 添加行</button>
     </div>
+    <datalist id="hfBandList">${(_bandList || []).map(b => `<option value="${esc(b)}"></option>`).join('')}</datalist>
     <div class="table-scroll" style="max-height:240px;overflow-y:auto">
       <table class="table table-sm mb-0" style="font-size:0.78rem">
         <thead><tr>
-          <th style="width:28px"></th><th>band</th><th>mag</th><th>mag_err</th><th>星等系统</th><th>source</th><th style="width:30px"></th>
+          <th style="width:28px"></th><th>band</th><th>mag</th><th>mag_err</th><th title="是否为上限（非探测）">上限</th><th>星等系统</th><th>source</th><th style="width:30px"></th>
         </tr></thead>
         <tbody id="hfPhotBody"></tbody>
       </table>
+    </div>
+    <div class="text-secondary mt-1" style="font-size:0.72rem">
+      <i class="bi bi-info-circle"></i> 非上限且 mag_err 留空的点，后续处理（拟合 / 统计图）按 σ=${DEFAULT_MAG_ERR} mag 计，该缺省值不会写入记录。
     </div>
     <button class="btn btn-sm btn-primary w-100 mt-2" id="hfSaveBtn" ${authed ? '' : 'disabled'}>
       <i class="bi bi-check-lg"></i> 保存宿主信息
     </button>`;
 
   renderPhotRows();
+  attachCoordHint(document.getElementById('hfRa'), true);
+  attachCoordHint(document.getElementById('hfDec'), false);
   document.getElementById('hfAddPhotRow').addEventListener('click', () => {
     collectPhotRows();
-    _photRows.push({ use: true, band: '', mag: null, mag_err: null, mag_sys: 'AB', source: '' });
+    _photRows.push({ use: true, band: '', mag: null, mag_err: null, mag_sys: 'AB', source: '', upperlimit: false });
     renderPhotRows();
     updateSubmitState();
   });
@@ -241,21 +258,27 @@ function renderPhotRows() {
   const tbody = document.getElementById('hfPhotBody');
   if (!tbody) return;
   if (!_photRows.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-secondary small py-2">暂无测光点，点击「添加行」录入</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-secondary small py-2">暂无测光点，点击「添加行」录入</td></tr>';
     return;
   }
-  tbody.innerHTML = _photRows.map((p, i) => `
+  tbody.innerHTML = _photRows.map((p, i) => {
+    const bandUnknown = p.band && _bandList && !_bandList.includes(p.band);
+    return `
     <tr>
       <td><input class="form-check-input hf-phot-use" type="checkbox" data-i="${i}" ${p.use ? 'checked' : ''} title="参与拟合"></td>
-      <td><input type="text" class="form-control form-control-sm hf-phot" data-i="${i}" data-f="band" value="${esc(p.band)}" style="width:80px"></td>
+      <td><input type="text" class="form-control form-control-sm hf-phot" list="hfBandList" data-i="${i}" data-f="band" value="${esc(p.band)}" style="width:84px">
+        <div class="hf-band-warn text-danger" style="font-size:0.68rem;${bandUnknown ? '' : 'display:none'}">波段不在滤光片库中</div></td>
       <td><input type="number" class="form-control form-control-sm hf-phot" data-i="${i}" data-f="mag" value="${p.mag ?? ''}" step="any" style="width:80px"></td>
-      <td><input type="number" class="form-control form-control-sm hf-phot" data-i="${i}" data-f="mag_err" value="${p.mag_err ?? ''}" step="any" style="width:76px"></td>
+      <td><input type="number" class="form-control form-control-sm hf-phot" data-i="${i}" data-f="mag_err" value="${p.mag_err ?? ''}" step="any" style="width:76px"
+            placeholder="${p.upperlimit ? '' : `空=${DEFAULT_MAG_ERR}`}" ${p.upperlimit ? 'disabled' : ''}></td>
+      <td><input class="form-check-input hf-phot-ul" type="checkbox" data-i="${i}" ${p.upperlimit ? 'checked' : ''} title="上限（非探测）"></td>
       <td><select class="form-select form-select-sm hf-phot" data-i="${i}" data-f="mag_sys" style="width:76px">
         ${MAG_SYS_OPTS.map(s => `<option value="${s}" ${p.mag_sys === s ? 'selected' : ''}>${s}</option>`).join('')}
       </select></td>
       <td><input type="text" class="form-control form-control-sm hf-phot" data-i="${i}" data-f="source" value="${esc(p.source)}" style="width:90px"></td>
       <td><button class="btn btn-sm btn-outline-danger py-0 px-1 hf-phot-del" data-i="${i}" title="删除行"><i class="bi bi-x"></i></button></td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   tbody.querySelectorAll('.hf-phot-use').forEach(cb => {
     cb.addEventListener('change', () => {
@@ -263,10 +286,28 @@ function renderPhotRows() {
       updateSubmitState();
     });
   });
+  tbody.querySelectorAll('.hf-phot-ul').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const i = parseInt(cb.dataset.i, 10);
+      _photRows[i].upperlimit = cb.checked;
+      // 上限行无误差概念：禁用误差输入并去掉缺省提示
+      const errInput = tbody.querySelector(`.hf-phot[data-i="${i}"][data-f="mag_err"]`);
+      if (errInput) {
+        errInput.disabled = cb.checked;
+        errInput.placeholder = cb.checked ? '' : `空=${DEFAULT_MAG_ERR}`;
+      }
+      updateSubmitState();
+    });
+  });
   tbody.querySelectorAll('.hf-phot').forEach(el => {
     el.addEventListener('input', () => {
       const i = parseInt(el.dataset.i, 10), f = el.dataset.f;
       _photRows[i][f] = (f === 'mag' || f === 'mag_err') ? numOrNull(el.value) : el.value;
+      if (f === 'band') {
+        // 波段不在滤光片库中时给出文字提示（仍可保存）
+        const warn = el.parentElement.querySelector('.hf-band-warn');
+        if (warn) warn.style.display = (el.value && _bandList && !_bandList.includes(el.value.trim())) ? '' : 'none';
+      }
       updateSubmitState();
     });
   });
@@ -291,22 +332,31 @@ function collectPhotRows() {
     const i = parseInt(cb.dataset.i, 10);
     if (_photRows[i]) _photRows[i].use = cb.checked;
   });
+  document.querySelectorAll('#hfPhotBody .hf-phot-ul').forEach(cb => {
+    const i = parseInt(cb.dataset.i, 10);
+    if (_photRows[i]) _photRows[i].upperlimit = cb.checked;
+  });
 }
 
+// 参与拟合的点：勾选、非上限、有 band 与 mag
 function checkedPhotPoints() {
   collectPhotRows();
-  return _photRows.filter(p => p.use && p.band && p.mag != null);
+  return _photRows.filter(p => p.use && !p.upperlimit && p.band && p.mag != null);
 }
 
 async function saveHostInfo() {
   if (!isAuthed()) { showToast('请先登录', 'warning'); return; }
   collectPhotRows();
+  const raV = parseRA(document.getElementById('hfRa')?.value);
+  if (typeof raV === 'number' && isNaN(raV)) { showToast('RA 格式无法解析（支持十进制度或时分秒，如 08h08m27.4s）', 'danger'); return; }
+  const decV = parseDec(document.getElementById('hfDec')?.value);
+  if (typeof decV === 'number' && isNaN(decV)) { showToast('Dec 格式无法解析（支持十进制度或时分秒，如 +40d36m44.8s）', 'danger'); return; }
   const photometry = _photRows
     .filter(p => p.band && p.mag != null)
-    .map(p => ({ band: p.band, mag: p.mag, mag_err: p.mag_err, mag_sys: p.mag_sys || 'AB', source: p.source || null }));
+    .map(p => ({ band: p.band, mag: p.mag, mag_err: p.mag_err, mag_sys: p.mag_sys || 'AB', source: p.source || null, upperlimit: p.upperlimit === true }));
   const body = {
-    ra: numOrNull(document.getElementById('hfRa')?.value),
-    dec: numOrNull(document.getElementById('hfDec')?.value),
+    ra: raV,
+    dec: decV,
     redshift: numOrNull(document.getElementById('hfZ')?.value),
     redshift_err: numOrNull(document.getElementById('hfZErr')?.value),
     redshift_type: document.getElementById('hfZType')?.value || null,

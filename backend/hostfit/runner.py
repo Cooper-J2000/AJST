@@ -115,8 +115,8 @@ def _mag_to_mjy(point, filt, warnings):
         if mag_err is not None and float(mag_err) > 0:
             ferr = f_mjy * _LN10 / 2.5 * float(mag_err)
         else:
-            warnings.append(f'波段 {band}: 星等误差缺失，按 10% 流量处理')
-            ferr = 0.1 * f_mjy
+            warnings.append(f'波段 {band}: 星等误差缺失，按 σ=0.2 mag 处理')
+            ferr = f_mjy * _LN10 / 2.5 * 0.2
         return f_mjy, ferr
     else:
         warnings.append(f'波段 {band}: 未知星等系统 {mag_sys!r}，已跳过')
@@ -126,8 +126,8 @@ def _mag_to_mjy(point, filt, warnings):
     if mag_err is not None and float(mag_err) > 0:
         ferr = f_mjy * _LN10 / 2.5 * float(mag_err)
     else:
-        warnings.append(f'波段 {band}: 星等误差缺失，按 10% 流量处理')
-        ferr = 0.1 * f_mjy
+        warnings.append(f'波段 {band}: 星等误差缺失，按 σ=0.2 mag 处理')
+        ferr = f_mjy * _LN10 / 2.5 * 0.2
     return f_mjy, ferr
 
 
@@ -145,6 +145,9 @@ def build_observations(config, filters):
     seen = set()
     for p in config.get('photometry') or []:
         band = p.get('band')
+        if p.get('upperlimit'):
+            warnings.append(f'波段 {band}: 上限点不参与拟合，已跳过')
+            continue
         filt = filters.get(band)
         pcg = ((filt.extra_data or {}).get('pcigale_name')
                if filt is not None else None)

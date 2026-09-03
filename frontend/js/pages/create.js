@@ -1,6 +1,7 @@
 // === Create New Transient ===
 import { app, showLoading, showError } from './layout.js';
 import { createTransient, saveHost, showToast } from '../api.js';
+import { parseRA, parseDec, attachCoordHint } from '../coords.js';
 
 export async function render() {
   app.innerHTML = `
@@ -26,12 +27,12 @@ export async function render() {
                   <input type="text" class="form-control" id="fTrigger" placeholder="WXT">
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label">RA (度)</label>
-                  <input type="number" class="form-control" id="fRa" step="any" placeholder="122.1142">
+                  <label class="form-label">RA</label>
+                  <input type="text" class="form-control" id="fRa" placeholder="122.1142 或 08h08m27.4s">
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label">Dec (度)</label>
-                  <input type="number" class="form-control" id="fDec" step="any" placeholder="40.61244">
+                  <label class="form-label">Dec</label>
+                  <input type="text" class="form-control" id="fDec" placeholder="40.61244 或 +40d36m44.8s">
                 </div>
                 <div class="col-md-4">
                   <label class="form-label">T0</label>
@@ -88,12 +89,12 @@ export async function render() {
                 <div class="collapse mt-2" id="hostCollapse">
                   <div class="row g-3 border rounded p-2">
                     <div class="col-md-4">
-                      <label class="form-label">宿主 RA (度)</label>
-                      <input type="number" class="form-control" id="fHostRa" step="any">
+                      <label class="form-label">宿主 RA</label>
+                      <input type="text" class="form-control" id="fHostRa" placeholder="度 或 08h08m27.4s">
                     </div>
                     <div class="col-md-4">
-                      <label class="form-label">宿主 Dec (度)</label>
-                      <input type="number" class="form-control" id="fHostDec" step="any">
+                      <label class="form-label">宿主 Dec</label>
+                      <input type="text" class="form-control" id="fHostDec" placeholder="度 或 +40d36m44.8s">
                     </div>
                     <div class="col-md-2">
                       <label class="form-label">宿主红移</label>
@@ -124,7 +125,7 @@ export async function render() {
           <div class="card-body small text-secondary">
             <ul class="mb-0 ps-3">
               <li>事件 ID 是唯一标识，不可重复</li>
-              <li>坐标单位为十进制角度</li>
+              <li>坐标支持十进制度或时分秒（如 122.1142 或 08h08m27.4s / +40d36m44.8s），入库统一转度</li>
               <li>T0 格式: ISO 8601</li>
               <li>创建后可在详情页添加光变数据</li>
               <li>所有字段均可后续编辑</li>
@@ -135,17 +136,39 @@ export async function render() {
     </div>
   `;
 
+  attachCoordHint(document.getElementById('fRa'), true);
+  attachCoordHint(document.getElementById('fDec'), false);
+  attachCoordHint(document.getElementById('fHostRa'), true);
+  attachCoordHint(document.getElementById('fHostDec'), false);
+
   window.submitNewTransient = async () => {
     const getId = (id) => document.getElementById(id)?.value?.trim() || null;
+    const coord = (id, isRA, label) => {
+      const v = isRA ? parseRA(getId(id)) : parseDec(getId(id));
+      if (typeof v === 'number' && isNaN(v)) {
+        showToast(`${label} 格式无法解析（支持十进制度或时分秒）`, 'danger');
+        return undefined;
+      }
+      return v;
+    };
 
     const id = getId('fId');
     if (!id) { showToast('事件 ID 不能为空', 'danger'); return false; }
 
+    const raV = coord('fRa', true, 'RA');
+    if (raV === undefined) return false;
+    const decV = coord('fDec', false, 'Dec');
+    if (decV === undefined) return false;
+    const hRa = coord('fHostRa', true, '宿主 RA');
+    if (hRa === undefined) return false;
+    const hDec = coord('fHostDec', false, '宿主 Dec');
+    if (hDec === undefined) return false;
+
     const data = {
       id,
       trigger_instrument: getId('fTrigger'),
-      ra: parseFloatOrNull(getId('fRa')),
-      dec: parseFloatOrNull(getId('fDec')),
+      ra: raV,
+      dec: decV,
       t0: getId('fT0') || null,
       redshift: parseFloatOrNull(getId('fZ')),
       redshift_type: getId('fZType') || null,
@@ -162,8 +185,6 @@ export async function render() {
       showToast(`事件 ${id} 创建成功！`, 'success');
       // 宿主星系（任一填写才写入；失败不影响源创建，仅警告）
       const hostData = {};
-      const hRa = parseFloatOrNull(getId('fHostRa'));
-      const hDec = parseFloatOrNull(getId('fHostDec'));
       const hZ = parseFloatOrNull(getId('fHostZ'));
       const hZType = getId('fHostZType');
       if (hRa != null) hostData.ra = hRa;

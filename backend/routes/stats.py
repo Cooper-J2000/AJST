@@ -9,7 +9,7 @@ GET /api/stats/hosts       — 宿主星系覆盖与参数分布
 from flask import Blueprint, jsonify
 from sqlalchemy import func, distinct, text
 from app import get_session
-from models import Transient, Lightcurve, FilterDef, HostGalaxy
+from models import Transient, Lightcurve, FilterDef, HostGalaxy, distance_modulus
 
 stats_bp = Blueprint('stats', __name__)
 
@@ -66,7 +66,12 @@ def band_coverage():
 
 @stats_bp.route('/hosts', methods=['GET'])
 def host_stats():
-    """宿主星系统计：覆盖率、红移类型计数、M*/SFR 分布、宿主z vs 暂现源z"""
+    """宿主星系统计：覆盖率、红移类型计数、M*/SFR 分布、宿主测光绝对星等点。
+
+    abs_mag_points: [{tid, band, z, mag(AB), abs_mag, mag_err, err_assumed, upperlimit}]
+      M = m_AB − μ(z_host)，μ 由 models.distance_modulus（astropy Planck18）计算；
+      Vega 星等先按 filters 表 vega2ab 转 AB；非上限且缺误差的点按 0.2 mag（err_assumed 标记，不落库）。
+    """
     sess = get_session()
     try:
         hosts = sess.query(HostGalaxy).all()
@@ -81,12 +86,50 @@ def host_stats():
                 m_star.append(d['m_star'])
             if d.get('sfr') is not None:
                 sfr.append(d['sfr'])
-        # 宿主 z vs 暂现源 z 对
-        tz = {t.id: t.redshift for t in sess.query(Transient).filter(
-            Transient.redshift.isnot(None)).all()}
-        z_pairs = [{'t_z': tz[h.transient_id], 'h_z': h.redshift}
-                   for h in hosts
-                   if h.redshift is not None and h.transient_id in tz]
+        # 宿主测光 → 绝对星等（需宿主红移）
+        filters = {f.id: f for f in sess.query(FilterDef).all()}
+
+        def _vega2ab(band):
+            f = filters.get(band) or filters.get(str(band).lower())
+            return (f.vega2ab or 0.0) if f else 0.0
+
+        abs_mag_points = []
+        for h in hosts:
+            z = h.redshift
+            if z is None or z <= 0:
+                continue
+            dm = distance_modulus(z)
+            if dm is None:
+                continue
+            for p in (h.photometry or []):
+                if not isinstance(p, dict):
+                    continue
+                band, mag = p.get('band'), p.get('mag')
+                if not band or mag is None:
+                    continue
+                try:
+                    mag = float(mag)
+                except (TypeError, ValueError):
+                    continue
+                mag_sys = str(p.get('mag_sys') or 'AB').strip().lower()
+                if mag_sys == 'vega':
+                    mag += _vega2ab(band)
+                elif mag_sys not in ('ab', ''):
+                    continue  # ST 等其他星等系统暂不换算
+                ul = bool(p.get('upperlimit'))
+                err = p.get('mag_err')
+                try:
+                    err = float(err) if err is not None else None
+                except (TypeError, ValueError):
+                    err = None
+                err_assumed = False
+                if not ul and (err is None or err <= 0):
+                    err, err_assumed = 0.2, True  # 缺省误差 0.2 mag（仅返回，不写库）
+                abs_mag_points.append({
+                    'tid': h.transient_id, 'band': band, 'z': z,
+                    'mag': round(mag, 4), 'abs_mag': round(mag - dm, 4),
+                    'mag_err': err, 'err_assumed': err_assumed, 'upperlimit': ul,
+                })
         return jsonify({
             'n_hosts': n_hosts,
             'n_transients': n_transients,
@@ -95,7 +138,7 @@ def host_stats():
             'n_with_phot_z': n_phot,
             'm_star': m_star,
             'sfr': sfr,
-            'z_pairs': z_pairs,
+            'abs_mag_points': abs_mag_points,
         })
     finally:
         sess.close()

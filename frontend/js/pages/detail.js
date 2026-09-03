@@ -15,6 +15,11 @@ import { showLcUpload } from './lc_upload.js';
 import { dragRectPlugin, attachDragZoom } from '../dragzoom.js';
 import { SPEC_LINE_GROUPS, createSpecLinesPlugin, buildMarkingsPanelHTML } from '../spec_lines.js';
 import { chartColors, ACADEMIC_FONT, academicFonts } from '../theme.js';
+import { parseRA, parseDec, attachCoordHint } from '../coords.js';
+import {
+  magABtoMJy, mJyToMagAB, ensureFilterCache,
+  getVega2ab, sortBandsByFreq, buildSpectralColors,
+} from '../bands.js';
 
 let currentTid = null;
 let lcChartInstance = null;
@@ -78,15 +83,7 @@ let derivedDraft = null;     // 工作副本
 let derivedPristine = null;  // 服务器载入的原始副本（取消编辑时恢复）
 let derivedEditMode = false;
 
-// ─── AB magnitude ↔ mJy（双纵轴换算） ───
-// 换算关系: m_AB = 16.4 − 2.5·log10(F_mJy)；F_mJy = 10^((16.4−m_AB)/2.5)（AB 零点 3631 Jy）
-function magABtoMJy(mag) {
-  return Math.pow(10, (16.4 - mag) / 2.5);
-}
-
-function mJyToMagAB(mJy) {
-  return 16.4 - 2.5 * Math.log10(mJy);
-}
+// ─── AB magnitude ↔ mJy 换算与波段工具已抽至 js/bands.js（magABtoMJy 等直接 import） ───
 
 // ─── 流量单位统一转 mJy ───
 function toMJy(value, unit) {
@@ -133,89 +130,7 @@ function pointToMJy(p, useGext) {
   return { y, err };
 }
 
-// ─── 波段名归一化（"1.0keV" → "1keV", "9.0GHz" → "9GHz"） ───
-function normBand(band) {
-  return band.replace(/(\d+)\.0(?=[A-Za-z])/g, '$1');
-}
-
-// ─── 滤波器缓存（波长 Å / Vega→AB 星等差） ───
-const _filterWavelengths = {}; // band → wavelength (Å)
-const _filterVega2ab = {};     // band → Vega→AB 星等差
-
-function ensureFilterCache(filtersData) {
-  for (const f of filtersData) {
-    _filterWavelengths[f.id] = f.wavelength;
-    _filterVega2ab[f.id] = f.vega2ab || 0;
-  }
-}
-
-// 波段名的候选滤波器键（波段名变体归一：R_{c}→R、r'→r、UVW2→uvot-uvw2 等）
-function _bandKeys(band) {
-  const b = normBand(band);
-  const keys = [b];
-  const base = b.replace(/_{.*}$/, '').replace(/'+$/, '');
-  keys.push(base);
-  const base2 = b.split('_')[0];
-  if (base2) keys.push(base2);
-  const low = b.toLowerCase();
-  keys.push(low, 'uvot-' + low);
-  return keys;
-}
-
-// 波段的 Vega→AB 星等差（无对应滤波器时返回 0）
-function getVega2ab(band) {
-  for (const k of _bandKeys(band)) {
-    if (_filterVega2ab[k] != null) return _filterVega2ab[k];
-  }
-  return 0;
-}
-
-function getWavelength(band) {
-  // 光学：查 filters.json
-  for (const k of _bandKeys(band)) {
-    if (_filterWavelengths[k] != null) return _filterWavelengths[k];
-  }
-  const b = normBand(band);
-  // X 射线：λ(Å) = 12.3984 / E(keV)
-  const keV = b.match(/^(\d+(?:\.\d+)?)\s*keV$/i);
-  if (keV) return 12.3984 / parseFloat(keV[1]);
-  // 射电：λ(Å) = c(m/s) * 1e10 / (f(Hz)) = 2.9979e9 / f(GHz)
-  const GHz = b.match(/^(\d+(?:\.\d+)?)\s*GHz$/i);
-  if (GHz) return 2.99792458e9 / parseFloat(GHz[1]);
-  return null;
-}
-
-// ─── 光谱色阶（按频率排序序号归一化） ───
-/**
- * 波段按频率升序排序（低频=红，高频=蓝），
- * 用**排序序号**归一化映射到色阶，保证任意频率分布下
- * 相邻波段都有可区分的颜色（避免 X 射线存在时光学波段全挤成红色）
- */
-function buildSpectralColors(bandNames) {
-  const c = 2.998e8; // m/s
-  const withFreq = [], withoutFreq = [];
-  for (const b of bandNames) {
-    const wl = getWavelength(b); // Å
-    if (wl && wl > 0) withFreq.push([b, c / (wl * 1e-10)]);
-    else withoutFreq.push(b);
-  }
-  // 按频率升序排序（低频=红，高频=蓝）
-  withFreq.sort((a, b) => a[1] - b[1]);
-  const result = {};
-  const n = withFreq.length;
-  withFreq.forEach(([b], i) => {
-    const t = n > 1 ? i / (n - 1) : 0.5;
-    const hue = t * 240;                       // 0°(红) → 240°(蓝)
-    const light = n > 8 && i % 2 === 1 ? 65 : 50; // 波段多时任奇偶交替亮度增强区分
-    result[b] = `hsl(${hue}, 75%, ${light}%)`;
-  });
-  // 无频率的波段用默认颜色
-  const defaultColors = ['#58a6ff', '#3fb950', '#d29922', '#f85149', '#bc8cff', '#56d4dd'];
-  withoutFreq.forEach((b, i) => {
-    result[b] = defaultColors[i % defaultColors.length];
-  });
-  return result;
-}
+// ─── 波段名归一化 / 滤波器缓存 / 光谱色阶：已抽至 js/bands.js（详情页与其余图表共用） ───
 
 // ─── 科学计数法格式化 ───
 function sciFormat(v) {
@@ -750,8 +665,8 @@ export async function render(tid) {
                 <div class="card-body">
                   <form onsubmit="return false">
                     <div class="row g-2">
-                      <div class="col-6"><label class="form-label small">RA</label><input type="number" class="form-control form-control-sm" id="editRa" step="any" value="${transient.ra ?? ''}"></div>
-                      <div class="col-6"><label class="form-label small">Dec</label><input type="number" class="form-control form-control-sm" id="editDec" step="any" value="${transient.dec ?? ''}"></div>
+                      <div class="col-6"><label class="form-label small">RA</label><input type="text" class="form-control form-control-sm" id="editRa" value="${transient.ra ?? ''}" placeholder="度 或 08h08m27.4s"></div>
+                      <div class="col-6"><label class="form-label small">Dec</label><input type="text" class="form-control form-control-sm" id="editDec" value="${transient.dec ?? ''}" placeholder="度 或 +40d36m44.8s"></div>
                       <div class="col-6"><label class="form-label small">T0</label><input type="text" class="form-control form-control-sm" id="editT0" value="${transient.t0 || ''}"></div>
                       <div class="col-6"><label class="form-label small">触发仪器</label><input type="text" class="form-control form-control-sm" id="editTrigger" value="${transient.trigger_instrument || ''}"></div>
                       <div class="col-4"><label class="form-label small">红移</label><input type="number" class="form-control form-control-sm" id="editZ" step="any" value="${transient.redshift ?? ''}"></div>
@@ -1616,13 +1531,22 @@ export async function render(tid) {
       }
     };
 
+    // 坐标输入即时解析提示（度 ⇄ 时分秒）
+    attachCoordHint(document.getElementById('editRa'), true);
+    attachCoordHint(document.getElementById('editDec'), false);
+
     window.saveDetailEdit = async () => {
       const val = (id) => document.getElementById(id)?.value?.trim() || null;
       const num = (id) => { const v = val(id); return v === null || v === '' ? null : parseFloat(v); };
 
+      const raV = parseRA(val('editRa'));
+      if (typeof raV === 'number' && isNaN(raV)) { showToast('RA 格式无法解析（支持十进制度或时分秒，如 08h08m27.4s）', 'danger'); return; }
+      const decV = parseDec(val('editDec'));
+      if (typeof decV === 'number' && isNaN(decV)) { showToast('Dec 格式无法解析（支持十进制度或时分秒，如 +40d36m44.8s）', 'danger'); return; }
+
       const body = {
-        ra: num('editRa'),
-        dec: num('editDec'),
+        ra: raV,
+        dec: decV,
         t0: val('editT0'),
         redshift: num('editZ'),
         redshift_type: val('editZType') || null,
@@ -2483,15 +2407,8 @@ function buildLCChart(bands, bandNames, spectralColors) {
   };
   const datasets = [];
 
-  // 按频率排序波段
-  const c = 2.998e8;
-  const sortedBands = [...bandNames].sort((a, b) => {
-    const wa = getWavelength(a), wb = getWavelength(b);
-    if (wa && wb) return (c / (wa * 1e-10)) - (c / (wb * 1e-10)); // 频率升序
-    if (wa) return -1;
-    if (wb) return 1;
-    return a.localeCompare(b);
-  });
+  // 按频率排序波段（与其他图表同一规则，见 js/bands.js）
+  const sortedBands = sortBandsByFreq(bandNames);
 
   for (const band of sortedBands) {
     const pts = bands[band];

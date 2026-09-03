@@ -1,7 +1,7 @@
 # AJST 暂现源光变目录系统 — 技术文档
 
-> 版本：2.13
-> 更新日期：2026-08-27
+> 版本：2.14
+> 更新日期：2026-09-03
 
 > **说明**：本文档由开发过程中的技术文档整理而来，部分内容（数据规模、批次导入历史、
 > 已删除的脚本与备份路径等）为历史快照；如有与代码不一致之处，**以代码为准**。
@@ -169,10 +169,10 @@ BibTeX 可能很长，前端不整段展示，仅提供「复制到剪贴板」�
 |---|---|---|
 | `id` | BIGINT PK auto | |
 | `transient_id` | VARCHAR(32) FK→transients CASCADE, UNIQUE | |
-| `ra` / `dec` | FLOAT | 宿主坐标（度） |
+| `ra` / `dec` | FLOAT | 宿主坐标（度；v2.14 起 API 写入支持十进制度或时分秒字符串，入库统一转度） |
 | `redshift` / `redshift_err` | FLOAT | 宿主红移；光谱红移 err=0，测光红移有误差 |
 | `redshift_type` | VARCHAR(16) | `spec` / `phot` |
-| `photometry` | JSONB | `[{band, mag, mag_err, mag_sys(AB/Vega/ST), source}]` |
+| `photometry` | JSONB | `[{band, mag, mag_err, mag_sys(AB/Vega/ST), source, upperlimit}]`（v2.14 起支持 `upperlimit`；`mag_err` 可空——非上限且误差为空时后续处理按 σ=0.2 mag 计，0.2 不落库） |
 | `derived` | JSONB | 采纳的拟合参数 `{m_star, sfr, age_main, Av_ISM, chi2, fit_at, job_id}` |
 | `comment` / `source` | TEXT / VARCHAR(128) | |
 
@@ -309,9 +309,9 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | 方法 | 路径 | 说明 | 权限 |
 |---|---|---|---|
 | GET | `/api/transients` | 列表（搜索/筛选/分页/排序） | 否 |
-| POST | `/api/transients` | 新建事件 | 登录 |
+| POST | `/api/transients` | 新建事件（`ra`/`dec` 支持十进制度或时分秒字符串，入库统一转度，见 §8.22） | 登录 |
 | GET | `/api/transients/<id>` | 单源详情 | 否 |
-| PUT | `/api/transients/<id>` | 更新基本信息 | 管理员 |
+| PUT | `/api/transients/<id>` | 更新基本信息（`ra`/`dec` 同上支持时分秒） | 管理员 |
 | DELETE | `/api/transients/<id>` | 删除事件（级联删除） | 管理员 |
 | GET | `/api/lightcurves/<tid>` | 某源的全部光变数据 | 否 |
 | POST | `/api/lightcurves/batch` | 批量新增光变点（自动记录 `source`=当前账户） | 登录 |
@@ -360,7 +360,7 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | PUT | `/api/articles/<id>` | 修改文章条目 `{name?, url?, title?, bibtex?}`（title/bibtex 传空串即清空） | 管理员 |
 | DELETE | `/api/articles/<id>` | 删除文章条目 | 管理员 |
 | GET | `/api/hosts/<tid>` | 宿主星系信息（无记录 404） | 否 |
-| PUT | `/api/hosts/<tid>` | upsert 宿主信息 `{ra?, dec?, redshift?, redshift_err?, redshift_type?, photometry?, derived?, comment?}` | 登录 |
+| PUT | `/api/hosts/<tid>` | upsert 宿主信息 `{ra?, dec?, redshift?, redshift_err?, redshift_type?, photometry?, derived?, comment?}`（`ra`/`dec` 支持十进制度或时分秒；`photometry` 项可含 `upperlimit`，`mag_err` 可空，见 §8.22） | 登录 |
 | DELETE | `/api/hosts/<tid>` | 删除宿主信息 | 管理员 |
 | GET | `/api/hostfit/config` | pcigale 拟合默认网格与可用波段 | 否 |
 | POST | `/api/hostfit/jobs` | 提交宿主 SED 拟合 `{transient_id, mode, redshift?, grid, photometry}` | 登录 |
@@ -458,6 +458,8 @@ frontend/
     ├── api.js                # API 客户端 + 鉴权状态
     ├── layout.js             # 页面容器组件
     ├── spec_lines.js         # TNS 风格谱线标记：谱线组数据 + Chart.js 标记插件 + 面板 HTML（v2.7）
+    ├── coords.js             # 坐标解析（度 ⇄ 时分秒）+ 输入即时提示（v2.14，见 §8.22）
+    ├── bands.js              # 波段工具：频率排序/光谱色阶/AB↔mJy/滤波器缓存（v2.14 起各图表共用）
     ├── digitizer_core.js     # 抠图取数核心算法（标定变换/Lab 颜色/掩膜/描线/连通域，v2.11）
     └── pages/
         ├── list.js           # 事件列表（筛选/排序/分页/删除）
@@ -468,6 +470,8 @@ frontend/
         ├── fitting_tab.js    # 详情页"余辉拟合"标签页（配置/任务轮询/结果展示，见 §8.14）
         ├── stats.js          # 全局统计（全天图/红移柱状图/波段覆盖）
         ├── relations.js      # 统计关系（6 关系平铺卡片/来源切换/分组 OLS 拟合/导出 CSV）
+        ├── hostfit_tab.js    # 详情页「宿主星系」标签页（宿主信息/测光表/pcigale 拟合，见 §8.20、§8.22）
+        ├── stats_hosts.js    # 宿主星系统计子页（覆盖率/M*/SFR/绝对星等—红移图，见 §8.22）
         ├── create.js         # 新建事件
         ├── compare.js        # 多源对比
         └── filters.js        # 光学滤光片 CRUD
@@ -1172,7 +1176,31 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
   `pcigale-filters add` 在 numpy≥2 下需 np.trapz→trapezoid shim，脚本已内置）。
 - 权限：查看公开；宿主信息编辑/提交拟合/写回=登录；删除宿主/删除任务=管理员。
 - 列表页「宿主」徽章 + `has_host` 筛选；新建事件页可折叠宿主字段；首页与统计子页
-  `/stats/hosts`（覆盖率、M*/SFR 分布、宿主 z vs 暂现源 z 散点）。
+  `/stats/hosts`（覆盖率、M*/SFR 分布、宿主绝对星等—红移图；v2.14 起替换原 z-z 散点，见 §8.22）。
+
+### 8.22 坐标时分秒输入与宿主测光增强（2026-09-03，v2.14）
+
+- **坐标输入**：事件（新建页 / 详情页概览编辑）与宿主星系（宿主标签页 / 新建页折叠区）的
+  RA/Dec 均支持十进制度与时分秒格式（`08h08m27.4s`、`8:08:27.41`、`8 08 27.41`、
+  `+40d36m44.8s`、`40°36'44.8"` 等）。前端 `js/coords.js` 即时显示换算结果（非法红字提示），
+  入库转换以后端 `backend/coords.py`（astropy `Angle`）为准：RA 按小时角归一化到 [0,360)，
+  Dec 限 [-90,90]，非法输入 400。
+- **宿主测光表**（详情页「宿主星系」tab）：band 列改为 datalist 下拉 + 打字模糊过滤
+  （候选取自 filters 表，按波长排序），输入波段不在库中时行内红字提示（仍可保存）；
+  新增「上限」列（`upperlimit`，上限行不参与 pcigale 拟合，runner 侧亦跳过）；
+  `mag_err` 可留空，非上限且误差为空的点后续处理（拟合 / 统计图误差棒）按 σ=0.2 mag 计
+  （占位符与表下注释提醒，0.2 不写入记录）。
+- **宿主统计图**：`/api/stats/hosts` 移除 `z_pairs`，新增 `abs_mag_points`
+  （[{tid, band, z, mag(AB), abs_mag, mag_err, err_assumed, upperlimit}]）：
+  M = m_AB − μ(z_host)，μ 用 `models.distance_modulus`（astropy Planck18）计算，
+  Vega 星等先按 filters 表 vega2ab 转 AB，ST 暂不换算；`err_assumed` 标记缺省 0.2 的点。
+  前端 `#/stats/hosts` 新增「宿主星系绝对星等 — 红移」图：横轴 z（线性），纵轴可切
+  星等（线性反向）/ 流量密度 mJy（对数，M→10pc 处流量密度）；波段勾选面板（全选/全不选）、
+  波段颜色与排序（频率升序光谱色阶）、符号（探测圆点 / 上限倒三角）、误差棒开关均与
+  详情页光变图同一套规则（波段工具抽到 `js/bands.js` 共用）。
+- **Aladin 遮挡修复**：Aladin Lite v3 全屏为 CSS `position:fixed` 实现且组件内部 z-index
+  最高仅 1000，低于 sticky navbar（1020），导致全屏/短视口滚动时顶排按钮（全屏/关闭等）
+  被页眉遮挡。修复：`#aladinContainer` 抬升为 `z-index: 1030` 的层叠上下文。
 
 ### 8.21 组合模型余辉拟合引擎 vegas_unified（2026-08-30 新增；2026-08-31 起为唯一余辉拟合引擎）
 
@@ -1265,6 +1293,14 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 ---
 
 ## 十一、版本历史
+
+### v2.14（2026-09-03）— 坐标时分秒输入 + 宿主测光/统计增强
+
+- 事件与宿主星系坐标输入支持十进制度与时分秒格式，入库统一转度（`backend/coords.py`，前端 `js/coords.js` 即时提示）
+- 宿主测光表：band 下拉/模糊补全 + 未入库提示；新增 `upperlimit` 列（不参与拟合）；`mag_err` 可空，缺省按 σ=0.2 mag 处理（不落库）
+- 全局统计宿主子页：删除「宿主 z vs 暂现源 z」散点，新增「宿主星系绝对星等 — 红移」图（`/api/stats/hosts` 返回 `abs_mag_points`，astropy Planck18 距离模数；Y 轴星等线性 / mJy 对数可切，波段勾选/色阶/符号/误差棒与光变图同规则）
+- 修复详情页 Aladin 组件被 sticky 页眉遮挡（全屏/弹层按钮不可点击）的层叠问题
+- 波段工具（频率排序/光谱色阶/AB↔mJy/滤波器缓存）抽为共享模块 `frontend/js/bands.js`
 
 ### v2.13（2026-08-25）— GCN 阅读工具 × 光变数据库深度融合
 
