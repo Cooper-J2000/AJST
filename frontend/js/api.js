@@ -1,5 +1,6 @@
 // === API Client ===
-const API_BASE = '/api';
+// 兼容子目录反向代理：以页面所在目录推导 API 前缀（根路径部署时即 '/api'）
+const API_BASE = location.pathname.replace(/\/[^/]*$/, '') + '/api';
 
 let _authed = false;
 let _user = { username: null, role: null };
@@ -122,11 +123,14 @@ export const getBandCoverage = () => api('GET', '/stats/bands');
 export const getHostStats = () => api('GET', '/stats/hosts');
 
 // GCN (GCN 阅读工具)
-export const getGcnIds = () => api('GET', '/gcn/ids');
+// page: 'first'（缺省同义）/ 'last' / 数字页码；around: 定位包含该期号的页（响应含 pos）
+export const getGcnIds = (page, around) => {
+  const qs = around != null ? `?around=${around}`
+    : (page != null && page !== 1 && page !== 'first' ? `?page=${page}` : '');
+  return api('GET', `/gcn/ids${qs}`);
+};
 export const getGcnCircular = (cid) => api('GET', `/gcn/${cid}`);
-export const getGcnStatus = () => api('GET', '/gcn/status');
 export const getGcnRelated = (cid) => api('GET', `/gcn/${cid}/related`);
-export const updateGcnArchive = () => api('POST', '/gcn/update');
 
 // Export
 export const exportTransients = (fmt = 'csv') => {

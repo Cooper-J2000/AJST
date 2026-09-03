@@ -8,9 +8,6 @@ PROJECT_ROOT = os.path.dirname(BASE_DIR)
 # 也可用环境变量 AJST_DATA_DIR 指向任意位置
 DATA_DIR = os.environ.get('AJST_DATA_DIR', os.path.join(PROJECT_ROOT, 'catadata'))
 
-# GCN 通告存档（catadata/gcn/archive/<circularId>.json）
-GCN_ARCHIVE_DIR = os.path.join(DATA_DIR, 'gcn', 'archive')
-
 # PostgreSQL 连接。默认走本机 Unix socket、以当前 OS 用户连接（peer auth），
 # 生产/远程部署请用环境变量 DATABASE_URL 覆盖，例如
 # postgresql+psycopg2://user:pass@host:5432/ajst_catalog

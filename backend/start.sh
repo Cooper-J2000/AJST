@@ -8,9 +8,11 @@
 #   AJST_DATA_DIR           数据目录（默认 <项目根>/catadata）
 #   AJST_PYTHON             使用的 Python 解释器（默认 python3）
 #   PORT                    监听端口（默认 5000）
+#   AJST_HOST               监听地址（默认 127.0.0.1 仅回环，供 nginx 反代；需直连时设 0.0.0.0）
 cd "$(dirname "$0")"
 exec "${AJST_PYTHON:-python3}" -c "
 import sys, os; sys.path.insert(0, '.')
 from app import create_app
-create_app().run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+app = create_app()
+app.run(host=os.environ.get('AJST_HOST', '127.0.0.1'), port=int(os.environ.get('PORT', 5000)), debug=False)
 "

@@ -1,80 +1,117 @@
 """
-GCN 通告存档浏览与在线更新
-GET  /api/gcn/ids            — 全部 circular id（数值升序，带缓存）
-GET  /api/gcn/<cid>          — 单期 circular JSON 内容
-GET  /api/gcn/<cid>/related  — 库中与该期 GCN 相关的光变记录（reference 精确 + 暴名模糊）
-GET  /api/gcn/status         — 存档概况 + 更新任务状态
-POST /api/gcn/update         — 从 NASA GCN 下载最新整包并替换存档（需登录，后台线程）
+GCN 通告在线反代
+
+GET  /api/gcn/ids?page=first|last|N — 期号页：first（无参数同义，最新 100 期）/
+                                        last（先取总数再查）/ N（第 N 页）；响应含 totalItems
+GET  /api/gcn/ids?around=N          — 二分定位包含期号 N 的页（响应含 pos = N 在页内下标）
+GET  /api/gcn/<cid>                 — 反代单期 circular JSON（gcn.nasa.gov/circulars/<cid>.json）
+GET  /api/gcn/<cid>/related         — 库中与该期 GCN 相关的光变记录（先反代 JSON 提取暴名）
 """
 import json
-import os
+import math
 import re
-import shutil
-import tarfile
-import threading
+import urllib.error
 import urllib.request
-from datetime import datetime, timezone
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 from sqlalchemy import cast, String, or_
 
-from app import get_session, require_auth
-from config import GCN_ARCHIVE_DIR
+from app import get_session
 from models import Lightcurve, Transient
 
 gcn_bp = Blueprint('gcn', __name__)
 
-GCN_ARCHIVE_URL = 'https://gcn.nasa.gov/circulars/archive.json.tar.gz'
+GCN_CIRCULAR_URL = 'https://gcn.nasa.gov/circulars/{cid}.json'
 
-# ─── id 列表缓存（目录 mtime + 条目数作失效签名） ───
-_ids_cache = {'ids': [], 'signature': None}
+# GCN 官网列表页 loader 端点：返回 items（circularId）+ totalItems；limit 上限 100
+GCN_LIST_URL = ('https://gcn.nasa.gov/circulars?_data=routes%2Fcirculars._archive._index'
+                '&limit={limit}&page={page}&view=index')
+GCN_LIST_PAGE = 100
+
+_UA = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+       'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36')
+_FETCH_TIMEOUT = 20
 
 
-def _scan_ids():
-    try:
-        entries = os.listdir(GCN_ARCHIVE_DIR)
-        sig = (os.path.getmtime(GCN_ARCHIVE_DIR), len(entries))
-    except OSError:
-        _ids_cache.update(ids=[], signature=None)
-        return []
-    if _ids_cache['signature'] == sig:
-        return _ids_cache['ids']
+def _http_get(url):
+    req = urllib.request.Request(url, headers={'User-Agent': _UA})
+    with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
+        return resp.read()
+
+
+# ─── 期号列表 ───
+
+def _fetch_page(page):
+    """第 page 页的 (ids, totalItems)；第 1 页 = 最新，页内降序"""
+    url = GCN_LIST_URL.format(limit='' if page == 1 else GCN_LIST_PAGE,
+                              page='' if page == 1 else page)
+    data = json.loads(_http_get(url))
     ids = []
-    for fn in entries:
-        if fn.endswith('.json'):
-            try:
-                ids.append(int(fn[:-5]))
-            except ValueError:
-                continue
-    ids.sort()
-    _ids_cache.update(ids=ids, signature=sig)
-    return ids
+    for it in data.get('items') or []:
+        try:
+            ids.append(int(it['circularId']))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return ids, int(data.get('totalItems') or 0)
 
 
-def _invalidate_cache():
-    _ids_cache['signature'] = None
+def _last_page_num():
+    _, total = _fetch_page(1)
+    return max(1, math.ceil(total / GCN_LIST_PAGE))
 
 
-@gcn_bp.route('/ids')
-def list_ids():
-    return jsonify({'ids': _scan_ids()})
-
-
-@gcn_bp.route('/<int:cid>')
-def get_circular(cid):
-    path = os.path.join(GCN_ARCHIVE_DIR, f'{cid}.json')
-    if not os.path.isfile(path):
-        return {'error': 'Not found'}, 404
+def _parse_page(raw):
+    """?page= 解析：None/空/first → 1；last → 最后一页；否则正整数，非法抛 ValueError"""
+    s = str(raw or '').strip().lower()
+    if s in ('', 'first'):
+        return 1
+    if s == 'last':
+        return _last_page_num()
     try:
-        with open(path, encoding='utf-8', errors='replace') as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        return {'error': f'读取失败: {e}'}, 500
-    return jsonify(data)
+        page = int(s)
+    except ValueError:
+        raise ValueError('page 必须为 first / last 或 ≥ 1 的整数')
+    if page < 1:
+        raise ValueError('page 必须为 ≥ 1 的整数')
+    return page
+
+
+def _locate_page(cid):
+    """二分定位包含 cid 的页 → (page, pos)；不在列表中 → (None, -1)"""
+    lo, hi = 1, _last_page_num()
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        ids, _ = _fetch_page(mid)
+        if not ids:
+            break
+        first, last = ids[0], ids[-1]
+        if cid > first:
+            hi = mid - 1
+        elif cid < last:
+            lo = mid + 1
+        else:
+            try:
+                return mid, ids.index(cid)
+            except ValueError:
+                return mid, -1
+    return None, -1
+
+
+# ─── 单期内容 ───
+
+def _fetch_circular(cid):
+    """反代单期 JSON；上游 404 → None"""
+    try:
+        raw = _http_get(GCN_CIRCULAR_URL.format(cid=cid))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+    return json.loads(raw)
 
 
 # ─── 关联光变记录 ───
-# 暴名 token 提取（正则与前端 gcn_tool.js / tools/gcn_index.py 保持一致）
+
 _GRB_RE = re.compile(r'\bGRB\s?(\d{6})([A-Z])?\b', re.I)
 _EP_RE = re.compile(r'\bEP\s?(2\d{5}[a-z])\b', re.I)
 
@@ -92,25 +129,67 @@ def _extract_name_tokens(data):
     return sorted(tokens)
 
 
-@gcn_bp.route('/<int:cid>/related')
-def related_lightcurves(cid):
-    """库中与该期 GCN 相关的光变记录，供阅读工具对照核对。
-    exact: reference 明确写有 GCN<cid>（或 extra_data.gcn_id 等于 cid）
-    fuzzy: 正文中出现的暴名能匹配到库中的源（id 或别名），取其全部光变记录
-    """
-    path = os.path.join(GCN_ARCHIVE_DIR, f'{cid}.json')
-    if not os.path.isfile(path):
+# ─── 路由 ───
+
+@gcn_bp.route('/ids')
+def list_ids():
+    """期号页：?page=first|last|N，或 ?around=N 二分定位（响应含 pos）"""
+    around = request.args.get('around', type=int)
+    if around is not None:
+        try:
+            p, pos = _locate_page(around)
+        except Exception as e:
+            return {'error': f'获取 GCN 期号列表失败: {e}'}, 502
+        if p is None:
+            return {'error': f'期号 {around} 不在 GCN 列表中'}, 404
+        ids, total = _fetch_page(p)
+        return jsonify({'ids': ids, 'total': total, 'page': p, 'pos': pos})
+    try:
+        page = _parse_page(request.args.get('page'))
+    except ValueError as e:
+        return {'error': str(e)}, 400
+    try:
+        ids, total = _fetch_page(page)
+    except Exception as e:
+        return {'error': f'获取 GCN 期号列表失败: {e}'}, 502
+    return jsonify({'ids': ids, 'total': total, 'page': page})
+
+
+@gcn_bp.route('/<cid>')
+def get_circular(cid):
+    """反代单期 circular JSON"""
+    try:
+        cid = int(cid)
+    except ValueError:
         return {'error': 'Not found'}, 404
     try:
-        with open(path, encoding='utf-8', errors='replace') as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        return {'error': f'读取失败: {e}'}, 500
+        data = _fetch_circular(cid)
+    except Exception as e:
+        return {'error': f'获取 GCN #{cid} 失败: {e}'}, 502
+    if data is None:
+        return {'error': 'Not found'}, 404
+    return jsonify(data)
+
+
+@gcn_bp.route('/<cid>/related')
+def related_lightcurves(cid):
+    """库中与该期 GCN 相关的光变记录。两级匹配：
+    exact — reference 含 GCN<cid> 或 extra_data.gcn_id == cid
+    fuzzy — 正文暴名 token 命中库中源（id 或别名），取全部光变记录
+    """
+    try:
+        cid = int(cid)
+    except ValueError:
+        return {'error': 'Not found'}, 404
+    try:
+        data = _fetch_circular(cid)
+    except Exception as e:
+        return {'error': f'获取 GCN #{cid} 失败: {e}'}, 502
+    if data is None:
+        return {'error': 'Not found'}, 404
 
     sess = get_session()
     try:
-        # 1) reference 精确命中：'GCN44171' / 'GCN 44171' / '...(GCN11024)' 等写法，
-        #    期号前后不得再跟数字，避免 GCN11024 误中 1102
         pattern = rf'gcn\s*#?\s*{cid}(?![0-9])'
         exact = (sess.query(Lightcurve)
                  .filter(or_(
@@ -122,7 +201,6 @@ def related_lightcurves(cid):
                  .all())
         exact_ids = {lc.id for lc in exact}
 
-        # 2) 暴名模糊匹配：token → 源（id 前缀 / 别名子串，含 "GRB 250610B" 空格变体）
         tokens = _extract_name_tokens(data)
         conds = []
         for tok in tokens[:20]:
@@ -164,103 +242,3 @@ def related_lightcurves(cid):
         })
     finally:
         sess.close()
-
-
-# ─── 在线更新（后台线程 + 状态轮询） ───
-_update_status = {
-    'state': 'idle',      # idle / downloading / extracting / done / error
-    'message': '',
-    'started_at': None,
-    'finished_at': None,
-}
-_update_lock = threading.Lock()
-
-
-def _utcnow_iso():
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _set_update(state, message=''):
-    _update_status.update(state=state, message=message)
-    if state in ('done', 'error'):
-        _update_status['finished_at'] = _utcnow_iso()
-
-
-def _run_update():
-    base = os.path.dirname(GCN_ARCHIVE_DIR)          # catadata/gcn
-    tar_path = os.path.join(base, 'archive.json.tar.gz')
-    extract_tmp = os.path.join(base, '_gcn_extract_tmp')
-    backup_dir = os.path.join(base, 'archive.backup')
-    try:
-        # 1. 下载
-        _set_update('downloading', f'正在下载 {GCN_ARCHIVE_URL} ...')
-        urllib.request.urlretrieve(GCN_ARCHIVE_URL, tar_path)
-
-        # 2. 解压到临时目录（整包内含 archive.json/ 顶层目录）
-        _set_update('extracting', '下载完成，正在解压...')
-        if os.path.exists(extract_tmp):
-            shutil.rmtree(extract_tmp)
-        os.makedirs(extract_tmp)
-        with tarfile.open(tar_path, 'r:gz') as tar:
-            tar.extractall(path=extract_tmp)
-        new_archive = os.path.join(extract_tmp, 'archive.json')
-        if not os.path.isdir(new_archive) or not any(
-                fn.endswith('.json') for fn in os.listdir(new_archive)):
-            raise RuntimeError('解压结果无效：未找到 archive.json/ 或其中无 JSON 文件')
-
-        # 3. 替换（旧目录先改名备份，失败可回滚）
-        if os.path.exists(backup_dir):
-            shutil.rmtree(backup_dir)
-        if os.path.isdir(GCN_ARCHIVE_DIR):
-            os.rename(GCN_ARCHIVE_DIR, backup_dir)
-        try:
-            os.rename(new_archive, GCN_ARCHIVE_DIR)
-        except Exception:
-            if os.path.isdir(backup_dir):
-                os.rename(backup_dir, GCN_ARCHIVE_DIR)
-            raise
-
-        # 4. 清理
-        shutil.rmtree(extract_tmp, ignore_errors=True)
-        shutil.rmtree(backup_dir, ignore_errors=True)
-        if os.path.exists(tar_path):
-            os.unlink(tar_path)
-        _invalidate_cache()
-        _set_update('done', f'存档已更新，共 {len(_scan_ids())} 期')
-    except Exception as e:
-        # 回滚：新目录不存在且备份还在时恢复备份
-        if not os.path.isdir(GCN_ARCHIVE_DIR) and os.path.isdir(backup_dir):
-            os.rename(backup_dir, GCN_ARCHIVE_DIR)
-        shutil.rmtree(extract_tmp, ignore_errors=True)
-        if os.path.exists(tar_path):
-            os.unlink(tar_path)
-        _invalidate_cache()
-        _set_update('error', f'更新失败: {e}')
-
-
-@gcn_bp.route('/status')
-def archive_status():
-    ids = _scan_ids()
-    try:
-        mtime = datetime.fromtimestamp(
-            os.path.getmtime(GCN_ARCHIVE_DIR), timezone.utc).isoformat()
-    except OSError:
-        mtime = None
-    return jsonify({
-        'count': len(ids),
-        'latest_id': ids[-1] if ids else None,
-        'archive_mtime': mtime,
-        'update': dict(_update_status),
-    })
-
-
-@gcn_bp.route('/update', methods=['POST'])
-@require_auth
-def update_archive():
-    with _update_lock:
-        if _update_status['state'] in ('downloading', 'extracting'):
-            return {'error': '已有更新任务正在进行', 'state': _update_status['state']}, 409
-        _update_status.update(state='downloading', message='启动下载...',
-                              started_at=_utcnow_iso(), finished_at=None)
-        threading.Thread(target=_run_update, daemon=True).start()
-    return {'status': 'started'}

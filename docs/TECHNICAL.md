@@ -341,11 +341,9 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | DELETE | `/api/fitting/jobs/<id>` | 删除任务记录及产物 | 管理员 |
 | GET | `/api/ingest/resolve` | 解析目标源（名称/别名精确 + 坐标锥形，只查不建，见 §8.16） | Bearer token |
 | POST | `/api/ingest/photometry` | STDWeb 测光点接入（解析/映射/去重/单事务入库，见 §8.16） | Bearer token |
-| GET | `/api/gcn/ids` | GCN 存档全部 circular id（数值升序，带缓存，见 §8.17） | 否 |
-| GET | `/api/gcn/<cid>` | 单期 GCN circular JSON 内容 | 否 |
+| GET | `/api/gcn/ids?page=first\|last\|N`（或 `?around=N`） | 期号页：`first`（无参数同义，最新 100 期）/ `last`（先取总数再查最后一页）/ `N`（第 N 页），响应含 totalItems；`around=N` 二分定位包含期号 N 的页（响应含 pos），见 §8.17 | 否 |
+| GET | `/api/gcn/<cid>` | 反代单期 GCN circular JSON（gcn.nasa.gov/circulars/<cid>.json，无缓存） | 否 |
 | GET | `/api/gcn/<cid>/related` | 库中与该期 GCN 相关的光变记录（reference 精确 + 暴名模糊，见 §8.17） | 否 |
-| GET | `/api/gcn/status` | GCN 存档概况（期数/最新期号/存档目录修改时间 archive_mtime）+ 更新任务状态 | 否 |
-| POST | `/api/gcn/update` | 从 NASA GCN 下载最新整包替换本地存档（后台线程） | 登录 |
 | GET | `/api/export/transients` | 导出事件 CSV | 登录 |
 | GET | `/api/export/lightcurves/<tid>` | 导出光变 CSV | 登录 |
 | POST | `/api/auth/login` | 登录（`{username, password}`；省略 username 兼容旧版按 admin 验证） | — |
@@ -536,9 +534,10 @@ drupal-settings `objectFlot.*.params.markings`），全部在前端实现，无�
 | `AJST_CATALOG_PASSWORD` | 管理员 `admin` 的初始密码（仅首次建库播种时读取，之后改密码请用 `/admin` 或直接改 `users` 表） | **无——必须显式设置；未设置时每次启动随机生成** |
 | `AJST_INGEST_TOKEN` | 数据接入（ingest）API 的 Bearer token（见 §8.16） | 无；未设置则 ingest API 整体返回 503 |
 | `DATABASE_URL` | PostgreSQL 连接串 | `postgresql+psycopg2:///ajst_catalog`（本机 Unix socket + peer 认证，以当前 OS 用户连接，无硬编码用户名） |
-| `AJST_DATA_DIR` | 数据目录（info/lc/filters/spectra/gcn 等，将数据仓库克隆/放置到该位置即可） | `<项目根>/catadata` |
+| `AJST_DATA_DIR` | 数据目录（info/lc/filters/spectra 等，将数据仓库克隆/放置到该位置即可） | `<项目根>/catadata` |
 | `AJST_PYTHON` | `backend/start.sh` 使用的 Python 解释器 | `python3` |
 | `PORT` | `backend/start.sh` 监听端口 | `5000` |
+| `AJST_HOST` | `backend/start.sh` 监听地址（默认仅回环 `127.0.0.1`，供 nginx 反代；需直连暴露时设 `0.0.0.0`） | `127.0.0.1` |
 | `FLASK_ENV` | 运行环境 | `production` |
 
 ### 7.2 启动/重启
@@ -550,7 +549,8 @@ drupal-settings `objectFlot.*.params.markings`），全部在前端实现，无�
 - 单元文件中用 `%h` 表示家目录（systemd 用户服务占位符），启动命令指向
   `<AJST>/backend/start.sh`（`<AJST>` 为项目根目录）
 - 启动脚本：`backend/start.sh` 为通用脚本——`cd` 到脚本所在目录后以
-  `${AJST_PYTHON:-python3}` 启动 Flask，监听 `0.0.0.0:${PORT:-5000}`；
+  `${AJST_PYTHON:-python3}` 启动 Flask，默认仅监听回环 `127.0.0.1:${PORT:-5000}`
+  （反代场景不对外暴露端口；需要直连时设 `AJST_HOST=0.0.0.0`）；
   其余配置（`DATABASE_URL` / `AJST_DATA_DIR` / `AJST_CATALOG_PASSWORD` /
   `AJST_INGEST_TOKEN`）全部从进程环境变量读取，需在 systemd 单元（`Environment=`）
   或启动环境中显式提供。**注意：`AJST_CATALOG_PASSWORD` 不显式设置时每次启动都会
@@ -563,6 +563,19 @@ drupal-settings `objectFlot.*.params.markings`），全部在前端实现，无�
   journalctl --user -u ajst-catalog -f     # 看日志
   ```
 
+**系统级服务**（服务器部署推荐，root 权限；与上面的用户服务二选一）：单元文件与环境变量
+模板见 `deploy/ajst-catalog.service` 与 `deploy/ajst.env.example`——
+
+```bash
+sudo cp deploy/ajst-catalog.service /etc/systemd/system/
+cp deploy/ajst.env.example .env && chmod 600 .env   # 之后用编辑器填入真实密码
+sudo systemctl daemon-reload && sudo systemctl enable --now ajst-catalog
+```
+
+与用户服务的关键差异：`User=` 需与 PostgreSQL 角色同名（默认 peer 认证连库）；
+密码等敏感配置走 `EnvironmentFile=<项目根>/.env`（unit 内不落明文，`.env` 已被
+`.gitignore` 排除）；默认仅监听回环 `127.0.0.1`（见 §7.1 `AJST_HOST`）。
+
 **手动启动**（不用 systemd 时）：后端需要一个装好依赖的 Python 环境（Flask / SQLAlchemy /
 psycopg2 必需；astropy / dustmaps / dust_extinction 用于银河系消光改正）：
 
@@ -571,11 +584,18 @@ cd <AJST>/backend
 AJST_CATALOG_PASSWORD='你的密码' python3 -c "
 import sys; sys.path.insert(0, '.')
 from app import create_app
-create_app().run(host='0.0.0.0', port=5000, debug=False)
+create_app().run(host='127.0.0.1', port=5000, debug=False)
 "
 ```
 
 或直接运行 `bash <AJST>/backend/start.sh`（环境变量同上）。
+
+**子目录反向代理**（如 `https://host/AJST/`）：nginx 剥离前缀——`location /AJST/` 中
+`proxy_pass http://127.0.0.1:5000/;`（**末尾斜杠**即剥离前缀，本站实际配置见
+`/etc/nginx/sites-enabled/default`，后端监听 `127.0.0.1:15000`）。
+前端已按页面目录动态推导 API 前缀（`location.pathname`，见前端 `js/api.js` / `admin.html`），
+hash 路由与相对静态资源（`vendor/`、`css/`、`js/`）天然兼容，后端无需任何改动。
+转发头：`proxy_set_header Host $host;` + `X-Real-IP`/`X-Forwarded-For`。
 
 ### 7.3 数据库操作
 
@@ -1039,17 +1059,22 @@ TNS 对象网页执行同步：
 原 tkinter 桌面工具 `gcn_catalogue_tool_1.2.py` 的 Web 化集成，导航「工具箱 → GCN 阅读工具」进入
 `#/tools/gcn`（`frontend/js/pages/gcn_tool.js` + `backend/routes/gcn.py`）。
 
-- **存档**：GCN 整包存于项目内 `catadata/gcn/archive/<circularId>.json`（约 4.5 万期，路径配置
-  `config.py: GCN_ARCHIVE_DIR`），与开发时所用的外部 ObsNotes 目录完全解耦
-  （曾用于索引/抽取的 `backend/tools/gcn_index.py` / `gcn_extract.py` 未随仓库发布，见 §8.11 末条）
-- **左栏浏览器**：期号跳转 / Prev / Next（id 列表客户端缓存）；JSON 展示复刻原工具——字符串内
+- **存档（v2.15 改为在线反代）**：不再本地保存整包，改按需反代——单期内容
+  `GET /api/gcn/<cid>` 直连 `https://gcn.nasa.gov/circulars/<cid>.json`（无缓存）；
+  期号列表**按页拉取**（不做全量下载）：`GET /api/gcn/ids?page=first|last|N` 调 GCN 官网列表 API
+  （`/circulars?_data=routes%2Fcirculars._archive._index&limit=100&page=N&view=index`，
+  limit 服务端上限 100；`first`（无参数同义）的 limit/page 留空，响应同时含 `totalItems`——当前 45364 期；
+  `last` 先取总数算出最后一页再查询），前端只维护当前窗口（100 期），Prev/Next 翻到边界时
+  按需取相邻页；任意期号均可直接输入跳转（后端按需反代，不存在则 404）；跳转列表外期号时
+  前端自动调 `around` 二分定位所在页（响应含 pos），定位成功后 Prev/Next 直接可用。
+  全部请求无缓存、实时转发上游；上游异常返回 502。
+  原 `config.py: GCN_ARCHIVE_DIR`、`scripts/fetch_gcn_archive.sh` 与前端「下载最新存档」按钮均已移除，
+  旧存档目录 `catadata/gcn/` 不再使用（可自行删除）。
+- **左栏浏览器**：期号跳转 / 「最早」「最新」一键定位 / Prev / Next（窗口式按页浏览，见存档条）；JSON 展示复刻原工具——字符串内
   `\n` 展开为真实换行+缩进、数字红色加粗、key/true/false/null 着色；当前期正文自动提取
   GRB/EP 暴名 token 显示为候选按钮，点击即查库：命中加载源信息卡，
   未命中预填 ID 待新建；底部时间计算器（UTC/MJD 两格式，Δt 同时输出 s/min/h/day）
-- **在线更新**：`POST /api/gcn/update`（登录）启动后台线程下载
-  `https://gcn.nasa.gov/circulars/archive.json.tar.gz` → 临时目录解压校验 → 备份旧目录后替换
-  （失败自动回滚）→ 清 id 缓存；`GET /api/gcn/status` 轮询进度，前端每 2s 轮询；
-  status 同时返回 `archive_mtime`（存档目录修改时间，UTC），状态行常显「存档更新于 <时间>」
+- **在线更新（已移除）**：`POST /api/gcn/update` 随 v2.15 一并移除（在线反代模式下无需更新存档）；前端「下载最新存档」按钮与 2s 轮询逻辑早已移除
 - **源信息卡**（右上，读写 transients 表）：id/aliases/ra/dec/t0/trigger_instrument/redshift/tags；
   RA/Dec 支持十进制度与 sexagesimal（`hh:mm:ss` / `12h34m56s` / 空格分隔；RA 按小时角 ×15，
   算法与 astropy `Angle` 一致并经 astropy 参考值逐例校验），输入框下方实时显示换算结果；
@@ -1293,6 +1318,23 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 ---
 
 ## 十一、版本历史
+
+### v2.15（2026-09-03）— GCN 阅读工具改为在线反代模式
+
+- 不再本地保存 GCN 整包存档：单期内容按需反代 `https://gcn.nasa.gov/circulars/<cid>.json`；
+  期号列表按页拉取不做全量下载——
+  `/api/gcn/ids?page=first|last|N` 单请求返回该页 100 期 + `totalItems`（`last` 先取总数算末页），
+  前端只维护当前窗口，翻到边界再取相邻页；新增 `?around=N` 二分定位所在页，
+  跳转列表外期号后 Prev/Next 立即可用；全部请求无缓存（去掉原单期 10 分钟/页 1 小时两层
+  内存缓存，实时转发上游）；上游异常返回 502，不存在的期号返回 404
+- 新增「最早」「最新」一键定位按钮：分别走 `page=last`（先取总数算末页，定位最老一期）与
+  无参数 `first`（定位最新一期）；修复负期号（历史存档含 `-4` 等）被 Flask `int` 路由
+  converter 拒之门外的问题（改用 string converter + 函数内转 int，`/<cid>` 与 `/<cid>/related`）
+- `POST /api/gcn/update` 废弃后移除；前端「下载最新存档」按钮、进度轮询与状态行
+  「本地存档」文案一并清理，改为「在线直连 GCN，共 N 期」；`GET /api/gcn/status` 并入 `/ids`
+  （响应含 totalItems，不再单独提供）
+- 移除 `config.py: GCN_ARCHIVE_DIR` 与 `scripts/fetch_gcn_archive.sh`；旧存档目录 `catadata/gcn/` 不再使用
+- 关联光变记录逻辑不变（仍以反代到的正文提取暴名 token 后查库）
 
 ### v2.14（2026-09-03）— 坐标时分秒输入 + 宿主测光/统计增强
 

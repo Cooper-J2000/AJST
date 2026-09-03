@@ -4,14 +4,16 @@
 // 右下：测光录入卡（写 lightcurves 表，字段映射见 saveObs）
 import { app, showLoading, showError } from './layout.js';
 import {
-  getGcnIds, getGcnCircular, getGcnStatus, updateGcnArchive, getGcnRelated,
+  getGcnIds, getGcnCircular, getGcnRelated,
   getTransients, getTransient, createTransient, updateTransient,
   getLightcurves, createLightcurves, updateLightcurve, isAuthed, showToast,
 } from '../api.js';
 
 // ─── 模块状态 ───
-let _ids = [];            // 全部 circular id（数值升序）
-let _idx = -1;            // 当前在 _ids 中的位置
+let _ids = [];            // 当前窗口期号（一页最多 100，降序：index 0 = 最新一期；第 1 页 = 最新）
+let _total = 0;           // GCN 总期数（来自列表 API 的 totalItems）
+let _windowPage = 1;      // _ids 对应的页码
+let _idx = -1;            // 当前在 _ids 中的位置（-1 = 列表外）
 let _cid = null;          // 当前 circular id
 let _tid = null;          // 当前源 id（源信息卡 ↔ 测光录入卡联动）
 let _editLcId = null;     // 测光录入卡正在编辑的已有记录 id（null = 新增模式）
@@ -19,7 +21,6 @@ let _editTid = null;      // 被编辑记录所属的源 id
 let _relatedResp = null;  // 当前 circular 的关联记录原始响应
 let _relSort = { key: null, dir: 1 };          // 关联表排序状态
 let _relFilter = { tid: '', band: '', ref: '', comment: '' };  // 关联表筛选状态
-let _pollTimer = null;
 
 const TIME_FACTOR = { s: 1, m: 60, h: 3600, d: 86400 };
 
@@ -125,7 +126,6 @@ function extractNameTokens(data) {
 // ═══ 页面渲染 ═══
 export async function render() {
   showLoading();
-  clearTimeout(_pollTimer);
   _idx = -1; _cid = null; _tid = null; _editLcId = null; _editTid = null;
 
   app.innerHTML = `
@@ -142,11 +142,12 @@ export async function render() {
             <div class="d-flex gap-1 mb-2 flex-wrap align-items-center">
               <input type="text" class="form-control form-control-sm" id="gcnJump" placeholder="期号 如 40689" style="width:130px">
               <button class="btn btn-sm btn-outline-primary" id="gcnJumpBtn">Go</button>
+              <button class="btn btn-sm btn-outline-secondary" id="gcnFirst" title="跳到最早一期">最早</button>
               <button class="btn btn-sm btn-outline-secondary" id="gcnPrev">&lt;&lt; Prev</button>
               <button class="btn btn-sm btn-outline-secondary" id="gcnNext">Next &gt;&gt;</button>
-              <button class="btn btn-sm btn-outline-success ms-auto" id="gcnUpdateBtn" title="从 gcn.nasa.gov 下载最新整包并替换本地存档"><i class="bi bi-cloud-download"></i> 下载最新存档</button>
+              <button class="btn btn-sm btn-outline-secondary" id="gcnLast" title="跳到最新一期">最新</button>
             </div>
-            <div class="small text-secondary mb-2" id="gcnStatusLine">存档加载中...</div>
+            <div class="small text-secondary mb-2" id="gcnStatusLine">加载中...</div>
             <div id="gcnChips" class="mb-2 d-flex flex-wrap gap-1 align-items-center"></div>
             <div class="gcn-view border rounded p-2" id="gcnViewer" style="max-height:460px;overflow:auto">
               <span class="text-secondary small">输入期号跳转，或用 Prev/Next 翻页浏览</span>
@@ -389,9 +390,10 @@ export async function render() {
   const $ = (id) => document.getElementById(id);
   $('gcnJumpBtn').addEventListener('click', onJump);
   $('gcnJump').addEventListener('keydown', (e) => { if (e.key === 'Enter') onJump(); });
+  $('gcnFirst').addEventListener('click', gotoFirst);
   $('gcnPrev').addEventListener('click', () => step(-1));
   $('gcnNext').addEventListener('click', () => step(1));
-  $('gcnUpdateBtn').addEventListener('click', onUpdateClick);
+  $('gcnLast').addEventListener('click', gotoLast);
   $('gcnCalcBtn').addEventListener('click', calcDelta);
   $('gcnCalcT1').addEventListener('keydown', (e) => { if (e.key === 'Enter') calcDelta(); });
   $('gcnCalcT2').addEventListener('keydown', (e) => { if (e.key === 'Enter') calcDelta(); });
@@ -434,33 +436,58 @@ export async function render() {
   await loadIds();
 }
 
+// 跳转到列表外期号时，后台定位包含它的页作为当前窗口（成功后 Prev/Next 直接可用）
+async function locatePage(cid) {
+  try {
+    const r = await getGcnIds(null, cid);
+    if (r && r.pos >= 0 && _cid === cid) {   // _cid 已变则丢弃（用户已跳到别处）
+      _ids = r.ids; _total = r.total; _windowPage = r.page; _idx = r.pos;
+      const label = document.getElementById('gcnCurLabel');
+      if (label) label.textContent = `#${cid}（${_idx + 1}/${_ids.length}）`;
+    }
+  } catch { /* 定位失败仅失去翻页定位，不打扰阅读 */ }
+}
+
+// ─── 最早 / 最新 一键定位（分别走后端 page=last / page=first） ───
+async function gotoFirst() {
+  try {
+    const r = await getGcnIds('last');   // 最后一页 = 最老一页
+    _ids = r.ids; _total = r.total; _windowPage = r.page;
+    showCircular(_ids[_ids.length - 1]); // 该页最旧 = 全列表最早一期
+  } catch (err) {
+    showToast(`获取最早一期失败: ${err.message}`, 'danger');
+  }
+}
+
+async function gotoLast() {
+  try {
+    const r = await getGcnIds();         // 第 1 页 = 最新一页
+    _ids = r.ids; _total = r.total; _windowPage = r.page;
+    showCircular(_ids[0]);               // 该页最新 = 最新一期
+  } catch (err) {
+    showToast(`获取最新一期失败: ${err.message}`, 'danger');
+  }
+}
+
 // ═══ 左栏：浏览器 ═══
 async function loadIds() {
   const line = document.getElementById('gcnStatusLine');
   try {
-    const [idsResp, st] = await Promise.all([getGcnIds(), getGcnStatus()]);
+    const idsResp = await getGcnIds();
     _ids = idsResp.ids;
-    updateStatusLine(st);
-    // 若有正在进行的更新任务，接续轮询
-    if (st.update && (st.update.state === 'downloading' || st.update.state === 'extracting')) {
-      pollUpdateStatus();
-    }
+    _total = idsResp.total;
+    _windowPage = 1;
+    // /ids 响应已含 totalItems 与最新一期，无需再单独请求 /status
+    updateStatusLine({ count: _total, latest_id: _ids[0] ?? null });
   } catch (err) {
-    if (line) line.textContent = `存档加载失败: ${err.message}`;
+    if (line) line.textContent = `GCN 加载失败: ${err.message}`;
   }
 }
 
 function updateStatusLine(st) {
   const line = document.getElementById('gcnStatusLine');
   if (!line) return;
-  // ISO → '2026-08-11 03:22:10 UTC'（项目约定 UTC 原值显示）
-  const fmtTs = (iso) => iso ? iso.replace('T', ' ').slice(0, 19) + ' UTC' : '';
-  let text = `本地存档共 ${st.count} 期` + (st.latest_id != null ? `（最新 #${st.latest_id}）` : '');
-  if (st.archive_mtime) text += ` ｜ 存档更新于 ${fmtTs(st.archive_mtime)}`;
-  const u = st.update;
-  if (u && (u.state === 'downloading' || u.state === 'extracting')) text += ` ｜ 更新中: ${u.message}`;
-  else if (u && u.state === 'done') text += ` ｜ 上次更新: ${u.message}（${fmtTs(u.finished_at)}）`;
-  else if (u && u.state === 'error') text += ` ｜ ${u.message}`;
+  let text = `在线直连 GCN，共 ${st.count} 期` + (st.latest_id != null ? `（最新 #${st.latest_id}）` : '');
   line.textContent = text;
 }
 
@@ -473,25 +500,44 @@ function onJump() {
   document.getElementById('gcnJump').value = '';
 }
 
-function step(dir) {
+async function step(dir) {
   if (!_ids.length) return;
   if (_idx < 0) {
+    // 未定位（如直接跳转了列表外期号）：从当前窗口两端开始
     showCircular(dir > 0 ? _ids[0] : _ids[_ids.length - 1]);
     return;
   }
-  const next = _idx + dir;
-  if (next < 0 || next >= _ids.length) { showToast(dir > 0 ? '已是最后一期' : '已是第一期', 'info'); return; }
-  showCircular(_ids[next]);
+  // 列表为降序（index 0 = 最新一期）：Prev（更旧）→ 索引 +1；Next（更新）→ 索引 -1
+  const next = _idx - dir;
+  if (next >= 0 && next < _ids.length) { showCircular(_ids[next]); return; }
+  // 窗口边界：按需取相邻页（第 1 页 = 最新一期；更旧的页号更大）
+  const targetPage = _windowPage - dir;
+  const maxPage = Math.ceil(_total / 100);
+  if (targetPage < 1 || targetPage > maxPage) {
+    showToast(dir > 0 ? '已是最后一期' : '已是第一期', 'info');
+    return;
+  }
+  try {
+    const r = await getGcnIds(targetPage);
+    _ids = r.ids; _windowPage = r.page;
+    // 相邻页中与当前最接近的一期：Prev → 新页第一条（最新）；Next → 新页最后一条（最旧）
+    showCircular(dir > 0 ? _ids[_ids.length - 1] : _ids[0]);
+  } catch (err) {
+    showToast(`获取第 ${targetPage} 页失败: ${err.message}`, 'danger');
+  }
 }
 
 async function showCircular(cid) {
   const viewer = document.getElementById('gcnViewer');
   const label = document.getElementById('gcnCurLabel');
   const idx = _ids.indexOf(cid);
-  if (idx < 0) { showToast(`存档中未找到 GCN #${cid}`, 'warning'); return; }
   _idx = idx; _cid = cid;
-  label.textContent = `#${cid}（${_idx + 1}/${_ids.length}）`;
+  // 反代模式下任意期号均可按需获取；不在当前窗口中的仅失去 Prev/Next 定位
+  label.textContent = idx >= 0
+    ? `#${cid}（${_idx + 1}/${_ids.length}）`
+    : `#${cid}（列表外，共 ${_total} 期）`;
   viewer.innerHTML = '<span class="text-secondary small">加载中...</span>';
+  if (idx < 0) locatePage(cid);  // 后台定位所在页，让 Prev/Next 立即可用
   try {
     const data = await getGcnCircular(cid);
     viewer.innerHTML = formatGcnHtml(data);
@@ -728,42 +774,7 @@ function renderChips(data) {
   });
 }
 
-// ─── 在线更新 ───
-async function onUpdateClick() {
-  if (!isAuthed()) { showToast('请先登录', 'warning'); return; }
-  if (!confirm('将从 gcn.nasa.gov 下载最新 GCN 整包并替换本地存档（约 200MB，耗时取决于网络），继续？')) return;
-  try {
-    await updateGcnArchive();
-    pollUpdateStatus();
-  } catch (err) {
-    showToast(`启动更新失败: ${err.message}`, 'danger');
-  }
-}
 
-function pollUpdateStatus() {
-  clearTimeout(_pollTimer);
-  const tick = async () => {
-    const line = document.getElementById('gcnStatusLine');
-    if (!line) return; // 已离开页面
-    try {
-      const st = await getGcnStatus();
-      updateStatusLine(st);
-      const u = st.update;
-      if (u && (u.state === 'downloading' || u.state === 'extracting')) {
-        _pollTimer = setTimeout(tick, 2000);
-      } else if (u && u.state === 'done') {
-        showToast(u.message, 'success');
-        const idsResp = await getGcnIds();
-        _ids = idsResp.ids;
-      } else if (u && u.state === 'error') {
-        showToast(u.message, 'danger');
-      }
-    } catch { /* 网络抖动忽略，下轮再试 */ 
-      _pollTimer = setTimeout(tick, 4000);
-    }
-  };
-  tick();
-}
 
 // ─── 时间计算器 ───
 function parseTimeInput(val, fmt) {

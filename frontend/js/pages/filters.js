@@ -2,7 +2,8 @@
 import { app, showLoading, showError } from './layout.js';
 import { isAuthed, isAdmin, showToast } from '../api.js';
 
-const API_BASE = '/api';
+// 兼容子目录反向代理（根路径部署时为 '/api'）
+const API_BASE = location.pathname.replace(/\/[^/]*$/, '') + '/api';
 
 async function api(method, path, body = null) {
   const opts = {

@@ -158,7 +158,8 @@ git clone https://github.com/Cooper-J2000/AJST-Data.git catadata
 cd backend && python3 etl.py && cd ..
 
 # run
-./backend/start.sh        # listens on 0.0.0.0:5000
+./backend/start.sh        # listens on 127.0.0.1:5000 (loopback, for reverse proxy;
+#                          #  set AJST_HOST=0.0.0.0 to expose directly)
 ```
 
 Without `catadata/`, the app still starts with an empty database; you can add
@@ -173,23 +174,24 @@ your own transients through the UI or the APIs.
 | `AJST_INGEST_TOKEN` | unset (ingest API disabled) | Bearer token for `/api/ingest/*` |
 | `AJST_DATA_DIR` | `<repo>/catadata` | data directory location |
 | `AJST_PYTHON` | `python3` | interpreter used by `start.sh` |
+| `AJST_HOST` | `127.0.0.1` | listen address (loopback for reverse proxy; set `0.0.0.0` to expose directly) |
 | `PORT` | `5000` | listen port |
 
-### GCN circular archive
+### GCN circulars
 
-The GCN tool can download/update the circular archive itself, or you can fetch
-the full archive manually:
-
-```bash
-bash scripts/fetch_gcn_archive.sh
-```
+The GCN tool runs in **online reverse-proxy mode**: each circular's JSON is
+fetched on demand from `https://gcn.nasa.gov/circulars/<id>.json`. The
+circular list is paged on demand — only the latest page (100 circulars) plus
+the total count is fetched initially, and neighboring pages are pulled when
+you navigate past the window edge. No local archive is stored, no caching,
+and no manual download is needed.
 
 ## Repository layout
 
 ```
 backend/    Flask app, SQLAlchemy models, ETL, fitting engines, routes
 frontend/   build-free SPA (vanilla JS ESM) + bundled vendor libraries
-scripts/    maintenance scripts (GCN archive fetch, ...)
+scripts/    maintenance scripts (SVO filter registration, ...)
 docs/       TECHNICAL.md — full technical documentation (Chinese)
 catadata/   (git-ignored) clone of AJST-Data, or your own data
 ```
