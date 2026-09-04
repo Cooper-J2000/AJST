@@ -101,7 +101,14 @@ class Transient(Base):
     host_galaxy    = relationship('HostGalaxy', back_populates='transient',
                                   cascade='all, delete-orphan', uselist=False)
 
-    def to_dict(self, include_relations=False):
+    def to_dict(self, include_relations=False, prefetched=None, brief=False):
+        """序列化。include_relations 时默认逐行 COUNT/lazy 查询（小页可接受）；
+        列表接口应传入 prefetched={'lc_count','spectra_count','has_host'}
+        （由路由批量聚合一次算好），避免 N+1。
+
+        brief=True 时省略 comment/extra_data（两者占列表响应 ~88% 体积且
+        列表/统计/对比页均不需要——详情见单源接口），仅列表接口使用。
+        """
         d = {
             'id': self.id,
             'ra': self.ra,
@@ -114,19 +121,25 @@ class Transient(Base):
             'pos_error': self.pos_error,
             'pos_error_unit': self.pos_error_unit,
             'pos_ref': self.pos_ref,
-            'comment': self.comment,
             'sub_tag': self.sub_tag or [],
             'tags': self.tags or [],
             'aliases': self.aliases or [],
-            'extra_data': self.extra_data or {},
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'distmod': distance_modulus(self.redshift),
         }
+        if not brief:
+            d['comment'] = self.comment
+            d['extra_data'] = self.extra_data or {}
         if include_relations:
-            d['lc_count'] = self.lightcurves.count() if hasattr(self, 'lightcurves') else None
-            d['spectra_count'] = self.spectra.count() if hasattr(self, 'spectra') else 0
-            d['has_host'] = self.host_galaxy is not None
+            if prefetched is not None:
+                d['lc_count'] = prefetched.get('lc_count', 0)
+                d['spectra_count'] = prefetched.get('spectra_count', 0)
+                d['has_host'] = prefetched.get('has_host', False)
+            else:
+                d['lc_count'] = self.lightcurves.count() if hasattr(self, 'lightcurves') else None
+                d['spectra_count'] = self.spectra.count() if hasattr(self, 'spectra') else 0
+                d['has_host'] = self.host_galaxy is not None
         return d
 
 
