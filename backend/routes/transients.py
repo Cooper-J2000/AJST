@@ -7,10 +7,11 @@ PUT    /api/transients/<id>     — 更新
 DELETE /api/transients/<id>     — 删除
 """
 from flask import Blueprint, request, jsonify
-from sqlalchemy import cast, String, or_, func, select
+from sqlalchemy import cast, String, or_, func, select, text
 from sqlalchemy.orm import defer
 from app import get_session, require_auth, require_admin
-from models import Transient, HostGalaxy, Lightcurve, Spectrum, utcnow
+from models import (Transient, HostGalaxy, Lightcurve, Spectrum, utcnow,
+                    distance_modulus)
 from coords import parse_ra, parse_dec
 from datetime import datetime
 import extinction
@@ -134,6 +135,47 @@ def list_transients():
                                 brief=True)
                       for t in items],
         })
+    finally:
+        sess.close()
+
+
+@transients_bp.route('/meta', methods=['GET'])
+def list_transients_meta():
+    """轻量全量元数据（统计页/对比页专用，替代 per_page=10000 全量拉取）。
+
+    每项仅含 {id, ra, dec, redshift, tags, aliases, distmod}——覆盖这两页的全部
+    数据需求；只 SELECT 所需列（无 comment/extra_data 等大字段）。
+    """
+    sess = get_session()
+    try:
+        rows = sess.execute(
+            select(Transient.id, Transient.ra, Transient.dec, Transient.redshift,
+                   Transient.tags, Transient.aliases)
+            .order_by(Transient.id)).all()
+        items = [{
+            'id': t.id,
+            'ra': t.ra,
+            'dec': t.dec,
+            'redshift': t.redshift,
+            'tags': t.tags or [],
+            'aliases': t.aliases or [],
+            'distmod': distance_modulus(t.redshift),
+        } for t in rows]
+        return jsonify({'items': items})
+    finally:
+        sess.close()
+
+
+@transients_bp.route('/tags', methods=['GET'])
+def list_transient_tags():
+    """全部源的 tags（自由字符串 JSONB 数组）去重并集，供列表页筛选下拉。"""
+    sess = get_session()
+    try:
+        rows = sess.execute(text(
+            "SELECT DISTINCT elem FROM transients, LATERAL "
+            "jsonb_array_elements_text(tags) elem "
+            "WHERE jsonb_typeof(tags) = 'array' ORDER BY 1")).fetchall()
+        return jsonify({'tags': [r[0] for r in rows]})
     finally:
         sess.close()
 

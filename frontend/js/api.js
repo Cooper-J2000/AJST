@@ -57,6 +57,9 @@ export const getTransients = (params = {}) => {
   return api('GET', `/transients${qs ? '?' + qs : ''}`);
 };
 export const getTransient = (id) => api('GET', `/transients/${id}`);
+// 轻量专用接口：统计/对比页全量元数据、列表页 tags 下拉（避免整表 per_page=10000）
+export const getTransientMeta = () => api('GET', '/transients/meta');
+export const getTransientTags = () => api('GET', '/transients/tags');
 export const createTransient = (data) => api('POST', '/transients', data);
 export const updateTransient = (id, data) => api('PUT', `/transients/${id}`, data);
 export const deleteTransient = (id) => api('DELETE', `/transients/${id}`);

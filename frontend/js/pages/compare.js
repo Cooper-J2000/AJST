@@ -1,6 +1,6 @@
 // === Compare Page (multi-source overlay) ===
 import { app, showLoading, showError } from './layout.js';
-import { getTransients, getLightcurves, getFilters } from '../api.js';
+import { getTransientMeta, getLightcurves, getFilters } from '../api.js';
 import { dragRectPlugin, attachDragZoom } from '../dragzoom.js';
 import { chartColors, academicFonts } from '../theme.js';
 
@@ -64,7 +64,7 @@ export async function render() {
   showLoading();
   try {
     const [data, filters] = await Promise.all([
-      getTransients({ per_page: 10000 }),
+      getTransientMeta(),
       getFilters(),
     ]);
     filtersCache = filters;
