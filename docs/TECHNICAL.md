@@ -1174,7 +1174,10 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
   pcigale 滤光片的波段跳过并警告）→ 子进程 `pcigale run`（基础链 sfhdelayed+bc03
   +dustatt_modified_CF00+redshifting，pdf_analysis；nebular / dl2014 为前端可勾选的可选模块，
   参数固定默认值；当前模型组合与网格模型数提示实时显示在前端）→ 解析 results.txt →
-  matplotlib 生成 sed.png。产物在
+  matplotlib 生成 sed.png。配套 pcigale.ini.spec 由 runner 从随代码分发的超集模板
+  （`backend/hostfit/pcigale.ini.spec`）按启用模块逐任务裁剪生成——pcigale 2025.0 要求 ini
+  覆盖 spec 声明的所有段，缺整段报 "parameter None: False" 且 exit 0、不产出 out/（2026-09-04
+  修复，runner 对该情形有防御性识别，校验失败与拟合失败分开报错）。产物在
   `fitting_store/<tid>/hostfit_<jobid>/`，不进数据仓库、全量重建清空（与余辉拟合一致）。
 - 「写入宿主信息」：用户确认后把 bayes 参数写入 `derived`；测光红移模式同时回写
   redshift/redshift_err/redshift_type='phot'。

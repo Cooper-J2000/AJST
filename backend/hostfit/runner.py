@@ -2,7 +2,9 @@
 
 run(job_id, config, log, workdir=None, filters=None)：
   1. config['photometry']（[{band, mag, mag_err, mag_sys, source}]）→ mJy 观测表
-  2. 生成 pcigale.ini（固定模块模板 sfhdelayed+bc03+dustatt_modified_CF00+redshifting）
+  2. 生成 pcigale.ini（基础链 sfhdelayed+bc03+dustatt_modified_CF00+redshifting；
+     nebular/dl2014 由 config 的 use_nebular/use_dl2014 开关启用），
+     并从超集模板按开关裁剪生成配套的 pcigale.ini.spec
   3. subprocess 调 `pcigale run`（OMP_NUM_THREADS=1，超时 10 分钟）
   4. 解析 out/results.txt → {'best':…, 'bayes':…, 'bayes_err':…}
   5. 用 out/host_best_model.fits + 观测点画 log-log SED → sed.png
@@ -20,6 +22,7 @@ import os
 import shutil
 import subprocess
 
+import configobj
 import numpy as np
 
 from app import get_session
@@ -35,10 +38,12 @@ _PCIGALE_BIN = os.environ.get(
 
 _TIMEOUT_S = 600  # pcigale run 超时 10 分钟
 
-# pcigale.ini.spec 模板：pcigale 2025.0 要求 ini 必须配套 spec 文件，
-# 否则拒绝运行。模块模板固定（sfhdelayed+bc03+dustatt_modified_CF00+redshifting
-# + pdf_analysis），故 spec 也固定——本文件由同版本 pcigale 的
-# `pcigale init` + `pcigale genconf` 生成后随代码分发。
+# pcigale.ini.spec 超集模板：pcigale 2025.0 要求 ini 必须配套 spec 文件，
+# 否则拒绝运行。本模板覆盖基础链 + nebular + dl2014 全部模块段（由同版本
+# pcigale 的 `pcigale init` + `pcigale genconf` 生成后随代码分发）；
+# pcigale 校验要求 ini 必须包含 spec 声明的所有段，缺整段会报
+# "parameter None: False"，故每个任务写出 spec 前需按 use_nebular /
+# use_dl2014 开关剔除未启用模块的段（build_spec）。
 _SPEC_TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               'pcigale.ini.spec')
 
@@ -312,6 +317,22 @@ additionalerror = 0.1
 """
 
 
+def build_spec(config, dst):
+    """从超集模板生成与本任务 ini 匹配的 pcigale.ini.spec 并写入 dst。
+
+    pcigale 校验要求 ini 必须包含 spec 声明的所有段（缺失整段报
+    "parameter None: False" 且 exit 0 不产出 out/），故按
+    use_nebular / use_dl2014 开关剔除未启用模块的段。用 configobj 的
+    inspec 模式读写，不依赖模板缩进格式。
+    """
+    spec = configobj.ConfigObj(_SPEC_TEMPLATE, list_values=False, _inspec=True)
+    for key, mod_name, _section in _OPTIONAL_MODULES:
+        if not config.get(key):
+            del spec['sed_modules_params'][mod_name]
+    spec.filename = dst
+    spec.write()
+
+
 # ─── 结果解析 ───
 
 def parse_results(path):
@@ -413,10 +434,10 @@ def run(job_id, config, log, workdir=None, filters=None):
     ini_text = build_ini(config, bands_pcg)
     with open(os.path.join(workdir, 'pcigale.ini'), 'w', encoding='utf-8') as f:
         f.write(ini_text)
-    # pcigale 要求 ini 必须配套 ini.spec（模块模板固定 → spec 固定，随代码分发）
+    # pcigale 要求 ini 必须配套 ini.spec；按开关从超集模板剔除未启用模块的段
     if not os.path.exists(_SPEC_TEMPLATE):
         raise RuntimeError(f'pcigale.ini.spec 模板缺失: {_SPEC_TEMPLATE}')
-    shutil.copyfile(_SPEC_TEMPLATE, os.path.join(workdir, 'pcigale.ini.spec'))
+    build_spec(config, os.path.join(workdir, 'pcigale.ini.spec'))
 
     # 2. 跑 pcigale（OMP_NUM_THREADS=1，10 分钟超时）
     pcigale = shutil.which('pcigale') or _PCIGALE_BIN
@@ -433,9 +454,21 @@ def run(job_id, config, log, workdir=None, filters=None):
         log('--- pcigale stderr ---\n' + (proc.stderr or '')[-4000:])
         raise RuntimeError(f'pcigale run 失败（exit {proc.returncode}），详见 run.log')
 
+    # pcigale 校验 ini 失败时不算崩溃：exit 0 且不产出 out/，需单独识别，
+    # 与真正的拟合失败区分开
+    results_txt = os.path.join(workdir, 'out', 'results.txt')
+    if not os.path.exists(results_txt):
+        stdout = proc.stdout or ''
+        if 'issues have been found in pcigale.ini' in stdout:
+            detail = '; '.join(l.strip() for l in stdout.splitlines()
+                               if 'ERROR' in l)
+            raise RuntimeError(
+                f'pcigale.ini 校验未通过（pcigale 拒绝运行）: {detail}')
+        raise RuntimeError('pcigale 正常退出但未产出 out/results.txt，详见 run.log')
+
     # 3. 解析结果
     outdir = os.path.join(workdir, 'out')
-    params, chi2 = parse_results(os.path.join(outdir, 'results.txt'))
+    params, chi2 = parse_results(results_txt)
     log(f'reduced_chi2 = {chi2}; best = {params["best"]}')
 
     # 4. SED 图
