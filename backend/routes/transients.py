@@ -7,9 +7,10 @@ PUT    /api/transients/<id>     — 更新
 DELETE /api/transients/<id>     — 删除
 """
 from flask import Blueprint, request, jsonify
-from sqlalchemy import cast, String, or_
+from sqlalchemy import cast, String, or_, func, select
+from sqlalchemy.orm import defer
 from app import get_session, require_auth, require_admin
-from models import Transient, Tag, TransientTag, HostGalaxy, utcnow
+from models import Transient, HostGalaxy, Lightcurve, Spectrum, utcnow
 from coords import parse_ra, parse_dec
 from datetime import datetime
 import extinction
@@ -98,13 +99,40 @@ def list_transients():
             per_page = min(10000, max(1, int(request.args.get('per_page', 50))))
         except ValueError:
             page, per_page = 1, 50
+        # 列表不需要 comment/extra_data（brief 序列化）：延迟加载，避免整行
+        # 8MB+ 文本从 PG 传回（详情接口单独查全量）
+        q = q.options(defer(Transient.comment), defer(Transient.extra_data))
         total = q.count()
         items = q.offset((page - 1) * per_page).limit(per_page).all()
+        # 批量预取当页源的光变/光谱点数与宿主存在性（3 条聚合查询代替逐行 N+1）
+        ids = [t.id for t in items]
+        prefetched = {}
+        if ids:
+            lc_counts = {tid: n for tid, n in sess.execute(
+                select(Lightcurve.transient_id, func.count())
+                .where(Lightcurve.transient_id.in_(ids))
+                .group_by(Lightcurve.transient_id)).all()}
+            sp_counts = {tid: n for tid, n in sess.execute(
+                select(Spectrum.transient_id, func.count())
+                .where(Spectrum.transient_id.in_(ids))
+                .group_by(Spectrum.transient_id)).all()}
+            host_ids = {tid for (tid,) in sess.execute(
+                select(HostGalaxy.transient_id)
+                .where(HostGalaxy.transient_id.in_(ids))).all()}
+            prefetched = {
+                tid: {'lc_count': lc_counts.get(tid, 0),
+                      'spectra_count': sp_counts.get(tid, 0),
+                      'has_host': tid in host_ids}
+                for tid in ids
+            }
         return jsonify({
             'total': total,
             'page': page,
             'per_page': per_page,
-            'items': [t.to_dict(include_relations=True) for t in items],
+            'items': [t.to_dict(include_relations=True,
+                                prefetched=prefetched.get(t.id),
+                                brief=True)
+                      for t in items],
         })
     finally:
         sess.close()
