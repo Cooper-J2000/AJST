@@ -298,8 +298,9 @@ function renderPhotRows() {
 
   tbody.querySelectorAll('.hf-phot-gext').forEach(sel => {
     sel.addEventListener('change', () => {
-      _photRows[parseInt(sel.dataset.i, 10)].gext_corr = sel.value === 'y';
-      sel.classList.remove('border-danger');
+      // 以当前实际值为准：占位「（请选择）」(value='') 一律视为未选择（null），并重新红框标出
+      _photRows[parseInt(sel.dataset.i, 10)].gext_corr = sel.value === '' ? null : sel.value === 'y';
+      sel.classList.toggle('border-danger', sel.value === '');
     });
   });
 
@@ -361,7 +362,8 @@ function collectPhotRows() {
   });
   document.querySelectorAll('#hfPhotBody .hf-phot-gext').forEach(sel => {
     const i = parseInt(sel.dataset.i, 10);
-    if (_photRows[i] && sel.value !== '') _photRows[i].gext_corr = sel.value === 'y';
+    // 以 DOM 当前值为准：占位（空值）回写为 null，防止「选过又改回占位」残留旧值绕过校验
+    if (_photRows[i]) _photRows[i].gext_corr = sel.value === '' ? null : sel.value === 'y';
   });
 }
 

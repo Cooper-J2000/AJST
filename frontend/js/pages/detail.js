@@ -589,7 +589,10 @@ export async function render(tid) {
     }
     const bandNames = Object.keys(bands);
     const spectralColors = buildSpectralColors(bandNames);
-    const hasCoords = (transient.ra != null);
+    const hasCoords = (transient.ra != null && transient.dec != null);
+    // 无坐标源：Aladin 照常渲染，指向银河系中心（Sgr A* 方向）作占位展示
+    const aladinRa = hasCoords ? transient.ra : 266.405;
+    const aladinDec = hasCoords ? transient.dec : -28.936;
 
     app.innerHTML = `
       <div class="mb-3">
@@ -637,7 +640,7 @@ export async function render(tid) {
         <!-- ─── 概览页（含 Aladin 方形全天图） ─── -->
         <div id="tab-overview" class="tab-pane active">
           <div class="row g-3 align-items-stretch">
-            <div class="${hasCoords ? 'col-md-4' : 'col-md-6'}">
+            <div class="col-md-4">
               <div class="card h-100" id="metaCard">
                 <div class="card-header"><i class="bi bi-info-circle"></i> 基本信息</div>
                 <div class="card-body">
@@ -689,7 +692,7 @@ export async function render(tid) {
                 </div>
               </div>
             </div>
-            <div class="${hasCoords ? 'col-md-4' : 'col-md-6'}">
+            <div class="col-md-4">
               <div class="card h-100">
                 <div class="card-header"><i class="bi bi-bar-chart"></i> 光变概览</div>
                 <div class="card-body">
@@ -712,15 +715,18 @@ export async function render(tid) {
                 </div>
               </div>
             </div>
-            ${hasCoords ? `
             <div class="col-md-4">
               <div class="card h-100">
-                <div class="card-header"><i class="bi bi-globe2"></i> Aladin 全天图 <small class="text-secondary">RA=${transient.ra.toFixed(4)}° Dec=${transient.dec.toFixed(4)}°</small></div>
-                <div class="card-body p-0">
-                  <div id="aladinContainer" style="width:100%;aspect-ratio:1/1;border-radius:0 0 8px 8px;background:#000"></div>
+                <div class="card-header"><i class="bi bi-globe2"></i> Aladin 全天图
+                  ${hasCoords
+                    ? `<small class="text-secondary">RA=${transient.ra.toFixed(4)}° Dec=${transient.dec.toFixed(4)}°</small>`
+                    : '<small class="text-warning">该源暂无坐标，图示为银河系中心</small>'}
+                </div>
+                <div class="card-body p-0 d-flex flex-grow-1">
+                  <div id="aladinContainer" style="width:100%;min-height:520px;flex:1;border-radius:0 0 8px 8px;background:#000"></div>
                 </div>
               </div>
-            </div>` : ''}
+            </div>
           </div>
           <!-- 外部目录参数（T90/Epeak/fluence/Eiso 等，含来源） -->
           ${renderCatalogData(transient.extra_data)}
@@ -975,9 +981,9 @@ export async function render(tid) {
         document.querySelectorAll('#tabContent .tab-pane').forEach(t => t.style.display = 'none');
         const pane = document.getElementById(`tab-${link.dataset.tab}`);
         if (pane) pane.style.display = 'block';
-        // Aladin：概览页首次显示时初始化
-        if (link.dataset.tab === 'overview' && hasCoords && !aladinInstance) {
-          setTimeout(() => initAladin(transient.ra, transient.dec, transient.id), 200);
+        // Aladin：概览页首次显示时初始化（无坐标源指向银河系中心占位）
+        if (link.dataset.tab === 'overview' && !aladinInstance) {
+          setTimeout(() => initAladin(aladinRa, aladinDec, hasCoords ? transient.id : null), 200);
         }
         // LC chart
         if (link.dataset.tab === 'lc') {
@@ -1002,10 +1008,8 @@ export async function render(tid) {
       });
     });
 
-    // 默认初始化 Aladin（概览页默认显示）
-    if (hasCoords) {
-      setTimeout(() => initAladin(transient.ra, transient.dec, transient.id), 500);
-    }
+    // 默认初始化 Aladin（概览页默认显示；无坐标源指向银河系中心占位）
+    setTimeout(() => initAladin(aladinRa, aladinDec, hasCoords ? transient.id : null), 500);
 
     // ─── derived 卡片初始化 ───
     if (transient.extra_data && transient.extra_data.derived) {
@@ -2330,12 +2334,15 @@ function initAladin(ra, dec, id) {
       showSimbadPointer: false,
       showCooGrid: true,
     });
-    // Aladin Lite v3：marker 需挂在 catalog 图层上（v2 的 addMarker 已移除）
-    const cat = A.catalog({ name: id });
-    aladinInstance.addCatalog(cat);
-    cat.addSources([
-      A.marker(ra, dec, { popupTitle: id, popupDesc: `RA=${ra.toFixed(4)}°, Dec=${dec.toFixed(4)}°` })
-    ]);
+    // Aladin Lite v3：marker 需挂在 catalog 图层上（v2 的 addMarker 已移除）；
+    // id 为 null 表示无坐标源（图示为银河系中心占位），不放置源标记
+    if (id != null) {
+      const cat = A.catalog({ name: id });
+      aladinInstance.addCatalog(cat);
+      cat.addSources([
+        A.marker(ra, dec, { popupTitle: id, popupDesc: `RA=${ra.toFixed(4)}°, Dec=${dec.toFixed(4)}°` })
+      ]);
+    }
   } catch (err) {
     console.error('Aladin init error:', err);
   }
