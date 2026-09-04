@@ -27,6 +27,90 @@ const _highlight = new Set();       // 总图中加粗突出的 id
 let _overviewChart = null, _curveChart = null;
 let _wlMin = 0, _wlSpan = 0;
 
+// ─── 新增弹窗的透过率曲线状态 ───
+let _afSvoSelected = null;          // 选定的 SVO filter id
+let _afBuiltinLoaded = false;       // pcigale 内置列表是否已加载
+
+function _afShowPane(kind) {
+  document.getElementById('afPaneBuiltin').style.display = kind === 'builtin' ? '' : 'none';
+  document.getElementById('afPaneUpload').style.display = kind === 'upload' ? '' : 'none';
+  document.getElementById('afPaneSvo').style.display = kind === 'svo' ? '' : 'none';
+}
+
+async function _afLoadBuiltin() {
+  if (_afBuiltinLoaded) return;
+  const sel = document.getElementById('afPcigaleName');
+  sel.innerHTML = '<option value="">加载中…</option>';
+  try {
+    const r = await api('GET', '/filters/pcigale_builtin');
+    sel.innerHTML = '<option value="">-- 请选择 --</option>' +
+      r.names.map(n => `<option value="${n}">${n}</option>`).join('');
+    _afBuiltinLoaded = true;
+  } catch (err) {
+    sel.innerHTML = `<option value="">加载失败: ${err.message}</option>`;
+  }
+}
+
+function _afReset() {
+  _afSvoSelected = null;
+  document.getElementById('afCkNone').checked = true;
+  _afShowPane('none');
+  document.getElementById('afCurveFile').value = '';
+  document.getElementById('afCurveText').value = '';
+  document.getElementById('afCurveMsg').textContent = '';
+  document.getElementById('afSvoQ').value = '';
+  document.getElementById('afSvoMsg').textContent = '';
+  document.getElementById('afSvoResults').innerHTML = '';
+  const sel = document.getElementById('afPcigaleName');
+  if (_afBuiltinLoaded) sel.value = '';
+}
+
+async function _afCurveValidate() {
+  const text = document.getElementById('afCurveText').value;
+  const msg = document.getElementById('afCurveMsg');
+  if (!text.trim()) { msg.innerHTML = '<span class="text-danger">内容为空</span>'; return; }
+  msg.textContent = '校验中…';
+  try {
+    const r = await api('POST', '/filters/parse_curve', { text });
+    msg.innerHTML = `<span class="text-success">✓ ${r.npoints} 个点，λ ${r.wl_min.toFixed(1)}–${r.wl_max.toFixed(1)} Å（已归一化）</span>`;
+  } catch (err) {
+    msg.innerHTML = `<span class="text-danger">✗ ${err.message}</span>`;
+  }
+}
+
+async function _afSvoSearch() {
+  const q = document.getElementById('afSvoQ').value.trim();
+  if (!q) { showToast('请输入关键词或 SVO ID', 'warning'); return; }
+  const msg = document.getElementById('afSvoMsg');
+  const box = document.getElementById('afSvoResults');
+  msg.textContent = '搜索中…';
+  box.innerHTML = '';
+  _afSvoSelected = null;
+  try {
+    const r = await api('GET', `/filters/svo_search?q=${encodeURIComponent(q)}`);
+    const results = [...r.results];
+    // 输入看起来像完整 SVO ID（Facility/Instrument.Band）时允许直接抓取
+    if (q.includes('/') && q.includes('.') && !results.some(it => it.id === q)) {
+      results.unshift({ id: q, facility: '', instrument: '', description: '直接按输入的 SVO ID 抓取' });
+    }
+    msg.textContent = results.length ? `共 ${results.length} 条候选，点击选定：` : '无匹配结果';
+    box.innerHTML = results.map((it, i) => `
+      <div class="form-check small">
+        <input class="form-check-input af-svo-pick" type="radio" name="afSvoPick" id="afSvoPick${i}" value="${it.id.replace(/"/g, '&quot;')}">
+        <label class="form-check-label" for="afSvoPick${i}"><strong>${it.id}</strong> <span class="text-secondary">${[it.facility, it.instrument].filter(Boolean).join('/')}${it.description ? ' — ' + it.description : ''}</span></label>
+      </div>`).join('');
+    box.querySelectorAll('.af-svo-pick').forEach(radio => {
+      radio.addEventListener('change', () => { _afSvoSelected = radio.value; });
+    });
+  } catch (err) {
+    msg.textContent = '';
+    box.innerHTML = `<div class="small text-danger">搜索失败: ${err.message}</div>`;
+  }
+}
+
+window.filterCurveValidate = _afCurveValidate;
+window.filterSvoSearch = _afSvoSearch;
+
 // matplotlib Spectral 色带锚点（ColorBrewer 9 色），取样 1-t 使短波→蓝/紫、长波→红
 const SPECTRAL = [[158,1,66],[213,62,79],[244,109,67],[253,174,97],[254,224,139],
                   [230,245,152],[171,221,164],[102,194,165],[50,136,189]];
@@ -148,17 +232,52 @@ export async function render() {
     </div>
     <!-- 添加弹窗 -->
     <div class="modal fade" id="addFilterModal" tabindex="-1">
-      <div class="modal-dialog modal-sm">
+      <div class="modal-dialog modal-lg">
         <div class="modal-content">
           <div class="modal-header"><h6 class="mb-0">添加滤光片</h6><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
           <div class="modal-body">
-            <div class="mb-2"><label class="form-label small">ID</label><input class="form-control form-control-sm" id="afId"></div>
-            <div class="mb-2"><label class="form-label small">波长 (Å)</label><input class="form-control form-control-sm" id="afWl" type="number" step="any"></div>
-            <div class="mb-2"><label class="form-label small">类型</label>
-              <select class="form-select form-select-sm" id="afType"><option value="">-</option><option value="mean">mean</option><option value="ref">ref</option><option value="eff">eff</option><option value="guess">guess</option></select>
+            <div class="row g-2">
+              <div class="col-4"><label class="form-label small">ID</label><input class="form-control form-control-sm" id="afId"></div>
+              <div class="col-4"><label class="form-label small">波长 (Å)</label><input class="form-control form-control-sm" id="afWl" type="number" step="any"></div>
+              <div class="col-4"><label class="form-label small">类型</label>
+                <select class="form-select form-select-sm" id="afType"><option value="">-</option><option value="mean">mean</option><option value="ref">ref</option><option value="eff">eff</option><option value="guess">guess</option></select>
+              </div>
+              <div class="col-4"><label class="form-label small">Vega→AB</label><input class="form-control form-control-sm" id="afVega" type="number" step="any" value="0"></div>
+              <div class="col-8"><label class="form-label small">说明</label><input class="form-control form-control-sm" id="afDesc"></div>
             </div>
-            <div class="mb-2"><label class="form-label small">Vega→AB</label><input class="form-control form-control-sm" id="afVega" type="number" step="any" value="0"></div>
-            <div class="mb-2"><label class="form-label small">说明</label><input class="form-control form-control-sm" id="afDesc"></div>
+            <hr class="my-2">
+            <div class="small text-warning mb-1"><i class="bi bi-exclamation-triangle"></i> 缺失透过率曲线的滤光片无法用于宿主星系拟合等相关过程（可跳过，事后补充）。</div>
+            <label class="form-label small mb-1">获取透过率曲线（可选）</label>
+            <div class="btn-group btn-group-sm w-100 mb-2" role="group">
+              <input type="radio" class="btn-check" name="afCurveKind" id="afCkNone" value="none" checked>
+              <label class="btn btn-outline-secondary" for="afCkNone">跳过</label>
+              <input type="radio" class="btn-check" name="afCurveKind" id="afCkBuiltin" value="builtin">
+              <label class="btn btn-outline-secondary" for="afCkBuiltin">pcigale 内置</label>
+              <input type="radio" class="btn-check" name="afCurveKind" id="afCkUpload" value="upload">
+              <label class="btn btn-outline-secondary" for="afCkUpload">上传曲线文件</label>
+              <input type="radio" class="btn-check" name="afCurveKind" id="afCkSvo" value="svo">
+              <label class="btn btn-outline-secondary" for="afCkSvo">SVO 搜索</label>
+            </div>
+            <div id="afPaneBuiltin" style="display:none">
+              <label class="form-label small">映射到 pcigale 自带滤光片</label>
+              <select class="form-select form-select-sm" id="afPcigaleName"><option value="">（选择后加载列表）</option></select>
+              <div class="form-text">曲线直接取自 pcigale 自带库，无需注册。</div>
+            </div>
+            <div id="afPaneUpload" style="display:none">
+              <input type="file" class="form-control form-control-sm mb-1" id="afCurveFile" accept=".csv,.txt,.dat">
+              <textarea class="form-control form-control-sm font-monospace" id="afCurveText" rows="5" placeholder="也可直接粘贴曲线内容"></textarea>
+              <div class="form-text">格式：两列——第一列波长（Å），第二列透过率；无表头；空白行与 # 开头行忽略；列分隔符自动识别逗号/空白。透过率请先归一到峰值 ≈ 1。</div>
+              <button class="btn btn-sm btn-outline-secondary mt-1" onclick="filterCurveValidate()">校验</button>
+              <span class="small ms-2" id="afCurveMsg"></span>
+            </div>
+            <div id="afPaneSvo" style="display:none">
+              <div class="input-group input-group-sm mb-1">
+                <input class="form-control" id="afSvoQ" placeholder="关键词（如 uvm2）或完整 SVO ID（如 Swift/UVOT.UVM2）">
+                <button class="btn btn-outline-secondary" onclick="filterSvoSearch()">搜索</button>
+              </div>
+              <div id="afSvoMsg" class="small text-secondary"></div>
+              <div id="afSvoResults" style="max-height:200px;overflow:auto"></div>
+            </div>
           </div>
           <div class="modal-footer">
             <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">取消</button>
@@ -199,6 +318,22 @@ export async function render() {
   document.getElementById('curveModal').addEventListener('hidden.bs.modal', () => {
     if (_curveChart) { _curveChart.destroy(); _curveChart = null; }
   });
+
+  // 新增弹窗：获取方式切换 / 文件读入文本框 / 关闭时清理状态
+  document.querySelectorAll('input[name=afCurveKind]').forEach(r => {
+    r.addEventListener('change', () => {
+      _afShowPane(r.value);
+      if (r.value === 'builtin') _afLoadBuiltin();
+    });
+  });
+  document.getElementById('afCurveFile').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { document.getElementById('afCurveText').value = reader.result; };
+    reader.readAsText(file);
+  });
+  document.getElementById('addFilterModal').addEventListener('hidden.bs.modal', _afReset);
 
   // 表头全选/全不选（同步总图显示）
   document.getElementById('filterCheckAll').addEventListener('change', (e) => {
@@ -287,10 +422,23 @@ async function loadFilters() {
         vega2ab: parseFloat(document.getElementById('afVega').value) || 0,
         description: document.getElementById('afDesc').value.trim() || null,
       };
+      const kind = (document.querySelector('input[name=afCurveKind]:checked') || {}).value || 'none';
+      if (kind === 'builtin') {
+        const name = document.getElementById('afPcigaleName').value;
+        if (!name) { showToast('请选择 pcigale 内置滤光片（或改选跳过）', 'warning'); return; }
+        body.curve = { kind: 'pcigale_builtin', name };
+      } else if (kind === 'upload') {
+        const text = document.getElementById('afCurveText').value;
+        if (!text.trim()) { showToast('请粘贴或上传曲线内容（或改选跳过）', 'warning'); return; }
+        body.curve = { kind: 'upload', text };
+      } else if (kind === 'svo') {
+        if (!_afSvoSelected) { showToast('请先搜索并选定一条 SVO 候选（或改选跳过）', 'warning'); return; }
+        body.curve = { kind: 'svo', svo_id: _afSvoSelected };
+      }
       try {
-        await api('POST', '/filters', body);
+        const r = await api('POST', '/filters', body);
         bootstrap.Modal.getInstance(document.getElementById('addFilterModal')).hide();
-        showToast('已添加', 'success');
+        showToast(r.warning ? `已添加；${r.warning}` : '已添加', r.warning ? 'warning' : 'success');
         loadFilters();
       } catch (err) {
         showToast(`添加失败: ${err.message}`, 'danger');

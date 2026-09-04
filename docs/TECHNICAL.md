@@ -320,8 +320,12 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | DELETE | `/api/lightcurves/<id>` | 删除单个光变点 | 管理员 |
 | DELETE | `/api/lightcurves` | 按 transient_id 删除 | 管理员 |
 | GET | `/api/filters` | 滤波器列表（支持 `?sort=&order=`） | 否 |
-| POST | `/api/filters` | 新建滤波器 | 登录 |
+| POST | `/api/filters` | 新建滤波器（body 可带 `curve` 一并获取透过率曲线，见 §8.23） | 登录 |
 | PUT | `/api/filters/<id>` | 更新滤波器 | 管理员 |
+| GET | `/api/filters/pcigale_builtin` | pcigale 自带滤光片名列表（新增滤光片时映射用） | 登录 |
+| POST | `/api/filters/parse_curve` | 校验两列透过率曲线文本（不落库，返回归一化曲线或含行号的错误） | 登录 |
+| GET | `/api/filters/svo_search?q=` | SVO FPS 模糊搜索候选滤光片 | 登录 |
+| POST | `/api/filters/svo_fetch` | 预览抓取指定 SVO ID 的透过率曲线（不落库不注册） | 登录 |
 | GET | `/api/tags` | 标签列表 | 否 |
 | GET | `/api/stats/overview` | 汇总统计 | 否 |
 | GET | `/api/relations` | 统计关系定义列表 + 各关系当前可用来源目录（见 §8.13） | 否 |
@@ -1201,6 +1205,32 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
 - **Aladin 遮挡修复**：Aladin Lite v3 全屏为 CSS `position:fixed` 实现且组件内部 z-index
   最高仅 1000，低于 sticky navbar（1020），导致全屏/短视口滚动时顶排按钮（全屏/关闭等）
   被页眉遮挡。修复：`#aladinContainer` 抬升为 `z-index: 1030` 的层叠上下文。
+
+### 8.23 新增滤光片时获取透过率曲线（2026-09-04）
+
+- 「添加滤光片」弹窗（`frontend/js/pages/filters.js` 的 filterShowAdd/filterAddSave）在基本
+  字段下新增可选的「获取透过率曲线」步骤，四种选择：跳过（仅建定义，弹窗内有"缺失透过率
+  曲线的滤光片无法用于宿主星系拟合等相关过程"提示）、pcigale 内置映射、上传曲线文件、
+  SVO 搜索。
+- 后端逻辑集中在 `backend/filtercurves.py`（路由在 `backend/routes/filters.py`）：
+  - **pcigale 内置**：`GET /api/filters/pcigale_builtin` 列名（排除自注册的 `ajst_*`）；
+    创建时 `curve={kind:'pcigale_builtin', name}`，后端读 pickle（nm→Å、峰值归一）
+    写入 extra_data 并置 `pcigale_name`（已在库中，无需注册）。
+  - **上传曲线**：`POST /api/filters/parse_curve` 校验两列文本（恰好两列数值、波长严格
+    递增、0 ≤ 透过率峰值 ≤ 1.5、≥10 点，错误含行号）；创建时
+    `curve={kind:'upload', text}`，服务端重新校验、峰值归一后写入
+    `extra_data.transmission`，并生成 pcigale .dat 注册进 pcigale
+    （`pcigale_name='ajst_<id>'`，非字母数字字符转 `_`）。
+  - **SVO 搜索**：`GET /api/filters/svo_search?q=` 解析 SVO FPS 搜索页 HTML 返回候选
+    （id/facility/instrument/description，上限 50 条；SVO 无机读搜索 API，
+    `fps.php?FORMAT=votable` 只返回空 schema）；`POST /api/filters/svo_fetch` 预览抓取；
+    创建时 `curve={kind:'svo', svo_id}`，抓取（fps.php VOTable 优先、getdata.php ascii
+    兜底）、归一、注册 pcigale，extra_data 记录 `svo_id`。
+- pcigale 注册失败**不阻断**创建：transmission 照常写入，`pcigale_name` 置 null，
+  响应带 `warning` 字段，前端提示"曲线已保存但 pcigale 注册失败，hostfit 暂不可用"。
+  进程内注册沿用 np.trapz→trapezoid shim（同 `scripts/fetch_svo_filters.py`）。
+- `POST /api/filters` 对曲线校验错误返回 400（`{error, message}`）且不建条目；
+  SVO 网络/解析错误返回 502。解析/搜索端点均不落库，可独立于创建流程复用。
 
 ### 8.21 组合模型余辉拟合引擎 vegas_unified（2026-08-30 新增；2026-08-31 起为唯一余辉拟合引擎）
 
