@@ -10,6 +10,7 @@ from flask import Blueprint, jsonify
 from sqlalchemy import func, distinct, text
 from app import get_session
 from models import Transient, Lightcurve, FilterDef, HostGalaxy, distance_modulus
+from extinction import correct_host_phot
 
 stats_bp = Blueprint('stats', __name__)
 
@@ -68,9 +69,14 @@ def band_coverage():
 def host_stats():
     """宿主星系统计：覆盖率、红移类型计数、M*/SFR 分布、宿主测光绝对星等点。
 
-    abs_mag_points: [{tid, band, z, mag(AB), abs_mag, mag_err, err_assumed, upperlimit}]
+    abs_mag_points: [{tid, band, z, mag(AB), abs_mag, mag_err, err_assumed, upperlimit,
+                      gext_applied, gext_Alambda}]
       M = m_AB − μ(z_host)，μ 由 models.distance_modulus（astropy Planck18）计算；
       Vega 星等先按 filters 表 vega2ab 转 AB；非上限且缺误差的点按 0.2 mag（err_assumed 标记，不落库）。
+      银河系消光：gext_corr 非真的行先按 CSFD+Rv3.1+P92 改正（mag −= A_λ，与光变表逻辑一致，
+      extinction.correct_host_phot 只算不写）再算 M；gext_applied 标记该行是否应用了改正，
+      gext_Alambda 为应用的银消量。坐标取宿主 ra/dec，缺省回退暂现源坐标，两者都缺
+      （或依赖不可用/波段无波长）时按原始值并 gext_applied=false。
     """
     sess = get_session()
     try:
@@ -93,6 +99,18 @@ def host_stats():
             f = filters.get(band) or filters.get(str(band).lower())
             return (f.vega2ab or 0.0) if f else 0.0
 
+        # 暂现源坐标缓存（宿主缺坐标时回退用，惰性查询）
+        t_coords = {}
+
+        def _coords(h):
+            if h.ra is not None and h.dec is not None:
+                return h.ra, h.dec
+            tid = h.transient_id
+            if tid not in t_coords:
+                t = sess.get(Transient, tid)
+                t_coords[tid] = (t.ra, t.dec) if t is not None else (None, None)
+            return t_coords[tid]
+
         abs_mag_points = []
         for h in hosts:
             z = h.redshift
@@ -101,7 +119,15 @@ def host_stats():
             dm = distance_modulus(z)
             if dm is None:
                 continue
-            for p in (h.photometry or []):
+            phot = h.photometry or []
+            # 有未改正行时整体算一次改正（尘埃图按坐标查一次）
+            corr = None
+            if any(isinstance(p, dict) and not p.get('gext_corr', False) for p in phot):
+                ra, dec = _coords(h)
+                res = correct_host_phot(sess, ra, dec, phot)
+                if res.get('ok'):
+                    corr = res['rows']
+            for idx, p in enumerate(phot):
                 if not isinstance(p, dict):
                     continue
                 band, mag = p.get('band'), p.get('mag')
@@ -111,6 +137,13 @@ def host_stats():
                     mag = float(mag)
                 except (TypeError, ValueError):
                     continue
+                # 银消改正（在星等系统换算前减 A_λ；星等加性量，次序可交换）
+                gext_applied = False
+                gext_alambda = None
+                if corr is not None and corr[idx]['applied']:
+                    mag = corr[idx]['mag_corr']
+                    gext_applied = True
+                    gext_alambda = round(corr[idx]['A_lambda'], 4)
                 mag_sys = str(p.get('mag_sys') or 'AB').strip().lower()
                 if mag_sys == 'vega':
                     mag += _vega2ab(band)
@@ -129,6 +162,7 @@ def host_stats():
                     'tid': h.transient_id, 'band': band, 'z': z,
                     'mag': round(mag, 4), 'abs_mag': round(mag - dm, 4),
                     'mag_err': err, 'err_assumed': err_assumed, 'upperlimit': ul,
+                    'gext_applied': gext_applied, 'gext_Alambda': gext_alambda,
                 })
         return jsonify({
             'n_hosts': n_hosts,

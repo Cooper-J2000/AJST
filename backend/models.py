@@ -387,7 +387,9 @@ class HostGalaxy(Base):
     redshift      = Column(Float, nullable=True)         # 宿主红移
     redshift_err  = Column(Float, nullable=True)         # 光谱红移=0，测光红移有误差
     redshift_type = Column(String(16), nullable=True)    # 'spec' / 'phot'
-    photometry    = Column(JSONB, default=list)          # [{band, mag, mag_err, mag_sys, source}]
+    photometry    = Column(JSONB, default=list)          # [{band, mag, mag_err, mag_sys, source, upperlimit, gext_corr}]
+                                                         # gext_corr: 该行是否已做银河系消光改正（新写入必填；
+                                                         # 缺键的存量行下游按 false 对待）
     derived       = Column(JSONB, default=dict)          # 采纳的拟合参数（m_star/sfr/...）
     comment       = Column(Text, nullable=True)
     source        = Column(String(128), nullable=True)   # 录入账户

@@ -1,7 +1,7 @@
 # AJST 暂现源光变目录系统 — 技术文档
 
-> 版本：2.14
-> 更新日期：2026-09-03
+> 版本：2.15
+> 更新日期：2026-09-04
 
 > **说明**：本文档由开发过程中的技术文档整理而来，部分内容（数据规模、批次导入历史、
 > 已删除的脚本与备份路径等）为历史快照；如有与代码不一致之处，**以代码为准**。
@@ -172,7 +172,7 @@ BibTeX 可能很长，前端不整段展示，仅提供「复制到剪贴板」�
 | `ra` / `dec` | FLOAT | 宿主坐标（度；v2.14 起 API 写入支持十进制度或时分秒字符串，入库统一转度） |
 | `redshift` / `redshift_err` | FLOAT | 宿主红移；光谱红移 err=0，测光红移有误差 |
 | `redshift_type` | VARCHAR(16) | `spec` / `phot` |
-| `photometry` | JSONB | `[{band, mag, mag_err, mag_sys(AB/Vega/ST), source, upperlimit}]`（v2.14 起支持 `upperlimit`；`mag_err` 可空——非上限且误差为空时后续处理按 σ=0.2 mag 计，0.2 不落库） |
+| `photometry` | JSONB | `[{band, mag, mag_err, mag_sys(AB/Vega/ST), source, upperlimit, gext_corr}]`（v2.14 起支持 `upperlimit`；`mag_err` 可空——非上限且误差为空时后续处理按 σ=0.2 mag 计，0.2 不落库；v2.15 起 `gext_corr` **必填**——该行是否已做银河系消光改正，缺失时 PUT 返回 400，缺键的存量行下游按 false 对待，见 §8.24） |
 | `derived` | JSONB | 采纳的拟合参数 `{m_star, sfr, age_main, Av_ISM, chi2, fit_at, job_id}` |
 | `comment` / `source` | TEXT / VARCHAR(128) | |
 
@@ -364,8 +364,9 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | PUT | `/api/articles/<id>` | 修改文章条目 `{name?, url?, title?, bibtex?}`（title/bibtex 传空串即清空） | 管理员 |
 | DELETE | `/api/articles/<id>` | 删除文章条目 | 管理员 |
 | GET | `/api/hosts/<tid>` | 宿主星系信息（无记录 404） | 否 |
-| PUT | `/api/hosts/<tid>` | upsert 宿主信息 `{ra?, dec?, redshift?, redshift_err?, redshift_type?, photometry?, derived?, comment?}`（`ra`/`dec` 支持十进制度或时分秒；`photometry` 项可含 `upperlimit`，`mag_err` 可空，见 §8.22） | 登录 |
+| PUT | `/api/hosts/<tid>` | upsert 宿主信息 `{ra?, dec?, redshift?, redshift_err?, redshift_type?, photometry?, derived?, comment?}`（`ra`/`dec` 支持十进制度或时分秒；`photometry` 项可含 `upperlimit`，`mag_err` 可空，见 §8.22；v2.15 起每行必须显式携带 `gext_corr` true/false，缺失返回 400，见 §8.24） | 登录 |
 | DELETE | `/api/hosts/<tid>` | 删除宿主信息 | 管理员 |
+| GET | `/api/export/host_photometry/<tid>` | 导出宿主测光 CSV/JSON（含实时计算的改正后星等 `mag_gextcor` 列，见 §8.24） | 登录 |
 | GET | `/api/hostfit/config` | pcigale 拟合默认网格与可用波段 | 否 |
 | POST | `/api/hostfit/jobs` | 提交宿主 SED 拟合 `{transient_id, mode, redshift?, grid, photometry}` | 登录 |
 | GET | `/api/hostfit/jobs` | 任务列表（`?transient_id=`） | 否 |
@@ -1232,6 +1233,29 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
 - `POST /api/filters` 对曲线校验错误返回 400（`{error, message}`）且不建条目；
   SVO 网络/解析错误返回 502。解析/搜索端点均不落库，可独立于创建流程复用。
 
+### 8.24 宿主测光银河系消光改正标记与应用（2026-09-04，v2.15）
+
+- **字段**：宿主测光表每行新增 `gext_corr`（bool，「该行是否已做银河系消光改正」）。
+  PUT `/api/hosts/<tid>` 时**每行必须显式携带** true/false，缺失返回 400 并指明行号与波段；
+  库中缺键的存量行不迁移，下游代码一律按 `false`（未改正）对待（`row.get('gext_corr', False)`）。
+- **前端录入**（详情页「宿主星系」tab）：测光表新增「银消已改正」列（是/否下拉）；
+  「添加行」的新行默认不预选，保存时若有行未选择则弹显式提醒并红框标出，不允许带空值提交；
+  存量行渲染为「否（未改正）」；表下注明"未改正的数据在统计与拟合时会按 CSFD 尘埃图
+  + Rv=3.1 + P92 自动改正后使用"。
+- **下游统一使用改正后数据**：`backend/extinction.py` 新增 `correct_host_phot(sess, ra, dec, phot_rows)`
+  （复用 CSFD 尘埃图查询与 P92 曲线，只算不写库；A_λ 是星等加性量，直接在原星等系统上减，
+  与 Vega→AB / ST→mJy 换算可交换）。坐标取宿主 ra/dec，缺省回退暂现源坐标，
+  两者都缺或依赖不可用时回退原始值并注明。
+  - `/api/stats/hosts` 的 `abs_mag_points`：gext_corr 非真的行先减 A_λ 再算 M，
+    返回点新增 `gext_applied` / `gext_Alambda` 字段（前端 tooltip 标注「已银消改正」）。
+  - hostfit 拟合（`hostfit/runner.py`）：job config 中 gext_corr 非真的行先改正再转 mJy，
+    run.log 记录"对 N 个未改正测光点应用了银消改正"（含 E(B-V) 与坐标来源）；
+    历史未重跑的 job 不受影响。
+  - 导出 `GET /api/export/host_photometry/<tid>?format=csv|json`（需登录）：列含
+    band/mag/mag_err/mag_sys/upperlimit/gext_corr/gext_Alambda/mag_gextcor/source，
+    `mag_gextcor` 为改正后星等（已改正行=mag，未改正行实时算，无法改正留空）；
+    前端宿主信息卡测光表旁有「下载数据表」按钮。
+
 ### 8.21 组合模型余辉拟合引擎 vegas_unified（2026-08-30 新增；2026-08-31 起为唯一余辉拟合引擎）
 
 接入作者修改版拟合工作区（`Vegas_run_unified.ipynb` / `run_batch_fit.py` 的网页化），
@@ -1323,6 +1347,12 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 ---
 
 ## 十一、版本历史
+
+### v2.15（2026-09-04）— 宿主测光银河系消光改正标记与应用
+
+- 宿主测光表每行新增 `gext_corr`（是否已做银河系消光改正，PUT 必填，缺失 400）；前端测光表加「银消已改正」是/否列，新行不预选、保存时显式提醒，缺键存量行显示为「否（未改正）」
+- 下游统一使用改正后数据：`/api/stats/hosts` 绝对星等点（新增 `gext_applied`/`gext_Alambda`，tooltip 标注）与 hostfit pcigale 拟合（run.log 记录改正点数）对未改正行按 CSFD+Rv3.1+P92 实时改正（`extinction.correct_host_phot`，只算不写；坐标宿主优先、回退暂现源）
+- 新增 `GET /api/export/host_photometry/<tid>`（需登录）：宿主测光 CSV/JSON 导出，含改正后星等 `mag_gextcor` 列；宿主信息卡新增「下载数据表」按钮
 
 ### v2.14（2026-09-03）— 坐标时分秒输入 + 宿主测光/统计增强
 

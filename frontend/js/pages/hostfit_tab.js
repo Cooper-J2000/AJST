@@ -6,7 +6,7 @@ import {
   isAuthed, isAdmin, showToast,
   getHost, saveHost, getFilters,
   getHostfitConfig, submitHostfitJob, getHostfitJobs, getHostfitJob,
-  hostfitJobFileUrl, deleteHostfitJob,
+  hostfitJobFileUrl, deleteHostfitJob, exportHostPhotometry,
 } from '../api.js';
 import { parseRA, parseDec, attachCoordHint } from '../coords.js';
 
@@ -16,7 +16,7 @@ const DEFAULT_MAG_ERR = 0.2; // 非上限且未填误差的点，后续处理（
 
 let _tid = null;
 let _host = null;           // GET /hosts/<tid> 结果；null = 无记录(404)
-let _photRows = [];         // 测光表编辑状态 [{use,band,mag,mag_err,mag_sys,source,upperlimit}]
+let _photRows = [];         // 测光表编辑状态 [{use,band,mag,mag_err,mag_sys,source,upperlimit,gext_corr}]（gext_corr=null 表示未选择）
 let _bandList = null;       // GET /filters 缓存（测光 band 下拉/补全候选）
 let _hfConfig = null;       // GET /hostfit/config 缓存
 let _jobs = [];
@@ -160,6 +160,9 @@ export async function initHostfitTab(container, tid) {
     band: p.band ?? '', mag: p.mag ?? null, mag_err: p.mag_err ?? null,
     mag_sys: p.mag_sys || 'AB', source: p.source ?? '',
     upperlimit: p.upperlimit === true,
+    // 存量行缺 gext_corr 键时按 false（未改正）对待，显示为「否（未改正）」；
+    // 仅「添加行」的新行为 null（未选择），保存时必须显式选择
+    gext_corr: p.gext_corr === true,
   }));
   renderHostCard();
 
@@ -224,19 +227,23 @@ function renderHostCard() {
     </div>` : ''}
     <div class="d-flex justify-content-between align-items-center mt-3 mb-1">
       <label class="form-label small mb-0"><i class="bi bi-camera"></i> 宿主测光（勾选行参与拟合；上限行不参与拟合）</label>
-      <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hfAddPhotRow"><i class="bi bi-plus-lg"></i> 添加行</button>
+      <div class="d-flex gap-1">
+        ${_host ? `<button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hfExportPhot" title="下载宿主测光表（CSV，含银消改正后星等 mag_gextcor 列）"><i class="bi bi-download"></i> 下载数据表</button>` : ''}
+        <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hfAddPhotRow"><i class="bi bi-plus-lg"></i> 添加行</button>
+      </div>
     </div>
     <datalist id="hfBandList">${(_bandList || []).map(b => `<option value="${esc(b)}"></option>`).join('')}</datalist>
     <div class="table-scroll" style="max-height:240px;overflow-y:auto">
       <table class="table table-sm mb-0" style="font-size:0.78rem">
         <thead><tr>
-          <th style="width:28px"></th><th>band</th><th>mag</th><th>mag_err</th><th title="是否为上限（非探测）">上限</th><th>星等系统</th><th>source</th><th style="width:30px"></th>
+          <th style="width:28px"></th><th>band</th><th>mag</th><th>mag_err</th><th title="是否为上限（非探测）">上限</th><th>星等系统</th><th title="该行测光是否已做银河系消光改正">银消已改正</th><th>source</th><th style="width:30px"></th>
         </tr></thead>
         <tbody id="hfPhotBody"></tbody>
       </table>
     </div>
     <div class="text-secondary mt-1" style="font-size:0.72rem">
-      <i class="bi bi-info-circle"></i> 非上限且 mag_err 留空的点，后续处理（拟合 / 统计图）按 σ=${DEFAULT_MAG_ERR} mag 计，该缺省值不会写入记录。
+      <i class="bi bi-info-circle"></i> 非上限且 mag_err 留空的点，后续处理（拟合 / 统计图）按 σ=${DEFAULT_MAG_ERR} mag 计，该缺省值不会写入记录。<br>
+      <i class="bi bi-moon-stars"></i> 未改正的数据在统计与拟合时会按 CSFD 尘埃图 + Rv=3.1 + P92 自动改正后使用。
     </div>
     <button class="btn btn-sm btn-primary w-100 mt-2" id="hfSaveBtn" ${authed ? '' : 'disabled'}>
       <i class="bi bi-check-lg"></i> 保存宿主信息
@@ -247,9 +254,12 @@ function renderHostCard() {
   attachCoordHint(document.getElementById('hfDec'), false);
   document.getElementById('hfAddPhotRow').addEventListener('click', () => {
     collectPhotRows();
-    _photRows.push({ use: true, band: '', mag: null, mag_err: null, mag_sys: 'AB', source: '', upperlimit: false });
+    _photRows.push({ use: true, band: '', mag: null, mag_err: null, mag_sys: 'AB', source: '', upperlimit: false, gext_corr: null });
     renderPhotRows();
     updateSubmitState();
+  });
+  document.getElementById('hfExportPhot')?.addEventListener('click', () => {
+    exportHostPhotometry(_tid);
   });
   document.getElementById('hfSaveBtn').addEventListener('click', saveHostInfo);
 }
@@ -258,7 +268,7 @@ function renderPhotRows() {
   const tbody = document.getElementById('hfPhotBody');
   if (!tbody) return;
   if (!_photRows.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-secondary small py-2">暂无测光点，点击「添加行」录入</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-secondary small py-2">暂无测光点，点击「添加行」录入</td></tr>';
     return;
   }
   tbody.innerHTML = _photRows.map((p, i) => {
@@ -275,10 +285,23 @@ function renderPhotRows() {
       <td><select class="form-select form-select-sm hf-phot" data-i="${i}" data-f="mag_sys" style="width:76px">
         ${MAG_SYS_OPTS.map(s => `<option value="${s}" ${p.mag_sys === s ? 'selected' : ''}>${s}</option>`).join('')}
       </select></td>
+      <td><select class="form-select form-select-sm hf-phot-gext ${p.gext_corr === null ? 'border-danger' : ''}" data-i="${i}" style="width:104px"
+            title="该行测光是否已做银河系消光改正（必选）">
+        ${p.gext_corr === null ? '<option value="">（请选择）</option>' : ''}
+        <option value="y" ${p.gext_corr === true ? 'selected' : ''}>是（已改正）</option>
+        <option value="n" ${p.gext_corr === false ? 'selected' : ''}>否（未改正）</option>
+      </select></td>
       <td><input type="text" class="form-control form-control-sm hf-phot" data-i="${i}" data-f="source" value="${esc(p.source)}" style="width:90px"></td>
       <td><button class="btn btn-sm btn-outline-danger py-0 px-1 hf-phot-del" data-i="${i}" title="删除行"><i class="bi bi-x"></i></button></td>
     </tr>`;
   }).join('');
+
+  tbody.querySelectorAll('.hf-phot-gext').forEach(sel => {
+    sel.addEventListener('change', () => {
+      _photRows[parseInt(sel.dataset.i, 10)].gext_corr = sel.value === 'y';
+      sel.classList.remove('border-danger');
+    });
+  });
 
   tbody.querySelectorAll('.hf-phot-use').forEach(cb => {
     cb.addEventListener('change', () => {
@@ -336,6 +359,10 @@ function collectPhotRows() {
     const i = parseInt(cb.dataset.i, 10);
     if (_photRows[i]) _photRows[i].upperlimit = cb.checked;
   });
+  document.querySelectorAll('#hfPhotBody .hf-phot-gext').forEach(sel => {
+    const i = parseInt(sel.dataset.i, 10);
+    if (_photRows[i] && sel.value !== '') _photRows[i].gext_corr = sel.value === 'y';
+  });
 }
 
 // 参与拟合的点：勾选、非上限、有 band 与 mag
@@ -351,9 +378,16 @@ async function saveHostInfo() {
   if (typeof raV === 'number' && isNaN(raV)) { showToast('RA 格式无法解析（支持十进制度或时分秒，如 08h08m27.4s）', 'danger'); return; }
   const decV = parseDec(document.getElementById('hfDec')?.value);
   if (typeof decV === 'number' && isNaN(decV)) { showToast('Dec 格式无法解析（支持十进制度或时分秒，如 +40d36m44.8s）', 'danger'); return; }
-  const photometry = _photRows
-    .filter(p => p.band && p.mag != null)
-    .map(p => ({ band: p.band, mag: p.mag, mag_err: p.mag_err, mag_sys: p.mag_sys || 'AB', source: p.source || null, upperlimit: p.upperlimit === true }));
+  const photRows = _photRows.filter(p => p.band && p.mag != null);
+  // 「是否已做银河系消光改正」不可留空：有未选择的行时显式提醒并阻止保存
+  const nMissingGext = photRows.filter(p => p.gext_corr == null).length;
+  if (nMissingGext) {
+    showToast(`请明确每行测光是否已做银河系消光改正（「银消已改正」列有 ${nMissingGext} 行未选择）`, 'danger');
+    renderPhotRows();   // 未选择行红框标出
+    return;
+  }
+  const photometry = photRows
+    .map(p => ({ band: p.band, mag: p.mag, mag_err: p.mag_err, mag_sys: p.mag_sys || 'AB', source: p.source || null, upperlimit: p.upperlimit === true, gext_corr: p.gext_corr === true }));
   const body = {
     ra: raV,
     dec: decV,
@@ -524,8 +558,14 @@ function updateSubmitState() {
 async function submitJob() {
   if (!isAuthed()) { showToast('请先登录', 'warning'); return; }
   const mode = document.querySelector('input[name="hfMode"]:checked')?.value || 'fixed';
-  const photometry = checkedPhotPoints().map(p => ({
+  const checked = checkedPhotPoints();
+  if (checked.some(p => p.gext_corr == null)) {
+    showToast('请先在测光表中明确每个参与拟合的点是否已做银河系消光改正（「银消已改正」列）', 'warning');
+    return;
+  }
+  const photometry = checked.map(p => ({
     band: p.band, mag: p.mag, mag_err: p.mag_err, mag_sys: p.mag_sys || 'AB', source: p.source || null,
+    gext_corr: p.gext_corr === true,
   }));
   if (photometry.length < MIN_FIT_POINTS) {
     showToast(`参与拟合的测光点不足 ${MIN_FIT_POINTS} 个`, 'warning');

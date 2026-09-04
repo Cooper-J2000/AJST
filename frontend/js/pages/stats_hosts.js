@@ -1,7 +1,8 @@
 // === 宿主星系统计子页（#/stats/hosts） ===
 // 数据源 GET /api/stats/hosts：{n_hosts, n_with_spec_z, n_with_phot_z,
 //   m_star: [...], sfr: [...], coverage: 0.xx,
-//   abs_mag_points: [{tid, band, z, mag(AB), abs_mag, mag_err, err_assumed, upperlimit}]}
+//   abs_mag_points: [{tid, band, z, mag(AB), abs_mag, mag_err, err_assumed, upperlimit,
+//     gext_applied(是否已应用银消改正), gext_Alambda}]}
 // 字段缺失时相应卡片/图显示「暂无数据」。
 import { app, showLoading, showError, statsTabs } from './layout.js';
 import { getHostStats, getOverview, getFilters } from '../api.js';
@@ -177,7 +178,8 @@ function buildAbsMagChart() {
               const mTxt = mJyMode
                 ? `F(10pc)=${sciFmt(item.parsed.y)} mJy`
                 : `M=${p.abs_mag}${errTxt} AB`;
-              return `${ds.label} · ${p.tid}: ${mTxt}, m=${p.mag}, z=${p.z}`;
+              const gextTxt = p.gext_applied ? '（已银消改正）' : '';
+              return `${ds.label} · ${p.tid}: ${mTxt}${gextTxt}, m=${p.mag}, z=${p.z}`;
             },
           },
         },

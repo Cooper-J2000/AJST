@@ -37,11 +37,17 @@ def upsert_host(transient_id):
     if 'redshift_type' in body and body['redshift_type'] not in _REDSHIFT_TYPES:
         abort(400, description="redshift_type 必须为 'spec' / 'phot' / null")
     if 'photometry' in body and not isinstance(body['photometry'], list):
-        abort(400, description='photometry 必须是数组 [{band, mag, mag_err, mag_sys, source, upperlimit}]')
+        abort(400, description='photometry 必须是数组 [{band, mag, mag_err, mag_sys, source, upperlimit, gext_corr}]')
     if isinstance(body.get('photometry'), list):
-        for p in body['photometry']:
+        for i, p in enumerate(body['photometry']):
             if not isinstance(p, dict) or not p.get('band') or p.get('mag') is None:
                 abort(400, description='photometry 每项必须含 band 与 mag')
+            # gext_corr（该行是否已做银河系消光改正）不可为空，必须显式 true/false；
+            # 库中缺失该键的存量行在下游一律按 false（未改正）对待
+            if not isinstance(p.get('gext_corr'), bool):
+                abort(400, description=(
+                    f"photometry 第 {i + 1} 行（band={p.get('band')}）缺少 gext_corr："
+                    '必须显式标记该行是否已做银河系消光改正（true/false）'))
             # upperlimit 缺省 false；mag_err 允许为空（后续处理按 0.2 mag，不落库）
             p['upperlimit'] = bool(p.get('upperlimit'))
             if p.get('mag_err') is not None:

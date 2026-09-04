@@ -215,6 +215,64 @@ def run(sess, transient_id=None, lightcurve_id=None):
     return stats
 
 
+# ─── 宿主星系测光改正（只算不写） ───
+
+def correct_host_phot(sess, ra, dec, phot_rows):
+    """
+    宿主星系测光行的银河系消光改正计算（复用 CSFD+P92 查询，不写库）。
+
+    phot_rows: host_galaxies.photometry 的 JSONB 行 [{band, mag, gext_corr, ...}]。
+    改正方向与光变点一致：改正后星等 = mag − A_λ（更亮；A_λ 是星等加性量，
+    与 Vega→AB / ST→流量的换算可交换，故直接在原星等系统上减）。
+    返回 {'ok', 'error', 'ebv', 'rows'}；rows 与输入等长对齐，每项：
+      applied   — True 表示该行标记为未改正（gext_corr 非真）且已成功计算
+      A_lambda  — 该行波段的银消量（mag）
+      mag_corr  — 改正后星等（float(mag) − A_λ）
+      reason    — 未改正的原因（already_corrected / bad_mag / band_no_wavelength / not_dict）
+    无坐标或依赖不可用（尘埃图缺失等）时整体 ok=False，调用方应回退原始值并注明。
+    """
+    def _fail(msg):
+        return {'ok': False, 'error': msg, 'ebv': None,
+                'rows': [{'applied': False, 'A_lambda': None, 'mag_corr': None,
+                          'reason': 'unavailable'} for _ in (phot_rows or [])]}
+
+    if ra is None or dec is None:
+        return _fail('缺少宿主/源坐标，无法查询尘埃图')
+    if not _load():
+        return _fail(f'消光计算依赖不可用: {_import_error}')
+
+    from models import FilterDef
+    filters = {f.id: f for f in sess.query(FilterDef).all()}
+    ebv = get_ebv(ra, dec)
+    alam_cache = {}   # band → A_λ
+    rows = []
+    for p in phot_rows or []:
+        item = {'applied': False, 'A_lambda': None, 'mag_corr': None, 'reason': None}
+        rows.append(item)
+        if not isinstance(p, dict):
+            item['reason'] = 'not_dict'
+            continue
+        if p.get('gext_corr', False):
+            item['reason'] = 'already_corrected'   # 已改正数据原样使用
+            continue
+        band = p.get('band')
+        try:
+            mag = float(p.get('mag'))
+        except (TypeError, ValueError):
+            item['reason'] = 'bad_mag'
+            continue
+        filt = filters.get(band)
+        if filt is None or not filt.wavelength or filt.wavelength <= 0:
+            item['reason'] = 'band_no_wavelength'
+            continue
+        if band not in alam_cache:
+            alam_cache[band] = compute_alambda(ebv, filt.wavelength)
+        item['A_lambda'] = alam_cache[band]
+        item['mag_corr'] = mag - alam_cache[band]
+        item['applied'] = True
+    return {'ok': True, 'error': None, 'ebv': ebv, 'rows': rows}
+
+
 # ─── 数据变动时的自动重算（供其他路由调用） ───
 
 def recompute_point(sess, lc):

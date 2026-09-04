@@ -139,6 +139,9 @@ export const exportTransients = (fmt = 'csv') => {
 export const exportLightcurves = (tid, fmt = 'csv') => {
   window.open(`${API_BASE}/export/lightcurves/${tid}?format=${fmt}`, '_blank');
 };
+export const exportHostPhotometry = (tid, fmt = 'csv') => {
+  window.open(`${API_BASE}/export/host_photometry/${encodeURIComponent(tid)}?format=${fmt}`, '_blank');
+};
 
 // === Toast notification ===
 export function showToast(msg, type = 'info') {

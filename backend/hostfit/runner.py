@@ -11,7 +11,9 @@ config = {'mode': 'fixed'|'photoz',
           'redshift': float|None,            # fixed 模式必填
           'grid': {'tau_main': [...], 'age_main': [...], 'Av_ISM': [...],
                    'z_min': .., 'z_max': .., 'z_step': ..},   # z* 仅 photoz 用
-          'photometry': [{band, mag, mag_err, mag_sys, source}]}
+          'photometry': [{band, mag, mag_err, mag_sys, source, gext_corr?}]}
+                         # gext_corr 非真的行在转 mJy 前先做银河系消光改正
+                         # （_apply_gext_correction，只算不写）
 """
 import math
 import os
@@ -77,6 +79,52 @@ _OPTIONAL_MODULES = [
 
 
 # ─── 测光 → mJy ───
+
+def _apply_gext_correction(job_id, config, log):
+    """对 config['photometry'] 中 gext_corr 非真的行应用银河系消光改正
+    （CSFD + Rv=3.1 + P92，与单源光变表逻辑一致；只改内存副本，不写库；
+    A_λ 为星等加性量，在 _mag_to_mjy 的 AB/Vega/ST 换算前减即可）。
+    坐标取宿主 ra/dec，缺省回退暂现源坐标。返回（可能替换过的）config。"""
+    phot = config.get('photometry') or []
+    n_uncorr = sum(1 for p in phot
+                   if isinstance(p, dict) and not p.get('gext_corr', False))
+    if not n_uncorr:
+        return config
+    from models import FittingResult, HostGalaxy, Transient
+    from extinction import correct_host_phot
+    sess = get_session()
+    try:
+        row = sess.get(FittingResult, job_id)
+        tid = row.transient_id if row is not None else None
+        host = (sess.query(HostGalaxy).filter_by(transient_id=tid).first()
+                if tid else None)
+        t = sess.get(Transient, tid) if tid else None
+        ra = host.ra if (host is not None and host.ra is not None) \
+            else (t.ra if t is not None else None)
+        dec = host.dec if (host is not None and host.dec is not None) \
+            else (t.dec if t is not None else None)
+        res = correct_host_phot(sess, ra, dec, phot)
+    finally:
+        sess.close()
+    if not res.get('ok'):
+        log(f'警告: {n_uncorr} 个未改正测光点未能应用银消改正'
+            f'（{res.get("error")}），按原始值继续')
+        return config
+    phot2 = []
+    n_applied = 0
+    for p, c in zip(phot, res['rows']):
+        if isinstance(p, dict) and c['applied']:
+            p = dict(p)
+            p['mag'] = c['mag_corr']
+            n_applied += 1
+        phot2.append(p)
+    config = dict(config)
+    config['photometry'] = phot2
+    log(f'银消改正: 对 {n_applied}/{n_uncorr} 个未改正测光点应用了银河系消光改正'
+        f'（CSFD 尘埃图 E(B-V)={res["ebv"]:.4f}，Rv=3.1，Pei 1992；'
+        f'坐标 ra={ra}, dec={dec}）')
+    return config
+
 
 def _mag_to_mjy(point, filt, warnings):
     """单个测光点 → (f_mjy, ferr_mjy)；无法换算返回 None 并记录警告。
@@ -354,7 +402,8 @@ def run(job_id, config, log, workdir=None, filters=None):
         finally:
             sess.close()
 
-    # 1. 观测表 + ini
+    # 1. 观测表 + ini（先对 gext_corr 非真的测光行做银消改正）
+    config = _apply_gext_correction(job_id, config, log)
     table_text, points, bands_pcg, warnings = build_observations(config, filters)
     for w in warnings:
         log('警告: ' + w)
