@@ -145,5 +145,11 @@ def delete_job(job_id):
         sess.commit()
     finally:
         sess.close()
-    shutil.rmtree(job_dir(transient_id, job_id), ignore_errors=True)
+    d = job_dir(transient_id, job_id)
+    shutil.rmtree(d, ignore_errors=True)
+    parent = os.path.dirname(d)
+    try:
+        os.rmdir(parent)  # 源目录已空则一并清理；非空则跳过
+    except OSError:
+        pass
     return True, '已删除'

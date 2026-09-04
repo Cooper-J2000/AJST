@@ -12,6 +12,9 @@ astropy>=6.0
 dustmaps>=1.0
 dust_extinction>=1.4
 
+# hostfit 路由启动时加载（pcigale.ini.spec 按开关裁剪），为硬依赖
+configobj>=5.0
+
 # ── 可选：余辉拟合功能（体积较大，不需要拟合可不装）──
 # VegasAfterglow[mcmc]>=2.0
 # corner>=2.2
@@ -21,3 +24,4 @@ dust_extinction>=1.4
 # pcigale>=2025.0
 # matplotlib>=3.8
 # 安装后需运行一次 scripts/fetch_svo_filters.py 注册滤光片曲线
+# 注：emcee/h5py 由 VegasAfterglow[mcmc] 附带安装

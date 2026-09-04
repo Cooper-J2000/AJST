@@ -272,7 +272,6 @@ function rebuildOverview() {
       label: f.id,
       data: f.extra_data.transmission.wl.map((x, i) => ({ x, y: f.extra_data.transmission.tr[i] })),
       borderColor: color,
-      backgroundColor: color,   // 图例色块实心填充（line 型 legend 用 backgroundColor 画色块）
       borderWidth: hl ? 3 : 1.3,
       pointRadius: 0,
       pointHitRadius: 5,
@@ -291,7 +290,27 @@ function rebuildOverview() {
       plugins: {
         legend: {
           position: 'top',
-          labels: { color: cc.legend, boxWidth: 10, boxHeight: 10, font: { size: 10 } },
+          labels: {
+            color: cc.legend, boxWidth: 10, boxHeight: 10, font: { size: 10 },
+            // 默认 generateLabels 按 _getSortedDatasetMetas()（即 dataset.order 排序）
+            // 生成条目，加粗（order 0）的会跑到图例区前面；这里按 dataset 数组顺序生成，
+            // 保证图例顺序永远与列表顺序一致；同时加粗条目的图例标志画成实心色块，
+            // 普通条目保持线条样式（透明填充 + 彩色描线）
+            generateLabels: (chart) => chart.data.datasets.map((ds, i) => {
+              const hl = _highlight.has(ds.label);
+              return {
+                text: ds.label,
+                datasetIndex: i,
+                fontColor: cc.legend,
+                hidden: !chart.isDatasetVisible(i),
+                fillStyle: hl ? ds.borderColor : 'rgba(0,0,0,0)',
+                strokeStyle: ds.borderColor,
+                lineWidth: hl ? 0 : 2,
+              };
+            }),
+            // 双保险：生成后再按 datasetIndex 排一次序（v4 buildLabels 里支持 labels.sort）
+            sort: (a, b) => a.datasetIndex - b.datasetIndex,
+          },
           // 点击图例 = 加粗/取消加粗（隐藏由行首勾选框控制）
           onClick: (e, item) => toggleHighlight(item.text),
         },
