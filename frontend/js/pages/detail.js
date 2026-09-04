@@ -171,14 +171,14 @@ function articlesHTML() {
   const items = articlesData.map(a => `
     <div class="mb-1" id="articleItem_${a.id}">
       <div class="d-flex align-items-center gap-2 flex-wrap">
-        <a href="${escAttr(a.url)}" target="_blank" rel="noopener noreferrer"><i class="bi bi-journal-text"></i> ${escAttr(a.name)}</a>
+        <a href="${escAttr(a.url)}" target="_blank" rel="noopener noreferrer" style="overflow-wrap:anywhere"><i class="bi bi-journal-text"></i> ${escAttr(a.name)}</a>
         ${a.bibtex ? `<button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="articleBibtexCopy(${a.id})" title="复制 BibTeX 引用信息到剪贴板"><i class="bi bi-clipboard"></i> BibTeX</button>` : ''}
         ${a.source ? `<span class="text-secondary" style="font-size:0.72rem">${escAttr(a.source)}</span>` : ''}
         ${isAdmin() ? `
           <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="articleEditStart(${a.id})" title="编辑"><i class="bi bi-pencil"></i></button>
           <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="articleDelete(${a.id})" title="删除"><i class="bi bi-trash"></i></button>` : ''}
       </div>
-      ${a.title ? `<div class="text-secondary text-truncate" style="font-size:0.78rem;max-width:520px" title="${escAttr(a.title)}">${escAttr(a.title)}</div>` : ''}
+      ${a.title ? `<div class="text-secondary text-truncate" style="font-size:0.78rem;max-width:100%" title="${escAttr(a.title)}">${escAttr(a.title)}</div>` : ''}
     </div>`).join('');
   const addArea = isAuthed() ? `
     <button class="btn btn-sm btn-outline-primary py-0 px-2 mt-1" id="articleAddBtn" onclick="articleAddToggle()"><i class="bi bi-plus-lg"></i> 添加</button>
@@ -644,7 +644,7 @@ export async function render(tid) {
               <div class="card h-100" id="metaCard">
                 <div class="card-header"><i class="bi bi-info-circle"></i> 基本信息</div>
                 <div class="card-body">
-                  <table class="table table-sm table-borderless" id="metaTable">
+                  <table class="table table-sm table-borderless" id="metaTable" style="table-layout:fixed">
                     <tbody>
                       <tr><td class="text-secondary" style="width:140px">RA</td><td>${transient.ra != null ? transient.ra.toFixed(6) : '-'}</td></tr>
                       <tr><td class="text-secondary">Dec</td><td>${transient.dec != null ? transient.dec.toFixed(6) : '-'}</td></tr>

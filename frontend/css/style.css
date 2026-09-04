@@ -598,3 +598,6 @@ body {
 /* ─── 抠图取数 ─── */
 .dgz-ds-row:hover { background: var(--bg-hover); }
 .dgz-ds-active { background: var(--accent-blue-soft); }
+
+/* ─── 概览页基本信息表：固定布局下长内容在单元格内折行，不挤压标签列 ─── */
+#metaTable td:last-child { overflow-wrap: anywhere; }
