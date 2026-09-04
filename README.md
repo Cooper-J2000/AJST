@@ -98,8 +98,9 @@ APIs and integrations:
 - **Filter definitions** — `filters.json`; the Spitzer/IRAC entries are taken
   from the **SVO Filter Profile Service**; filter transmission curves for the
   host-galaxy SED fits are also retrieved from SVO FPS.
-- **Host-galaxy SED fitting** — **pcigale** (Boquien et al. 2019; v2025.0
-  tested), run as a subprocess with results rendered by `matplotlib`.
+- **Host-galaxy SED fitting** — **pcigale** (Boquien et al. 2019; v2025.1, locally
+  installed from source with a numpy-2 `np.trapezoid` patch), run as a subprocess
+  with results rendered by `matplotlib`.
 - **All-sky map** — embedded **Aladin Lite 3.8.2** (CDS).
 - **Afterglow fitting** — **VegasAfterglow** (v2.0.6 tested), with `corner`
   and `matplotlib` for posterior plots.

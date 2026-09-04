@@ -1191,14 +1191,17 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
   状态在 extra_data.status）；runner 生成 pcigale 输入（AB/Vega/ST → mJy 换算，缺 Vega2AB 或无
   pcigale 滤光片的波段跳过并警告）→ 子进程 `pcigale run`（基础链 sfhdelayed+bc03
   +dustatt_modified_CF00+redshifting，pdf_analysis；nebular / dl2014 为前端可勾选的可选模块，
-  参数固定默认值；当前模型组合与网格模型数提示实时显示在前端）→ 解析 results.txt →
-  matplotlib 生成 sed.png。产物在
+  参数固定默认值；当前模型组合与网格模型数提示实时显示在前端）。pcigale 要求 ini 必须配套
+  ini.spec 且 configobj 校验要求 spec 的 section/键与 ini 完全一致，故 spec 由 `build_spec()`
+  按同一模块选择动态生成（文本固化自 pcigale 2025.1 的 `genconf`，升级 pcigale 时需同步）→
+  解析 results.txt → matplotlib 生成 sed.png。产物在
   `fitting_store/<tid>/hostfit_<jobid>/`，不进数据仓库、全量重建清空（与余辉拟合一致）。
 - 「写入宿主信息」：用户确认后把 bayes 参数写入 `derived`；测光红移模式同时回写
   redshift/redshift_err/redshift_type='phot'。
 - 滤光片：`FilterDef.extra_data` 存 `pcigale_name`（如 `sloan.sdss.g`）与 `transmission`
-  透过率曲线（SVO FPS 拉取，脚本 `scripts/fetch_svo_filters.py`；pcigale 2025.0 的
-  `pcigale-filters add` 在 numpy≥2 下需 np.trapz→trapezoid shim，脚本已内置）。
+  透过率曲线（SVO FPS 拉取，脚本 `scripts/fetch_svo_filters.py`；pcigale 自带库之外的波段
+  下载后注册进 pcigale 滤光片库，宿主测光 30 个波段全部对齐，pcigale 路径
+  `PCIGALE_FILTER_DIR` 指向本机安装目录 `/home/ajst/ajst/lib/python3.12/site-packages/pcigale/`）。
 - 权限：查看公开；宿主信息编辑/提交拟合/写回=登录；删除宿主/删除任务=管理员。
 - 列表页「宿主」徽章 + `has_host` 筛选；新建事件页可折叠宿主字段；首页与统计子页
   `/stats/hosts`（覆盖率、M*/SFR 分布、宿主绝对星等—红移图；v2.14 起替换原 z-z 散点，见 §8.22）。

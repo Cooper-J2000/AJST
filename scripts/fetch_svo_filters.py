@@ -1,15 +1,13 @@
 #!/usr/bin/env python
-"""为 pcigale 准备 AJST 滤光片透过率曲线（Phase 1）。
+"""为 pcigale 准备 AJST 滤光片透过率曲线。
 
 功能：
 1. 内置 AJST filter id → (pcigale 滤光片名, SVO id) 映射表。
-2. pcigale 2025.0 自带库已有的滤光片：直接读 pickle 取透过率写入数据库
+2. pcigale 自带库已有的滤光片：直接读 pickle 取透过率写入数据库
    FilterDef.extra_data，不下载。
-3. 自带库没有的（Swift/UVOT）：从 SVO FPS 拉 VOTable 透过率，写库的同时生成
-   pcigale 格式文件（/tmp/pcigale_filters/）并注册进 pcigale 滤光片库。
-   注册在进程内调用 pcigale_filters.add_filters() 完成：pcigale 2025.0 的
-   `pcigale-filters add` CLI 用了 numpy>=2.0 已移除的 np.trapz，会直接崩，
-   进程内调用时可打 np.trapz=np.trapezoid 的兼容 shim。
+3. 自带库没有的（如 Swift/UVOT、HST/WFPC2）：从 SVO FPS 拉透过率，写库的同时
+   生成 pcigale 格式文件并注册进 pcigale 滤光片库。注册在进程内调用
+   pcigale_filters.add_filters() 完成。
 
 写入数据库的 extra_data 结构（JSONB，整体重赋值以保证 SQLAlchemy 跟踪）：
     {
@@ -19,9 +17,9 @@
     }
 
 用法（在仓库根目录或任意目录运行均可）：
-    /home/ajst/miniconda3/envs/burst_advocate/bin/python scripts/fetch_svo_filters.py
-    /home/ajst/miniconda3/envs/burst_advocate/bin/python scripts/fetch_svo_filters.py --force
-    /home/ajst/miniconda3/envs/burst_advocate/bin/python scripts/fetch_svo_filters.py uvot-uvw2 uvot-v
+    /home/ajst/ajst/bin/python scripts/fetch_svo_filters.py
+    /home/ajst/ajst/bin/python scripts/fetch_svo_filters.py --force
+    /home/ajst/ajst/bin/python scripts/fetch_svo_filters.py uvot-uvw2 uvot-v
 
 幂等：已有 transmission 且已注册 pcigale 的默认跳过，--force 覆盖重做。
 """
@@ -37,8 +35,7 @@ BACKEND_DIR = REPO_ROOT / 'backend'
 sys.path.insert(0, str(BACKEND_DIR))
 
 PCIGALE_FILTER_DIR = (
-    Path('/home/ajst/miniconda3/envs/burst_advocate/lib/python3.12/site-packages/'
-         'pcigale/data/filters')
+    Path('/home/ajst/ajst/lib/python3.12/site-packages/pcigale/data/filters')
 )
 PCIGALE_OUT_DIR = Path('/tmp/pcigale_filters')
 
@@ -47,8 +44,6 @@ SVO_ASCII_URL = 'http://svo2.cab.inta-csic.es/theory/fps/getdata.php?format=asci
 SVO_INFO_URL = 'http://svo2.cab.inta-csic.es/theory/fps/index.php?id={}'
 
 # AJST filter id → (pcigale_name, svo_id 或 None 表示用 pcigale 自带库)
-# 注：AJST 库中 J/H 标注为 UKIRT/UKIDSS，pcigale 无 UKIRT 滤光片，
-#     此处按任务要求映射到 2MASS J/H（近红外波段的合理近似）。
 MAPPING = {
     # Generic/Johnson U B V R I —— pcigale 自带
     'U': ('generic.johnson.U', None),
@@ -62,7 +57,8 @@ MAPPING = {
     'r': ('sloan.sdss.r', None),
     'i': ('sloan.sdss.i', None),
     'z': ('sloan.sdss.z', None),
-    # 近红外 J H Ks —— pcigale 自带 2MASS
+    # 近红外 J H Ks —— 按任务要求映射到 2MASS（pcigale 内置；UKIRT 与 2MASS
+    # J/H 近似，Ks 即 2MASS Ks）
     'J': ('2mass.J', None),
     'H': ('2mass.H', None),
     'Ks': ('2mass.Ks', None),
@@ -81,11 +77,23 @@ MAPPING = {
     'wise-w2': ('wise.W2', None),
     'wise-w3': ('wise.W3', None),
     'wise-w4': ('wise.W4', None),
-    # Spitzer IRAC —— pcigale 自带
+    # Spitzer IRAC / MIPS —— pcigale 自带
     'Spitzer-IRAC.I1': ('spitzer.irac.I1', None),
     'Spitzer-IRAC.I2': ('spitzer.irac.I2', None),
     'Spitzer-IRAC.I3': ('spitzer.irac.I3', None),
     'Spitzer-IRAC.I4': ('spitzer.irac.I4', None),
+    'Spitzer-MIPS.24mu': ('spitzer.mips.24mu', None),
+    # HST ACS/WFC、WFC3/IR —— pcigale 自带
+    'F606W': ('hst.acs.wfc.F606W', None),
+    'F814W': ('hst.acs.wfc.F814W', None),
+    'F105W': ('hst.wfc3.ir.F105W', None),
+    'F110W': ('hst.wfc3.ir.F110W', None),
+    'F125W': ('hst.wfc3.ir.F125W', None),
+    'F160W': ('hst.wfc3.ir.F160W', None),
+    # HST WFPC2 —— pcigale 无，需 SVO（取视场面积最大的 WF 通道曲线）
+    'F702W': ('hst.wfpc2.wf.F702W', 'HST/WFPC2-WF.F702W'),
+    # UKIRT Y —— pcigale 自带 WFCAM（UKIDSS 即用 WFCAM 观测）
+    'Y': ('ukirt.wfcam.Y', None),
 }
 
 HTTP_RETRIES = 3
@@ -176,8 +184,8 @@ def pcigale_is_registered(pcigale_name):
 def pcigale_add(path):
     """注册滤光片到 pcigale 库。
 
-    不用 `pcigale-filters add` 子进程：pcigale 2025.0 的 add_filters() 调用了
-    np.trapz，而 numpy>=2.0 已将其移除，CLI 会直接崩。这里进程内调用并打 shim。
+    进程内调用 pcigale_filters.add_filters()（避免子进程 + 环境差异）。为防
+    旧版 pcigale_filters 在 numpy>=2 下因 np.trapz 崩溃，先打兼容 shim。
     """
     import numpy as np
     if not hasattr(np, 'trapz'):

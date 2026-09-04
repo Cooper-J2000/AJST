@@ -29,16 +29,77 @@ _MJY_PER_CGS_FNU = 1e26          # 1 erg/s/cm²/Hz = 1e26 mJy
 
 _PCIGALE_BIN = os.environ.get(
     'AJST_PCIGALE_BIN',
-    '/home/ajst/miniconda3/envs/burst_advocate/bin/pcigale')
+    '/home/ajst/ajst/bin/pcigale')
 
 _TIMEOUT_S = 600  # pcigale run 超时 10 分钟
 
-# pcigale.ini.spec 模板：pcigale 2025.0 要求 ini 必须配套 spec 文件，
-# 否则拒绝运行。模块模板固定（sfhdelayed+bc03+dustatt_modified_CF00+redshifting
-# + pdf_analysis），故 spec 也固定——本文件由同版本 pcigale 的
-# `pcigale init` + `pcigale genconf` 生成后随代码分发。
-_SPEC_TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              'pcigale.ini.spec')
+# pcigale 要求 ini 必须配套 ini.spec 且 spec 的 section/键必须与 ini 完全一致
+# （configobj 校验：spec 声明而 ini 缺失的 section/键会报错）。nebular/dl2014
+# 为可选模块，故 spec 不能是静态文件，需按同一模块选择动态生成。
+# 下列 spec 文本由本机安装的 pcigale 2025.1 `init`+`genconf` 生成后固化，
+# 若升级 pcigale 需同步重新生成。
+_SPEC_HEADER = """data_file = string()
+parameters_file = string()
+sed_modules = cigale_string_list()
+analysis_method = string()
+cores = integer(min=1)
+bands = cigale_string_list()
+properties = cigale_string_list()
+additionalerror = float(min=0.0)
+[sed_modules_params]
+"""
+_SPEC_MODULES = {
+    'sfhdelayed': """  [[sfhdelayed]]
+    tau_main = cigale_list()
+    age_main = cigale_list(dtype=int, minvalue=0.)
+    tau_burst = cigale_list()
+    age_burst = cigale_list(dtype=int, minvalue=1.)
+    f_burst = cigale_list(minvalue=0., maxvalue=0.9999)
+    sfr_A = cigale_list(minvalue=0.)
+    normalise = boolean()
+""",
+    'bc03': """  [[bc03]]
+    imf = cigale_list(dtype=int, options=0. & 1.)
+    metallicity = cigale_list(options=0.0001 & 0.0004 & 0.004 & 0.008 & 0.02 & 0.05)
+    separation_age = cigale_list(dtype=int, minvalue=0)
+""",
+    'nebular': """  [[nebular]]
+    logU = cigale_list(options=-4.0 & -3.9 & -3.8 & -3.7 & -3.6 & -3.5 & -3.4 & -3.3 & -3.2 & -3.1 & -3.0 & -2.9 & -2.8 & -2.7 & -2.6 & -2.5 & -2.4 & -2.3 & -2.2 & -2.1 & -2.0 & -1.9 & -1.8 & -1.7 & -1.6 & -1.5 & -1.4 & -1.3 & -1.2 & -1.1 & -1.0)
+    zgas = cigale_list(options=0.0001 & 0.0004 & 0.001 & 0.002 & 0.0025 & 0.003 & 0.004 & 0.005 & 0.006 & 0.007 & 0.008 & 0.009 & 0.011 & 0.012 & 0.014 & 0.016 & 0.019 & 0.020 & 0.022 & 0.025 & 0.03 & 0.033 & 0.037 & 0.041 & 0.046 & 0.051)
+    ne = cigale_list(options=10 & 100 & 1000)
+    f_esc = cigale_list(minvalue=0., maxvalue=1.)
+    f_dust = cigale_list(minvalue=0., maxvalue=1.)
+    lines_width = cigale_list(minvalue=0.)
+    emission = boolean()
+    line_list = string()
+""",
+    'dustatt_modified_CF00': """  [[dustatt_modified_CF00]]
+    Av_ISM = cigale_list(minvalue=0)
+    mu = cigale_list(minvalue=.0001, maxvalue=1.)
+    slope_ISM = cigale_list()
+    slope_BC = cigale_list()
+    filters = string()
+""",
+    'dl2014': """  [[dl2014]]
+    qpah = cigale_list(minvalue=0.47, maxvalue=7.32)
+    umin = cigale_list(options=0.10 & 0.12 & 0.15 & 0.17 & 0.20 & 0.25 & 0.30 & 0.35 & 0.40 & 0.50 & 0.60 & 0.70 & 0.80 & 1.00 & 1.20 & 1.50 & 1.70 & 2.00 & 2.50 & 3.00 & 3.50 & 4.00 & 5.00 & 6.00 & 7.00 & 8.00 & 10.00 & 12.00 & 15.00 & 17.00 & 20.00 & 25.00 & 30.00 & 35.00 & 40.00 & 50.00)
+    alpha = cigale_list(options=1.0 & 1.1 & 1.2 & 1.3 & 1.4 & 1.5 & 1.6 & 1.7 & 1.8 & 1.9 & 2.0 & 2.1 & 2.2 & 2.3 & 2.4 & 2.5 & 2.6 & 2.7 & 2.8 & 2.9 & 3.0)
+    gamma = cigale_list(minvalue=0., maxvalue=1.)
+""",
+    'redshifting': """  [[redshifting]]
+    redshift = cigale_list(minvalue=0.)
+""",
+}
+_SPEC_ANALYSIS = """[analysis_params]
+  variables = cigale_string_list()
+  bands = cigale_string_list()
+  save_best_sed = boolean()
+  save_chi2 = option('all', 'none', 'properties', 'fluxes')
+  lim_flag = option('full', 'noscaling', 'none')
+  mock_flag = boolean()
+  redshift_decimals = integer()
+  blocks = integer(min=1)
+"""
 
 # results.txt 中提取的关键属性（best./bayes. 前缀下的属性名）
 _KEY_PROPS = ['universe.redshift', 'stellar.m_star', 'sfh.sfr', 'sfh.age_main',
@@ -65,6 +126,7 @@ _OPTIONAL_MODULES = [
     f_dust = 0.0
     lines_width = 300.0
     emission = True
+    line_list =
 """),
     ('use_dl2014', 'dl2014', """\
   [[dl2014]]
@@ -264,6 +326,21 @@ additionalerror = 0.1
 """
 
 
+def build_spec(config):
+    """生成与 build_ini 模块选择一致的 pcigale.ini.spec 文本。"""
+    modules = list(_SED_MODULES_BASE)
+    for key, mod_name, _section in _OPTIONAL_MODULES:
+        if config.get(key) and mod_name == 'nebular':
+            modules.append(mod_name)
+    modules.append('dustatt_modified_CF00')
+    if config.get('use_dl2014'):
+        modules.append('dl2014')
+    modules.append('redshifting')
+    return (_SPEC_HEADER
+            + ''.join(_SPEC_MODULES[m] for m in modules)
+            + _SPEC_ANALYSIS)
+
+
 # ─── 结果解析 ───
 
 def parse_results(path):
@@ -364,10 +441,11 @@ def run(job_id, config, log, workdir=None, filters=None):
     ini_text = build_ini(config, bands_pcg)
     with open(os.path.join(workdir, 'pcigale.ini'), 'w', encoding='utf-8') as f:
         f.write(ini_text)
-    # pcigale 要求 ini 必须配套 ini.spec（模块模板固定 → spec 固定，随代码分发）
-    if not os.path.exists(_SPEC_TEMPLATE):
-        raise RuntimeError(f'pcigale.ini.spec 模板缺失: {_SPEC_TEMPLATE}')
-    shutil.copyfile(_SPEC_TEMPLATE, os.path.join(workdir, 'pcigale.ini.spec'))
+    # pcigale 要求 ini 必须配套 ini.spec，且 spec 的 section/键须与 ini 一致
+    spec_text = build_spec(config)
+    with open(os.path.join(workdir, 'pcigale.ini.spec'), 'w',
+              encoding='utf-8') as f:
+        f.write(spec_text)
 
     # 2. 跑 pcigale（OMP_NUM_THREADS=1，10 分钟超时）
     pcigale = shutil.which('pcigale') or _PCIGALE_BIN
