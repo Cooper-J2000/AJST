@@ -1,6 +1,6 @@
 // === Statistics Page ===
 import { app, showLoading, showError, statsTabs } from './layout.js';
-import { getOverview, getRedshiftDist, getBandCoverage, getTransients, getFilters } from '../api.js';
+import { getOverview, getRedshiftDist, getBandCoverage, getTransientMeta, getFilters } from '../api.js';
 import { chartColors } from '../theme.js';
 
 // ─── 工具 ───
@@ -279,7 +279,7 @@ export async function render() {
   try {
     const [overview, redshifts, bandData, transients, filters] = await Promise.all([
       getOverview(), getRedshiftDist(), getBandCoverage(),
-      getTransients({ per_page: 10000 }),
+      getTransientMeta(),
       getFilters(),
     ]);
 

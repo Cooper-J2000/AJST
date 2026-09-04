@@ -165,14 +165,11 @@ export async function render() {
     }
   };
 
-  // Populate tag filter
-  import('../api.js').then(m => m.getTransients({ per_page: 10000 })).then(data => {
-    const allTags = new Set();
-    data.items.forEach(t => (t.tags || []).forEach(tag => allTags.add(tag)));
+  // Populate tag filter（专用轻量接口，不整表拉取）
+  import('../api.js').then(m => m.getTransientTags()).then(data => {
     const sel = document.getElementById('fTag');
-    if (sel) {
-      const sorted = [...allTags].sort();
-      sorted.forEach(tag => {
+    if (sel && data.tags) {
+      data.tags.forEach(tag => {
         sel.innerHTML += `<option value="${tag}">${tag}</option>`;
       });
     }
