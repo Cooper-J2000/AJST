@@ -76,6 +76,7 @@ export const fitLightcurveModel = (payload) => api('POST', '/lightcurves/fit_mod
 
 // Filters
 export const getFilters = () => api('GET', '/filters');
+export const deleteFilter = (id) => api('DELETE', `/filters/${encodeURIComponent(id)}`);
 
 // Articles (相关研究文章)
 export const getArticles = (tid) => api('GET', `/articles?transient_id=${encodeURIComponent(tid)}`);

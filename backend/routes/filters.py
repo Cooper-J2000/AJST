@@ -1,7 +1,9 @@
 """
 滤波器定义
-GET /api/filters  — 列表
-PUT /api/filters/<id> — 更新（需登录）
+GET    /api/filters       — 列表
+POST   /api/filters       — 新建（需登录）
+PUT    /api/filters/<id>  — 更新（仅管理员）
+DELETE /api/filters/<id>  — 删除（仅管理员）
 """
 from flask import Blueprint, jsonify, request
 from app import get_session, require_auth, require_admin
@@ -78,5 +80,23 @@ def update_filter(fid):
             extinction.recompute_band(sess, fid)
         sess.commit()
         return jsonify(f.to_dict())
+    finally:
+        sess.close()
+
+
+@filters_bp.route('/<fid>', methods=['DELETE'])
+@require_admin
+def delete_filter(fid):
+    sess = get_session()
+    try:
+        f = sess.query(FilterDef).filter(FilterDef.id == fid).first()
+        if not f:
+            return {'error': 'Not found'}, 404
+        sess.delete(f)
+        sess.commit()
+        return {'status': 'deleted', 'id': fid}
+    except Exception as e:
+        sess.rollback()
+        return {'error': str(e)}, 400
     finally:
         sess.close()
