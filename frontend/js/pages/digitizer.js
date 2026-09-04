@@ -2,7 +2,8 @@
 // 从光变图截图提取数据点：标定（线性/对数轴）→ 手动/颜色自动取点 → 导出 CSV 或直写 AJST 数据库。
 // 点一律以图像像素坐标存储，数据坐标经标定变换实时换算（重新标定即整体修正）。
 import { app, showLoading } from './layout.js';
-import { getTransients, createLightcurves, uploadSpectrum, isAuthed, showToast } from '../api.js';
+import { getTransients, createTransient, createLightcurves, uploadSpectrum, isAuthed, showToast } from '../api.js';
+import { parseRA, parseDec } from '../coords.js';
 import {
   makeCalibTransform, rgbToLab, avgColorLab, buildMask, traceLine, detectSymbols,
   sampleLine, sampleSpline,
@@ -199,7 +200,25 @@ export async function render() {
             <div class="d-flex gap-1 mb-1">
               <input class="form-control form-control-sm" id="dgzSrcQ" placeholder="源 ID / 别名">
               <button class="btn btn-sm btn-outline-secondary" id="dgzSrcSearch">搜索</button>
+              ${isAuthed() ? `<button class="btn btn-sm btn-outline-primary" id="dgzSrcNewBtn" title="源还不存在？在此新建"><i class="bi bi-plus-lg"></i> 新建源</button>` : ''}
             </div>
+            ${isAuthed() ? `
+            <div id="dgzSrcNewForm" class="border rounded p-2 mb-1" style="display:none">
+              <div class="row g-1">
+                <div class="col-12"><input class="form-control form-control-sm" id="dgzNewId" placeholder="源 ID（必填），如 GRB260901A"></div>
+                <div class="col-6"><input class="form-control form-control-sm" id="dgzNewRa" placeholder="RA（度 或 08h08m27.4s，可空）"></div>
+                <div class="col-6"><input class="form-control form-control-sm" id="dgzNewDec" placeholder="Dec（度 或 +40d36m44.8s，可空）"></div>
+                <div class="col-6"><input class="form-control form-control-sm" id="dgzNewT0" placeholder="T0（UTC，可空）"></div>
+                <div class="col-6"><input class="form-control form-control-sm" id="dgzNewZ" placeholder="红移 z（可空）"></div>
+                <div class="col-6"><input class="form-control form-control-sm" id="dgzNewAliases" placeholder="别名（逗号分隔，可空）"></div>
+                <div class="col-6"><input class="form-control form-control-sm" id="dgzNewTags" placeholder="标签（逗号分隔，可空）"></div>
+              </div>
+              <div class="form-text">T0 格式如 2026-09-01T12:34:56（UTC）；X 轴选 MJD 时需要源有 t0 才能换算，建议填写。</div>
+              <div class="d-flex gap-1 mt-1">
+                <button class="btn btn-sm btn-primary" id="dgzNewSave">创建并选中</button>
+                <button class="btn btn-sm btn-outline-secondary" id="dgzNewCancel">取消</button>
+              </div>
+            </div>` : ''}
             <select class="form-select form-select-sm mb-1" id="dgzSrcSel" style="display:none"></select>
             <div class="small mb-1" id="dgzSrcInfo">未选择源</div>
             <div class="d-flex gap-2 align-items-center mb-1">
@@ -293,6 +312,9 @@ export async function render() {
   $('dgzSrcSearch').addEventListener('click', searchSource);
   $('dgzSrcQ').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchSource(); });
   $('dgzSrcSel').addEventListener('change', onSourcePicked);
+  $('dgzSrcNewBtn')?.addEventListener('click', () => toggleNewSrcForm());
+  $('dgzNewSave')?.addEventListener('click', createNewSource);
+  $('dgzNewCancel')?.addEventListener('click', () => toggleNewSrcForm(false));
   $('dgzPreview').addEventListener('click', previewRecords);
   $('dgzWrite').addEventListener('click', writeRecords);
   $('dgzRoiClear').addEventListener('click', () => { _roi = null; updateRoiUI(); redraw(); });
@@ -946,6 +968,76 @@ function onSourcePicked() {
   if (!hit) { _src = null; info.textContent = '未选择源'; return; }
   _src = hit;
   info.innerHTML = `目标源：<strong>${esc(hit.id)}</strong> ｜ t0 = ${hit.t0 ? esc(hit.t0) + ' UTC' : '<span class="text-danger">无 t0（MJD 轴不可用）</span>'}`;
+}
+
+// 将源设为当前写库目标（等同搜索后在下拉中选中）
+function pickSource(item) {  // {id, t0}
+  const sel = document.getElementById('dgzSrcSel');
+  sel.dataset.items = JSON.stringify([item]);
+  sel.innerHTML = `<option value="${esc(item.id)}">${esc(item.id)}</option>`;
+  sel.value = item.id;
+  sel.style.display = '';
+  onSourcePicked();
+}
+
+// 新建源内联表单展开/收起
+function toggleNewSrcForm(show) {
+  const f = document.getElementById('dgzSrcNewForm');
+  if (!f) return;
+  f.style.display = (show === undefined) ? (f.style.display === 'none' ? '' : 'none') : (show ? '' : 'none');
+}
+
+// 提交新建源：成功后直接设为当前目标源；409（ID 已存在）时提示并尝试直接选中
+async function createNewSource() {
+  if (!isAuthed()) { showToast('请先登录', 'warning'); return; }
+  const v = (id) => document.getElementById(id).value.trim();
+  const id = v('dgzNewId');
+  if (!id) { showToast('请填写源 ID', 'warning'); return; }
+  const payload = { id };
+  const raS = v('dgzNewRa'), decS = v('dgzNewDec');
+  if (raS) {
+    const ra = parseRA(raS);
+    if (ra == null || Number.isNaN(ra)) { showToast('RA 无法解析（支持十进制度或时分秒，如 08h08m27.4s）', 'warning'); return; }
+    payload.ra = ra;
+  }
+  if (decS) {
+    const dec = parseDec(decS);
+    if (dec == null || Number.isNaN(dec)) { showToast('Dec 无法解析（支持十进制度或时分秒，如 +40d36m44.8s）', 'warning'); return; }
+    payload.dec = dec;
+  }
+  const t0 = v('dgzNewT0');
+  if (t0) payload.t0 = t0;
+  const zS = v('dgzNewZ');
+  if (zS) {
+    const z = parseFloat(zS);
+    if (!isFinite(z)) { showToast('红移格式无效', 'warning'); return; }
+    payload.redshift = z;
+  }
+  const list = (s) => s.split(',').map(x => x.trim()).filter(Boolean);
+  if (v('dgzNewAliases')) payload.aliases = list(v('dgzNewAliases'));
+  if (v('dgzNewTags')) payload.tags = list(v('dgzNewTags'));
+  try {
+    const t = await createTransient(payload);
+    toggleNewSrcForm(false);
+    pickSource({ id: t.id, t0: t.t0 });
+    showToast(`已创建源 ${t.id} 并设为当前目标源`, 'success');
+  } catch (err) {
+    if (/already exists/i.test(err.message)) {
+      try {
+        const resp = await getTransients({ search: id, per_page: 20 });
+        const hit = (resp.items || []).find(x => x.id === id);
+        if (hit) {
+          toggleNewSrcForm(false);
+          pickSource({ id: hit.id, t0: hit.t0 });
+          showToast(`源 ${id} 已存在，已直接选中`, 'info');
+          return;
+        }
+      } catch {}
+      showToast(`源 ${id} 已存在`, 'warning');
+      return;
+    }
+    showToast(`创建失败: ${err.message}`, 'danger');
+  }
 }
 
 // 生成待入库记录（同时供预览与写入）

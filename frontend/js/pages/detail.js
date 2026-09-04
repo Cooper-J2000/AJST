@@ -636,8 +636,8 @@ export async function render(tid) {
       <div id="tabContent">
         <!-- ─── 概览页（含 Aladin 方形全天图） ─── -->
         <div id="tab-overview" class="tab-pane active">
-          <div class="row g-3">
-            <div class="col-md-6">
+          <div class="row g-3 align-items-stretch">
+            <div class="${hasCoords ? 'col-md-4' : 'col-md-6'}">
               <div class="card h-100" id="metaCard">
                 <div class="card-header"><i class="bi bi-info-circle"></i> 基本信息</div>
                 <div class="card-body">
@@ -689,7 +689,7 @@ export async function render(tid) {
                 </div>
               </div>
             </div>
-            <div class="col-md-6">
+            <div class="${hasCoords ? 'col-md-4' : 'col-md-6'}">
               <div class="card h-100">
                 <div class="card-header"><i class="bi bi-bar-chart"></i> 光变概览</div>
                 <div class="card-body">
@@ -712,23 +712,20 @@ export async function render(tid) {
                 </div>
               </div>
             </div>
-          </div>
-          <!-- 外部目录参数（T90/Epeak/fluence/Eiso 等，含来源） -->
-          ${renderCatalogData(transient.extra_data)}
-          <!-- 派生物理量 (derived) -->
-          ${renderDerivedCard(transient.extra_data)}
-          <!-- Aladin 方形全天图 -->
-          ${hasCoords ? `
-          <div class="row mt-3">
-            <div class="col-md-8 mx-auto">
-              <div class="card">
+            ${hasCoords ? `
+            <div class="col-md-4">
+              <div class="card h-100">
                 <div class="card-header"><i class="bi bi-globe2"></i> Aladin 全天图 <small class="text-secondary">RA=${transient.ra.toFixed(4)}° Dec=${transient.dec.toFixed(4)}°</small></div>
                 <div class="card-body p-0">
                   <div id="aladinContainer" style="width:100%;aspect-ratio:1/1;border-radius:0 0 8px 8px;background:#000"></div>
                 </div>
               </div>
-            </div>
-          </div>` : ''}
+            </div>` : ''}
+          </div>
+          <!-- 外部目录参数（T90/Epeak/fluence/Eiso 等，含来源） -->
+          ${renderCatalogData(transient.extra_data)}
+          <!-- 派生物理量 (derived) -->
+          ${renderDerivedCard(transient.extra_data)}
         </div>
 
         <!-- ─── 光变曲线 ─── -->
