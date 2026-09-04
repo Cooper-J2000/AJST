@@ -1,11 +1,13 @@
 // === 宿主星系统计子页（#/stats/hosts） ===
 // 数据源 GET /api/stats/hosts：{n_hosts, n_with_spec_z, n_with_phot_z,
 //   m_star: [...], sfr: [...], coverage: 0.xx,
+//   m_star_points: [{tid, z, m_star}],  sfr_points: [{tid, z, sfr}],   ← z 可为 null
 //   abs_mag_points: [{tid, band, z, mag(AB), abs_mag, mag_err, err_assumed, upperlimit,
-//     gext_applied(是否已应用银消改正), gext_Alambda}]}
+//     gext_applied(是否已应用银消改正), gext_Alambda,
+//     mag_raw(库中原始星等), mag_corr(银消改正后/星等系统换算前), mag_sys, gext_corr}]}
 // 字段缺失时相应卡片/图显示「暂无数据」。
 import { app, showLoading, showError, statsTabs } from './layout.js';
-import { getHostStats, getOverview, getFilters } from '../api.js';
+import { getHostStats, getOverview, getFilters, showToast } from '../api.js';
 import { chartColors, academicFonts } from '../theme.js';
 import {
   ensureFilterCache, buildSpectralColors, sortBandsByFreq, magABtoMJy,
@@ -17,6 +19,50 @@ function sciFmt(v) {
   if (a === 0) return '0';
   if (a >= 1e-2 && a < 1e4) return String(parseFloat(Number(v).toPrecision(2)));
   return v.toExponential(1);
+}
+
+// ─── 距离模数 μ(z)：Planck18（H0=67.66, Om0=0.30966，平直 ΛCDM）， ───
+// 与后端 models.distance_modulus（astropy Planck18）同参数；Simpson 数值积分。
+// 光子与无质量中微子按辐射项、0.06 eV 中微子按物质项（Om_nu = m/(93.14 h² eV)），
+// 与 astropy Planck18.distmod 偏差 <0.001 mag（z≤8 实测）。
+function planck18Distmod(z) {
+  if (z == null || !(z > 0)) return null;
+  const H0 = 67.66;
+  const h = H0 / 100;
+  const OmNu = 0.06 / (93.14 * h * h);          // 大质量中微子物质密度
+  const Om = 0.30966 + OmNu;
+  const Or = 5.402015137139353e-05 + Math.max(0.0014396743040845244 - OmNu, 0);
+  const Ode = 1 - Om - Or;
+  const C_KM_S = 299792.458;
+  const n = 2000, dz = z / n;
+  let s = 0;
+  for (let i = 0; i <= n; i++) {
+    const zi = i * dz;
+    const invE = 1 / Math.sqrt(Om * (1 + zi) ** 3 + Or * (1 + zi) ** 4 + Ode);
+    s += (i === 0 || i === n) ? invE : (i % 2 ? 4 : 2) * invE;
+  }
+  const dc = (C_KM_S / H0) * (dz / 3) * s;   // 共动距离 Mpc
+  const dl = dc * (1 + z);
+  return 5 * Math.log10(dl) + 25;
+}
+
+// ─── CSV 下载 ───
+function downloadCsv(filename, rows) {
+  const esc = (v) => {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const blob = new Blob([rows.map(r => r.map(esc).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function dateTag() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 // 对数 bin 直方图：返回 {labels, counts}；无正值时返回 null
@@ -53,6 +99,58 @@ function makeHist(canvasId, hist, label, color) {
   });
 }
 
+// ─── 参数 — 红移散点图（M* / SFR，纵轴对数） ───
+function buildZScatter(canvasId, points, valKey, yLabel, color) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const pts = (points || []).filter(p =>
+    p.z != null && isFinite(p.z) && p[valKey] != null && isFinite(p[valKey]) && p[valKey] > 0);
+  if (typeof Chart === 'undefined' || !pts.length) {
+    canvas.parentElement.innerHTML = '<div class="text-secondary small p-3">暂无数据（需宿主红移 + 拟合参数）</div>';
+    return;
+  }
+  const cc = chartColors();
+  const fonts = academicFonts();
+  new Chart(canvas, {
+    type: 'scatter',
+    data: {
+      datasets: [{
+        label: yLabel,
+        data: pts.map(p => ({ x: p.z, y: p[valKey], _tid: p.tid })),
+        backgroundColor: color, borderColor: color,
+        pointRadius: 3, pointHoverRadius: 5, showLine: false,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: cc.tooltipBg, titleColor: cc.tooltipText, bodyColor: cc.tooltipText,
+          callbacks: {
+            label(item) {
+              const tid = item.raw && item.raw._tid;
+              return `${tid ? tid + ': ' : ''}z=${item.parsed.x}, ${yLabel}=${sciFmt(item.parsed.y)}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: 'linear', min: 0,
+          title: { display: true, text: '宿主星系红移 z', color: cc.tick, font: fonts.title },
+          ticks: { color: cc.tick, font: fonts.tick }, grid: { color: cc.grid },
+        },
+        y: {
+          type: 'logarithmic',
+          title: { display: true, text: yLabel, color: cc.tick, font: fonts.title },
+          ticks: { color: cc.tick, font: fonts.tick, callback: (v) => sciFmt(v) }, grid: { color: cc.grid },
+        },
+      },
+    },
+  });
+}
+
 // ─── 宿主绝对星等 vs 红移图 ───
 // 与光变图同一套规则：波段按频率排序、光谱色阶、探测点圆点 / 上限点倒三角、误差棒开关。
 let _absChart = null;
@@ -61,6 +159,8 @@ let _absColors = {};
 let _absBands = [];
 let _absBandVisible = {};
 let _absShowErr = true;
+let _mstarPoints = [];
+let _sfrPoints = [];
 
 // 误差棒插件（beforeDatasetsDraw：画在数据点下层）
 const _absErrPlugin = {
@@ -159,6 +259,30 @@ function buildAbsMagChart() {
       });
     }
   }
+  // 等视星等参考虚线：M(z) = m − μ(z)，z 取当前勾选波段数据点（含上限）的最大红移
+  const limitOn = document.getElementById('hostAbsLimitMagOn')?.checked;
+  const limitMag = parseFloat(document.getElementById('hostAbsLimitMag')?.value);
+  if (limitOn && isFinite(limitMag)) {
+    const visPts = pts.filter(p => _absBandVisible[p.band] !== false);
+    const zmax = visPts.length ? Math.max(...visPts.map(p => p.z)) : 0;
+    if (zmax > 0) {
+      const data = [];
+      const N = 100;
+      for (let i = 1; i <= N; i++) {
+        const z = (zmax * i) / N;
+        const M = limitMag - planck18Distmod(z);
+        data.push({ x: z, y: mJyMode ? magABtoMJy(M) : M });
+      }
+      datasets.push({
+        label: `m=${limitMag}`,
+        data,
+        showLine: true, pointRadius: 0, pointHoverRadius: 0,
+        borderColor: '#f85149', backgroundColor: '#f85149',
+        borderDash: [6, 4], borderWidth: 1.5,
+        _isLimitCurve: true,
+      });
+    }
+  }
   _absChart = new Chart(canvas, {
     type: 'scatter',
     data: { datasets },
@@ -171,6 +295,10 @@ function buildAbsMagChart() {
           callbacks: {
             label(item) {
               const ds = item.dataset;
+              if (ds._isLimitCurve) {
+                const yTxt = mJyMode ? `F(10pc)=${sciFmt(item.parsed.y)} mJy` : `M=${item.parsed.y.toFixed(2)}`;
+                return `${ds.label}: z=${item.parsed.x.toFixed(3)}, ${yTxt}`;
+              }
               const p = ds._raw && ds._raw[item.dataIndex];
               if (!p) return `${ds.label}`;
               const errTxt = ds._isUpperLimit ? '' :
@@ -229,22 +357,58 @@ function buildAbsBandPanel() {
   }).join('') + `
     <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hostAbsBandAll">全选</button>
     <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hostAbsBandNone">全不选</button>`;
+  // 波段勾选变化会改变等星等虚线的最大 z，整图重建
   el.querySelectorAll('.host-abs-band-chk').forEach(chk => {
     chk.addEventListener('change', () => {
       _absBandVisible[chk.dataset.band] = chk.checked;
-      applyAbsBandVisibility();
+      buildAbsMagChart();
     });
   });
   document.getElementById('hostAbsBandAll')?.addEventListener('click', () => {
     for (const b of _absBands) _absBandVisible[b] = true;
     el.querySelectorAll('.host-abs-band-chk').forEach(c => { c.checked = true; });
-    applyAbsBandVisibility();
+    buildAbsMagChart();
   });
   document.getElementById('hostAbsBandNone')?.addEventListener('click', () => {
     for (const b of _absBands) _absBandVisible[b] = false;
     el.querySelectorAll('.host-abs-band-chk').forEach(c => { c.checked = false; });
-    applyAbsBandVisibility();
+    buildAbsMagChart();
   });
+}
+
+// ─── 各图 CSV 导出 ───
+function downloadAbsMagCsv() {
+  const bands = _absBands.filter(b => _absBandVisible[b] !== false);
+  const pts = (_absPoints || []).filter(p => bands.includes(p.band));
+  if (!pts.length) { showToast('没有可导出的数据点（当前勾选波段下为空）', 'warning'); return; }
+  const rows = [[
+    'id', 'band', 'redshift', 'mag_raw', 'mag_sys', 'gext_corr', 'gext_Alambda',
+    'mag_corr', 'mag_ab', 'abs_mag', 'mag_err', 'err_assumed', 'upperlimit',
+  ]];
+  for (const p of pts) {
+    rows.push([
+      p.tid, p.band, p.z, p.mag_raw, p.mag_sys, p.gext_corr,
+      p.gext_Alambda ?? '', p.mag_corr, p.mag, p.abs_mag,
+      p.mag_err ?? '', p.err_assumed, p.upperlimit,
+    ]);
+  }
+  downloadCsv(`host_absmag_z_${dateTag()}.csv`, rows);
+}
+
+function downloadPointsCsv(points, valKey, name) {
+  const pts = points || [];
+  if (!pts.length) { showToast('没有可导出的数据', 'warning'); return; }
+  const rows = [['id', 'redshift', valKey]];
+  for (const p of pts) rows.push([p.tid, p.z ?? '', p[valKey]]);
+  downloadCsv(`host_${name}_${dateTag()}.csv`, rows);
+}
+
+function downloadZScatterCsv(points, valKey, name) {
+  const pts = (points || []).filter(p => p.z != null && isFinite(p.z) && p[valKey] != null);
+  if (!pts.length) { showToast('没有可导出的数据点（需宿主红移）', 'warning'); return; }
+  const rows = [['id', 'redshift', valKey]];
+  for (const p of pts) rows.push([p.tid, p.z, p[valKey]]);
+  downloadCsv(`host_${name}_z_${dateTag()}.csv`, rows);
 }
 
 export async function render() {
@@ -256,18 +420,6 @@ export async function render() {
     ${statsTabs('hosts')}
     <div class="row g-3 mb-4" id="hostStatCards"></div>
     <div class="row g-3">
-      <div class="col-md-6">
-        <div class="card">
-          <div class="card-header">恒星质量 M* 分布（M☉，对数分箱）</div>
-          <div class="card-body"><div class="chart-container" style="height:320px"><canvas id="hostMstarHist"></canvas></div></div>
-        </div>
-      </div>
-      <div class="col-md-6">
-        <div class="card">
-          <div class="card-header">恒星形成率 SFR 分布（M☉/yr，对数分箱）</div>
-          <div class="card-body"><div class="chart-container" style="height:320px"><canvas id="hostSfrHist"></canvas></div></div>
-        </div>
-      </div>
       <div class="col-12">
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -281,12 +433,65 @@ export async function render() {
                 <input class="form-check-input" type="checkbox" id="hostAbsShowErr" checked>
                 <label class="form-check-label small" for="hostAbsShowErr">误差棒</label>
               </div>
+              <div class="d-flex align-items-center gap-1" title="绘制等视星等参考虚线：M(z) = m − μ(z)，Planck18">
+                <div class="form-check form-check-inline mb-0">
+                  <input class="form-check-input" type="checkbox" id="hostAbsLimitMagOn">
+                  <label class="form-check-label small" for="hostAbsLimitMagOn">等星等线</label>
+                </div>
+                <span class="small text-secondary">m=</span>
+                <input type="number" class="form-control form-control-sm" id="hostAbsLimitMag"
+                  step="0.1" style="width:80px" placeholder="如 24" disabled>
+              </div>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hostAbsMagCsv"
+                title="下载当前勾选波段的绘图数据（CSV，含银消改正前后星等）">
+                <i class="bi bi-download"></i> 数据
+              </button>
             </div>
           </div>
           <div class="card-body">
             <div class="chart-container" style="height:420px"><canvas id="hostAbsMagChart"></canvas></div>
             <div id="hostAbsBandPanel" class="d-flex flex-wrap gap-2 align-items-center mt-2 small"></div>
           </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>恒星质量 M* 分布（M☉，对数分箱）</span>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hostMstarHistCsv"
+              title="下载原始数据（每宿主一行）"><i class="bi bi-download"></i> 数据</button>
+          </div>
+          <div class="card-body"><div class="chart-container" style="height:320px"><canvas id="hostMstarHist"></canvas></div></div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>恒星形成率 SFR 分布（M☉/yr，对数分箱）</span>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hostSfrHistCsv"
+              title="下载原始数据（每宿主一行）"><i class="bi bi-download"></i> 数据</button>
+          </div>
+          <div class="card-body"><div class="chart-container" style="height:320px"><canvas id="hostSfrHist"></canvas></div></div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>恒星质量 — 红移</span>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hostMstarZCsv"
+              title="下载绘图数据（需宿主红移）"><i class="bi bi-download"></i> 数据</button>
+          </div>
+          <div class="card-body"><div class="chart-container" style="height:320px"><canvas id="hostMstarZ"></canvas></div></div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>恒星形成率 — 红移</span>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hostSfrZCsv"
+              title="下载绘图数据（需宿主红移）"><i class="bi bi-download"></i> 数据</button>
+          </div>
+          <div class="card-body"><div class="chart-container" style="height:320px"><canvas id="hostSfrZ"></canvas></div></div>
         </div>
       </div>
     </div>
@@ -319,6 +524,12 @@ export async function render() {
   makeHist('hostMstarHist', logHist(st.m_star), 'M*', '#58a6ff');
   makeHist('hostSfrHist', logHist(st.sfr), 'SFR', '#3fb950');
 
+  // ── 参数 — 红移散点图 ──
+  _mstarPoints = st.m_star_points || [];
+  _sfrPoints = st.sfr_points || [];
+  buildZScatter('hostMstarZ', _mstarPoints, 'm_star', 'M* (M☉)', '#58a6ff');
+  buildZScatter('hostSfrZ', _sfrPoints, 'sfr', 'SFR (M☉/yr)', '#3fb950');
+
   // ── 绝对星等 — 红移图（波段色阶需要滤波器波长表） ──
   if (_absChart) { _absChart.destroy(); _absChart = null; }
   _absPoints = st.abs_mag_points || [];
@@ -336,4 +547,21 @@ export async function render() {
     _absShowErr = e.target.checked;
     if (_absChart) _absChart.update();
   });
+  const limitMagInput = document.getElementById('hostAbsLimitMag');
+  document.getElementById('hostAbsLimitMagOn')?.addEventListener('change', (e) => {
+    if (limitMagInput) limitMagInput.disabled = !e.target.checked;
+    buildAbsMagChart();
+  });
+  limitMagInput?.addEventListener('input', buildAbsMagChart);
+
+  // ── CSV 下载按钮 ──
+  document.getElementById('hostAbsMagCsv')?.addEventListener('click', downloadAbsMagCsv);
+  document.getElementById('hostMstarHistCsv')?.addEventListener('click',
+    () => downloadPointsCsv(_mstarPoints, 'm_star', 'mstar'));
+  document.getElementById('hostSfrHistCsv')?.addEventListener('click',
+    () => downloadPointsCsv(_sfrPoints, 'sfr', 'sfr'));
+  document.getElementById('hostMstarZCsv')?.addEventListener('click',
+    () => downloadZScatterCsv(_mstarPoints, 'm_star', 'mstar'));
+  document.getElementById('hostSfrZCsv')?.addEventListener('click',
+    () => downloadZScatterCsv(_sfrPoints, 'sfr', 'sfr'));
 }

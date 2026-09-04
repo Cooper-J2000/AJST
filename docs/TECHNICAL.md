@@ -1181,7 +1181,8 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
   `pcigale-filters add` 在 numpy≥2 下需 np.trapz→trapezoid shim，脚本已内置）。
 - 权限：查看公开；宿主信息编辑/提交拟合/写回=登录；删除宿主/删除任务=管理员。
 - 列表页「宿主」徽章 + `has_host` 筛选；新建事件页可折叠宿主字段；首页与统计子页
-  `/stats/hosts`（覆盖率、M*/SFR 分布、宿主绝对星等—红移图；v2.14 起替换原 z-z 散点，见 §8.22）。
+  `/stats/hosts`（覆盖率、M*/SFR 分布、宿主绝对星等—红移图；v2.14 起替换原 z-z 散点，见 §8.22；
+  v2.16 起新增 M*—z / SFR—z 散点、等星等参考虚线与每图 CSV 下载，见 §8.25）。
 
 ### 8.22 坐标时分秒输入与宿主测光增强（2026-09-03，v2.14）
 
@@ -1255,6 +1256,26 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
     band/mag/mag_err/mag_sys/upperlimit/gext_corr/gext_Alambda/mag_gextcor/source，
     `mag_gextcor` 为改正后星等（已改正行=mag，未改正行实时算，无法改正留空）；
     前端宿主信息卡测光表旁有「下载数据表」按钮。
+
+### 8.25 宿主星系统计子页增强（2026-09-04，v2.16）
+
+- **新增两图与重排**：`#/stats/hosts` 新增「恒星质量 — 红移」「恒星形成率 — 红移」散点图
+  （纵轴对数；`/api/stats/hosts` 新增 `m_star_points` / `sfr_points`，每项
+  `{tid, z, m_star|sfr}`，z 为宿主红移、无则 null 由前端跳过）。页面顺序改为：
+  统计卡片 → 绝对星等—红移图（通栏）→ M*/SFR 分布直方图（并排）→ M*—z / SFR—z（并排）。
+- **等视星等参考虚线**：绝对星等—红移图头部新增「等星等线」勾选 + 视星等 m 输入框，
+  勾选后绘制红色 dashed 曲线 M(z) = m − μ(z)，z 从 0 到当前勾选波段数据点
+  （含上限点）的最大红移，随波段勾选/输入/Y 轴模式实时更新；mJy 模式下曲线同步换算。
+  前端 `planck18Distmod(z)`（`stats_hosts.js`）为 Planck18 平直 ΛCDM 的 Simpson 数值积分，
+  大质量中微子（0.06 eV）按物质项计入，与后端 `models.distance_modulus`
+  （astropy Planck18）实测偏差 <0.001 mag（z≤8）。
+- **每图 CSV 下载**：5 个统计图卡片头部右侧均有「数据」小按钮（前端 Blob 拼 CSV，
+  文件名带日期）。分布直方图导出原始数据（每宿主一行 id/redshift/值，非分箱计数）；
+  M*—z / SFR—z 导出绘图点（仅含 z 非空的行）；绝对星等—红移图只导出当前勾选波段，
+  每行含银消改正前后星等——为此 `abs_mag_points` 每项新增
+  `mag_raw`（库中原始星等）/ `mag_corr`（银消改正后、星等系统换算前）/ `mag_sys` /
+  `gext_corr` 四个字段，CSV 列为 id/band/redshift/mag_raw/mag_sys/gext_corr/
+  gext_Alambda/mag_corr/mag_ab/abs_mag/mag_err/err_assumed/upperlimit。
 
 ### 8.21 组合模型余辉拟合引擎 vegas_unified（2026-08-30 新增；2026-08-31 起为唯一余辉拟合引擎）
 
@@ -1347,6 +1368,16 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 ---
 
 ## 十一、版本历史
+
+### v2.16（2026-09-04）— 宿主星系统计子页增强
+
+- `#/stats/hosts` 新增「恒星质量 — 红移」「恒星形成率 — 红移」散点图（纵轴对数；
+  `/api/stats/hosts` 新增 `m_star_points`/`sfr_points`），页面重排为
+  绝对星等—红移图通栏 → M*/SFR 分布并排 → M*—z/SFR—z 并排
+- 绝对星等—红移图新增可选等视星等参考虚线（红色 dashed，M(z)=m−μ(z)，
+  前端 Planck18 数值积分与后端 astropy 偏差 <0.001 mag）
+- 每张统计图头部新增「数据」按钮下载当前绘图 CSV（文件名带日期）；绝对星等图按勾选波段
+  过滤且含银消改正前后星等（`abs_mag_points` 新增 mag_raw/mag_corr/mag_sys/gext_corr）
 
 ### v2.15（2026-09-04）— 宿主测光银河系消光改正标记与应用
 

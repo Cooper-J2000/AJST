@@ -70,13 +70,17 @@ def host_stats():
     """宿主星系统计：覆盖率、红移类型计数、M*/SFR 分布、宿主测光绝对星等点。
 
     abs_mag_points: [{tid, band, z, mag(AB), abs_mag, mag_err, err_assumed, upperlimit,
-                      gext_applied, gext_Alambda}]
+                      gext_applied, gext_Alambda, mag_raw, mag_corr, mag_sys, gext_corr}]
       M = m_AB − μ(z_host)，μ 由 models.distance_modulus（astropy Planck18）计算；
       Vega 星等先按 filters 表 vega2ab 转 AB；非上限且缺误差的点按 0.2 mag（err_assumed 标记，不落库）。
       银河系消光：gext_corr 非真的行先按 CSFD+Rv3.1+P92 改正（mag −= A_λ，与光变表逻辑一致，
       extinction.correct_host_phot 只算不写）再算 M；gext_applied 标记该行是否应用了改正，
       gext_Alambda 为应用的银消量。坐标取宿主 ra/dec，缺省回退暂现源坐标，两者都缺
       （或依赖不可用/波段无波长）时按原始值并 gext_applied=false。
+      mag_raw 为库中原始星等（原星等系统），mag_corr 为银消改正后、星等系统换算前的星等，
+      供前端导出 CSV 时同时给出改正前后两列。
+    m_star_points / sfr_points: [{tid, z, m_star|sfr}]，derived 有值的宿主每行一点；
+      z 为 null 表示宿主无红移（前端散点图跳过，CSV 导出保留空值）。
     """
     sess = get_session()
     try:
@@ -86,12 +90,17 @@ def host_stats():
         n_spec = sum(1 for h in hosts if h.redshift_type == 'spec')
         n_phot = sum(1 for h in hosts if h.redshift_type == 'phot')
         m_star, sfr = [], []
+        # 每宿主一行的 (tid, z, 值)：z 为 None 表示宿主无红移（散点图跳过，CSV 导出保留空值）
+        m_star_points, sfr_points = [], []
         for h in hosts:
             d = h.derived or {}
+            z = h.redshift if (h.redshift is not None and h.redshift > 0) else None
             if d.get('m_star') is not None:
                 m_star.append(d['m_star'])
+                m_star_points.append({'tid': h.transient_id, 'z': z, 'm_star': d['m_star']})
             if d.get('sfr') is not None:
                 sfr.append(d['sfr'])
+                sfr_points.append({'tid': h.transient_id, 'z': z, 'sfr': d['sfr']})
         # 宿主测光 → 绝对星等（需宿主红移）
         filters = {f.id: f for f in sess.query(FilterDef).all()}
 
@@ -137,6 +146,9 @@ def host_stats():
                     mag = float(mag)
                 except (TypeError, ValueError):
                     continue
+                mag_raw = mag
+                row_mag_sys = str(p.get('mag_sys') or 'AB')
+                row_gext_corr = bool(p.get('gext_corr', False))
                 # 银消改正（在星等系统换算前减 A_λ；星等加性量，次序可交换）
                 gext_applied = False
                 gext_alambda = None
@@ -144,7 +156,8 @@ def host_stats():
                     mag = corr[idx]['mag_corr']
                     gext_applied = True
                     gext_alambda = round(corr[idx]['A_lambda'], 4)
-                mag_sys = str(p.get('mag_sys') or 'AB').strip().lower()
+                mag_corr = mag
+                mag_sys = row_mag_sys.strip().lower()
                 if mag_sys == 'vega':
                     mag += _vega2ab(band)
                 elif mag_sys not in ('ab', ''):
@@ -163,6 +176,8 @@ def host_stats():
                     'mag': round(mag, 4), 'abs_mag': round(mag - dm, 4),
                     'mag_err': err, 'err_assumed': err_assumed, 'upperlimit': ul,
                     'gext_applied': gext_applied, 'gext_Alambda': gext_alambda,
+                    'mag_raw': round(mag_raw, 4), 'mag_corr': round(mag_corr, 4),
+                    'mag_sys': row_mag_sys, 'gext_corr': row_gext_corr,
                 })
         return jsonify({
             'n_hosts': n_hosts,
@@ -172,6 +187,8 @@ def host_stats():
             'n_with_phot_z': n_phot,
             'm_star': m_star,
             'sfr': sfr,
+            'm_star_points': m_star_points,
+            'sfr_points': sfr_points,
             'abs_mag_points': abs_mag_points,
         })
     finally:
