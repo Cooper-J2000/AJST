@@ -3,15 +3,16 @@
 GET    /api/filters                    — 列表
 POST   /api/filters                    — 新建（需登录；body 可带 curve 获取透过率曲线）
 PUT    /api/filters/<id>               — 更新（仅管理员）
-DELETE /api/filters/<id>               — 删除（仅管理员）
+DELETE /api/filters/<id>               — 删除（仅管理员 + body 携带管理员密码二次校验）
+POST   /api/filters/<id>/curve         — 为已有滤光片补录/替换透过率曲线（仅管理员）
 GET    /api/filters/pcigale_builtin    — pcigale 自带滤光片名列表（需登录）
 POST   /api/filters/parse_curve        — 校验上传曲线文本（需登录，不落库）
 GET    /api/filters/svo_search?q=      — SVO FPS 模糊搜索（需登录）
 POST   /api/filters/svo_fetch          — 预览抓取 SVO 曲线（需登录，不落库不注册）
 """
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, session
 from app import get_session, require_auth, require_admin
-from models import FilterDef
+from models import FilterDef, User
 import extinction
 import filtercurves
 
@@ -109,8 +110,20 @@ def update_filter(fid):
 @filters_bp.route('/<fid>', methods=['DELETE'])
 @require_admin
 def delete_filter(fid):
+    """删除（双保险：前端二次确认后还需在 body 里提交当前管理员的密码）。
+
+    密码错误返回 403（而非 401）：401 会让前端 api.js 判定为登出态。
+    """
+    body = request.get_json(silent=True) or {}
+    password = body.get('password')
+    if not password:
+        return {'error': 'Forbidden', 'message': '删除滤光片需要提供管理员密码'}, 403
     sess = get_session()
     try:
+        # 用与登录相同的 User.check_password 校验当前登录管理员的密码
+        user = sess.query(User).filter(User.username == session.get('username')).first()
+        if not user or user.role != 'admin' or not user.check_password(password):
+            return {'error': 'Forbidden', 'message': '管理员密码错误，未执行删除'}, 403
         f = sess.query(FilterDef).filter(FilterDef.id == fid).first()
         if not f:
             return {'error': 'Not found'}, 404
@@ -120,6 +133,42 @@ def delete_filter(fid):
     except Exception as e:
         sess.rollback()
         return {'error': str(e)}, 400
+    finally:
+        sess.close()
+
+
+@filters_bp.route('/<fid>/curve', methods=['POST'])
+@require_admin
+def add_filter_curve(fid):
+    """为已有滤光片补录/替换透过率曲线（编辑态入口）。
+
+    body: {'curve': {'kind': 'pcigale_builtin'|'upload'|'svo', ...}}（同 POST /api/filters）。
+    复用 filtercurves.build_curve_extra：upload/svo 会注册进 pcigale 并写入 pcigale_name。
+    """
+    sess = get_session()
+    try:
+        f = sess.query(FilterDef).filter(FilterDef.id == fid).first()
+        if not f:
+            return {'error': 'Not found'}, 404
+        body = request.get_json(force=True)
+        curve = body.get('curve') if isinstance(body, dict) else None
+        if not isinstance(curve, dict):
+            return {'error': 'curve is required'}, 400
+        try:
+            curve_ed, warning = filtercurves.build_curve_extra(fid, curve)
+        except filtercurves.CurveError as e:
+            return {'error': 'curve validation failed', 'message': str(e)}, 400
+        except Exception as e:
+            sess.rollback()
+            return {'error': 'curve fetch failed', 'message': str(e)}, 502
+        merged = f.extra_data or {}
+        merged.update(curve_ed)
+        f.extra_data = merged
+        sess.commit()
+        resp = f.to_dict()
+        if warning:
+            resp['warning'] = warning
+        return jsonify(resp)
     finally:
         sess.close()
 

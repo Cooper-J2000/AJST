@@ -76,7 +76,9 @@ export const fitLightcurveModel = (payload) => api('POST', '/lightcurves/fit_mod
 
 // Filters
 export const getFilters = () => api('GET', '/filters');
-export const deleteFilter = (id) => api('DELETE', `/filters/${encodeURIComponent(id)}`);
+// 删除需随请求提交管理员密码（后端二次校验，错误返回 401）
+export const deleteFilter = (id, password) =>
+  api('DELETE', `/filters/${encodeURIComponent(id)}`, { password });
 
 // Articles (相关研究文章)
 export const getArticles = (tid) => api('GET', `/articles?transient_id=${encodeURIComponent(tid)}`);

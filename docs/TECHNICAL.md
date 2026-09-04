@@ -322,6 +322,8 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | GET | `/api/filters` | 滤波器列表（支持 `?sort=&order=`） | 否 |
 | POST | `/api/filters` | 新建滤波器（body 可带 `curve` 一并获取透过率曲线，见 §8.23） | 登录 |
 | PUT | `/api/filters/<id>` | 更新滤波器 | 管理员 |
+| DELETE | `/api/filters/<id>` | 删除滤波器（body 必须带 `password`=当前管理员密码二次校验，错误/缺失返回 403，见 §8.26） | 管理员 |
+| POST | `/api/filters/<id>/curve` | 为已有滤光片补录/替换透过率曲线（body 带 `curve`，同 §8.23 三种方式，会注册 pcigale） | 管理员 |
 | GET | `/api/filters/pcigale_builtin` | pcigale 自带滤光片名列表（新增滤光片时映射用） | 登录 |
 | POST | `/api/filters/parse_curve` | 校验两列透过率曲线文本（不落库，返回归一化曲线或含行号的错误） | 登录 |
 | GET | `/api/filters/svo_search?q=` | SVO FPS 模糊搜索候选滤光片 | 登录 |
@@ -1276,6 +1278,33 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
   `mag_raw`（库中原始星等）/ `mag_corr`（银消改正后、星等系统换算前）/ `mag_sys` /
   `gext_corr` 四个字段，CSV 列为 id/band/redshift/mag_raw/mag_sys/gext_corr/
   gext_Alambda/mag_corr/mag_ab/abs_mag/mag_err/err_assumed/upperlimit。
+
+### 8.26 滤光片页增强与删除保护（2026-09-04）
+
+- **透过率总览图**（`frontend/js/pages/filters.js`）：
+  - 配色改为按**序号**归一化：有曲线的滤光片按波长从小到大排序，第 i / 共 N 条取
+    i/(N−1)（N=1 取 0.5）映射 9 锚点 Spectral 色阶（1−t 取样，短波蓝/紫→长波红），
+    不再按波长数值归一化；无曲线条目在表格 ID 上取色阶中点色。
+  - 图例点击加粗不再改变图例顺序：dataset 顺序固定为列表顺序，置顶绘制改用
+    Chart.js dataset `order`（加粗 0、普通 1）；图例色块为实心方框（dataset 显式带
+    `backgroundColor`，line 型 legend 的 fillRect 用它填充）。
+  - 横轴范围自定义：图下方「最小/最大波长 (Å)」输入框 + 应用/恢复自动按钮（回车即
+    应用），留空 = 自动全范围；写入 chart 的 `scales.x.min/max`（留空置 undefined）。
+- **添加弹窗**：Vega→AB 输入框下注明「AB = Vega + offset」；上传曲线的格式提示改为
+  分点列表（两列/波长单位 Å/无表头/# 与空行忽略/分隔符自动识别/支持 csv·txt·dat/
+  透过率预归一）。单条曲线弹窗 footer 新增「下载曲线数据表 (CSV)」按钮（前端 Blob 拼
+  `wavelength_A,transmission` 两列，文件名 `filter_<id>_transmission.csv`）。
+- **编辑态补录曲线**：行内编辑行新增「获取/补录透过率曲线」按钮，打开独立弹窗复用
+  §8.23 三种获取方式（pcigale 内置/上传/SVO），提交到新增端点
+  `POST /api/filters/<id>/curve`（仅管理员）——复用 `filtercurves.build_curve_extra`，
+  结果按合并语义写入 extra_data（覆盖 transmission/pcigale_name/svo_id），
+  upload/SVO 同样注册进 pcigale（`ajst_<id>`），注册失败不阻断（响应带 `warning`）。
+- **编辑取消修复**：取消按钮从引用函数内部名的 `onclick="loadFilters()"`（个别时机下
+  未生效）改为绑定模块级 `window.filterEditCancel`（重新拉取列表恢复该行显示态）。
+- **删除保护**：「删除所选」流程改为 两次 confirm（列 ID + 影响警告 → 再次确认）→
+  密码弹窗（`type=password` 输入管理员密码）。`DELETE /api/filters/<id>` 要求 JSON body
+  带 `password`，后端用与登录相同的 `User.check_password` 校验**当前登录管理员**的
+  密码；缺失/错误返回 403（不用 401，避免前端把密码错误误判为登出）。
 
 ### 8.21 组合模型余辉拟合引擎 vegas_unified（2026-08-30 新增；2026-08-31 起为唯一余辉拟合引擎）
 
