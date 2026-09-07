@@ -216,6 +216,10 @@ def upload_spectrum():
         flux_type = body.get('flux_type') or 'absolute'
         if flux_type not in ('absolute', 'normalized'):
             return {'error': "flux_type 只能为 'absolute' 或 'normalized'"}, 400
+        # 光谱类型：transient（暂现源）/ host（宿主）/ mix（混合），不允许为空
+        spec_type = (body.get('spec_type') or 'transient').strip().lower()
+        if spec_type not in ('transient', 'host', 'mix'):
+            return {'error': "spec_type 只能为 'transient'、'host' 或 'mix'"}, 400
         u_fluxes = sp.get('u_fluxes') or (
             'erg/s/cm^2/Angstrom' if flux_type == 'absolute' else 'normalized')
         obs_date = None
@@ -237,6 +241,7 @@ def upload_spectrum():
             'observer': observer,
             'reducer': reducer,
             'flux_type': flux_type,
+            'spec_type': spec_type,
             'u_fluxes': u_fluxes,
             'u_wavelengths': sp.get('u_wavelengths') or 'Angstrom (observer frame)',
             'u_time': 'MJD',
@@ -249,7 +254,7 @@ def upload_spectrum():
             transient_id=tid, filename=filename,
             wavelength_min=min(wavs), wavelength_max=max(wavs),
             instrument=instrument, observation_date=obs_date,
-            file_path=store_rel, file_type='json',
+            file_path=store_rel, file_type='json', spec_type=spec_type,
             extra_data={'observer': observer, 'reducer': reducer,
                         'u_fluxes': sp_out['u_fluxes'], 'u_wavelengths': sp_out['u_wavelengths'],
                         'mjd': sp_out['time'], 'sn_name': obj, 'flux_type': flux_type,

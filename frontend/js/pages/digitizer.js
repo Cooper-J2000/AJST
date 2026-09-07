@@ -271,6 +271,14 @@ export async function render() {
                   <option value="normalized">归一化流量</option>
                 </select>
               </div>
+              <div class="d-flex gap-2 align-items-center mb-1">
+                <span class="small" style="width:70px">类型</span>
+                <select class="form-select form-select-sm" id="dgzSpecType" style="width:auto">
+                  <option value="transient" selected>Transient（暂现源）</option>
+                  <option value="host">Host（宿主星系）</option>
+                  <option value="mix">Mix（混合）</option>
+                </select>
+              </div>
               <div class="row g-1 mb-1">
                 <div class="col-6"><input class="form-control form-control-sm" id="dgzSpecInstr" placeholder="instrument"></div>
                 <div class="col-6"><input class="form-control form-control-sm" id="dgzSpecMjd" placeholder="MJD（观测日，可空）"></div>
@@ -1152,6 +1160,7 @@ function buildSpectraPayloads() {
   if (mjdRaw && !isFinite(parseFloat(mjdRaw))) return { err: 'MJD 必须是数值或留空' };
   const observer = $('dgzSpecObserver').value.trim() || null;
   const reducer = $('dgzSpecReducer').value.trim() || null;
+  const specType = $('dgzSpecType').value;
   const payloads = [];
   const perDs = [];
   for (const ds of _datasets.filter(d => d.points.length)) {
@@ -1176,6 +1185,7 @@ function buildSpectraPayloads() {
     payloads.push({
       transient_id: _src.id, filename: fname, content,
       instrument, mjd: mjdRaw || null, observer, reducer, flux_type: fluxType,
+      spec_type: specType,
     });
     perDs.push({ name: ds.name, fname, n: pts.length, wlMin: pts[0].wl, wlMax: pts[pts.length - 1].wl,
                  sample: pts.slice(0, 5), convNote });
@@ -1203,7 +1213,7 @@ function previewRecords() {
           <thead><tr><th>波长 (Å)</th><th>流量</th></tr></thead>
           <tbody>${d.sample.map(p => `<tr><td>${fmtNum(p.wl)}</td><td>${fmtNum(p.flux)}</td></tr>`).join('')}</tbody>
         </table>
-      </div>`).join('') + `<div class="fw-bold">共 ${payloads.length} 条光谱待写入 ${_src.id}</div>`;
+      </div>`).join('') + `<div class="fw-bold">共 ${payloads.length} 条光谱待写入 ${_src.id}（类型: ${document.getElementById('dgzSpecType').selectedOptions[0].textContent}）</div>`;
     _pendingRecords = { type, payloads };
     document.getElementById('dgzWrite').disabled = false;
     return;

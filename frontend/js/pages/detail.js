@@ -168,7 +168,8 @@ function canEditLc(pt) {
 // 条目以整数 id 定位（同一作者同年可有多篇，简称不唯一）
 // 权限：登录用户可添加；修改/删除仅管理员（与后端 /api/articles 一致）
 function articlesHTML() {
-  const items = articlesData.map(a => `
+  const COLLAPSE_N = 3;  // 超过该条数时折叠其余，点「展开全部」显示
+  const itemHTML = a => `
     <div class="mb-1" id="articleItem_${a.id}">
       <div class="d-flex align-items-center gap-2 flex-wrap">
         <a href="${escAttr(a.url)}" target="_blank" rel="noopener noreferrer" style="overflow-wrap:anywhere"><i class="bi bi-journal-text"></i> ${escAttr(a.name)}</a>
@@ -179,7 +180,14 @@ function articlesHTML() {
           <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="articleDelete(${a.id})" title="删除"><i class="bi bi-trash"></i></button>` : ''}
       </div>
       ${a.title ? `<div class="text-secondary text-truncate" style="font-size:0.78rem;max-width:100%" title="${escAttr(a.title)}">${escAttr(a.title)}</div>` : ''}
-    </div>`).join('');
+    </div>`;
+  let items = articlesData.map(itemHTML).join('');
+  if (articlesData.length > COLLAPSE_N) {
+    const head = articlesData.slice(0, COLLAPSE_N).map(itemHTML).join('');
+    const rest = articlesData.slice(COLLAPSE_N).map(itemHTML).join('');
+    items = head + `<div id="articleOverflow" style="display:none">${rest}</div>`
+      + `<button class="btn btn-sm btn-outline-secondary py-0 px-2 mt-1" id="articleListToggleBtn" onclick="articleListToggle()"><i class="bi bi-chevron-down"></i> 展开全部 (${articlesData.length})</button>`;
+  }
   const addArea = isAuthed() ? `
     <button class="btn btn-sm btn-outline-primary py-0 px-2 mt-1" id="articleAddBtn" onclick="articleAddToggle()"><i class="bi bi-plus-lg"></i> 添加</button>
     <div id="articleAddForm" style="display:none" class="mt-1">
@@ -199,8 +207,7 @@ function lcRowHTML(pt) {
   const marked = lcMarked.has(pt.id);
   return `
     <tr id="lcRow_${pt.id}"${marked ? ' class="lc-row-mark"' : ''}>
-      <td class="lc-mark-cell"><input type="checkbox" class="lc-mark-chk" data-id="${pt.id}" ${marked ? 'checked ' : ''}onchange="lcMarkRow(${pt.id}, this.checked)" title="标记该行（整行高亮，便于对比定位）"></td>
-      <td class="lc-del-cell" style="display:none"><input type="checkbox" class="lc-del-chk" data-id="${pt.id}"></td>
+      <td class="lc-mark-cell"><input type="checkbox" class="lc-mark-chk" data-id="${pt.id}" ${marked ? 'checked ' : ''}onchange="lcMarkRow(${pt.id}, this.checked)" title="标记该行（整行高亮；管理员可批量删除勾选项）"></td>
       <td class="lc-val" data-field="time" data-col="time">${pt.time.toFixed(1)}</td>
       <td class="lc-val" data-field="time_err" data-col="time_err">${pt.time_err != null ? pt.time_err.toFixed(1) : '-'}</td>
       <td class="lc-val" data-field="band" data-col="band">${pt.band}</td>
@@ -255,16 +262,13 @@ window.lcSort = (key) => {
   document.querySelectorAll('.lc-sort-ind').forEach(el => {
     el.textContent = el.dataset.ind === lcSortState.key ? (dir > 0 ? ' ▲' : ' ▼') : '';
   });
-  // 编辑/删除列显示状态与新行保持一致：编辑列（含扣点）登录可见，删除列仅管理员
+  // 编辑列（含扣点）登录可见
   if (isAuthed()) {
     document.querySelectorAll('.lc-edit-cell').forEach(el => el.style.display = '');
-    if (isAdmin()) {
-      document.querySelectorAll('.lc-del-cell').forEach(el => el.style.display = '');
-    }
   }
-  // 排序重绘后勾选状态清空，同步取消全选
-  const delAll = document.getElementById('lcDelAll');
-  if (delAll) delAll.checked = false;
+  // 标记状态在重绘后保留，表头全选框同步为实际状态
+  const markAll = document.getElementById('lcMarkAll');
+  if (markAll) markAll.checked = !!(lcItems.length && lcItems.every(p => lcMarked.has(p.id)));
 };
 
 // ─── 数据表行标记：勾选整行高亮，便于对比定位（仅前端状态，不写库） ───
@@ -321,19 +325,15 @@ window.lcColAll = (on) => {
   applyLcColVis();
 };
 
-// ─── 数据表批量删除 ───
-window.lcDelToggleAll = (checked) => {
-  document.querySelectorAll('.lc-del-chk').forEach(chk => { chk.checked = checked; });
-};
-
+// ─── 数据表批量删除（复用行标记勾选，管理员） ───
 window.lcDeleteSelected = async () => {
   if (!isAdmin()) { showToast('仅管理员可删除数据', 'warning'); return; }
-  const ids = [...document.querySelectorAll('.lc-del-chk:checked')].map(chk => parseInt(chk.dataset.id));
+  const ids = lcItems.filter(p => lcMarked.has(p.id)).map(p => p.id);
   if (!ids.length) { showToast('请先勾选要删除的记录', 'warning'); return; }
-  if (!confirm(`确定删除选中的 ${ids.length} 条光变记录？此操作不可恢复`)) return;
+  if (!confirm(`确定删除勾选的 ${ids.length} 条光变记录？此操作不可恢复`)) return;
   let ok = 0, fail = 0;
   for (const id of ids) {
-    try { await deleteLightcurve(id); ok++; }
+    try { await deleteLightcurve(id); lcMarked.delete(id); ok++; }
     catch { fail++; }
   }
   if (fail) showToast(`已删除 ${ok} 条，${fail} 条删除失败`, 'warning');
@@ -825,7 +825,7 @@ export async function render(tid) {
                 <button class="btn btn-sm btn-outline-secondary" onclick="lcColPanelToggle()" title="勾选要显示的列"><i class="bi bi-layout-three-columns"></i> 列显示</button>
                 <button class="btn btn-sm btn-outline-primary" id="lcUploadBtn" style="display:none" onclick="lcUploadShow()"><i class="bi bi-upload"></i> 上传数据表</button>
                 <button class="btn btn-sm btn-outline-primary" id="lcAddBtn" style="display:none" onclick="lcAddNewRow()"><i class="bi bi-plus-circle"></i> 添加记录</button>
-                <button class="btn btn-sm btn-outline-danger" id="lcDelBtn" style="display:none" onclick="lcDeleteSelected()"><i class="bi bi-trash"></i> 删除选中</button>
+                <button class="btn btn-sm btn-outline-danger" id="lcDelBtn" style="display:none" onclick="lcDeleteSelected()"><i class="bi bi-trash"></i> 删除勾选</button>
               </div>
             </div>
             <div class="card-body p-0">
@@ -837,8 +837,7 @@ export async function render(tid) {
                 <table class="table table-sm table-hover mb-0" style="font-size:0.8rem">
                   <thead>
                     <tr>
-                      <th title="标记/取消标记全部行（整行高亮，便于对比定位）"><input type="checkbox" id="lcMarkAll" onclick="lcMarkToggleAll(this.checked)"></th>
-                      <th id="lcDelHeader" style="display:none"><input type="checkbox" id="lcDelAll" onclick="lcDelToggleAll(this.checked)" title="全选"></th>
+                      <th title="标记/取消标记全部行（整行高亮；管理员可批量删除勾选项）"><input type="checkbox" id="lcMarkAll" onclick="lcMarkToggleAll(this.checked)"></th>
                       ${LC_COLS.map(([k, label]) => `
                       <th class="lc-sortable" data-col="${k}" data-sort="${k}" onclick="lcSort('${k}')" title="点击排序">${label}<span class="lc-sort-ind" data-ind="${k}">${k === 'time' ? ' ▲' : ''}</span></th>`).join('')}
                       <th id="lcEditHeader" style="display:none">编辑</th>
@@ -859,7 +858,7 @@ export async function render(tid) {
         <!-- ─── 光谱数据（单条查看 / 多条对比） ─── -->
         <div id="tab-spectra" class="tab-pane" style="display:none">
           <div class="row g-3">
-            <div class="col-md-4">
+            <div class="col-md-5">
               <div class="card h-100">
                 <div class="card-header d-flex justify-content-between align-items-center">
                   <span><i class="bi bi-list-ul"></i> 光谱列表</span>
@@ -868,15 +867,15 @@ export async function render(tid) {
                 <div class="card-body p-0" style="max-height:560px;overflow-y:auto">
                   <div class="small text-secondary px-2 pt-1">点击行切换选择，可多选对比</div>
                   <table class="table table-sm table-hover mb-0" style="font-size:0.85rem">
-                    <thead><tr><th>观测时间 (MJD)</th><th>仪器</th><th>观测者</th></tr></thead>
+                    <thead><tr><th>观测时间 (MJD)</th><th>仪器</th><th>类型</th><th>观测者</th><th>纵向偏移量</th></tr></thead>
                     <tbody id="spectraListBody">
-                      <tr><td colspan="3" class="text-center text-secondary py-3">加载中...</td></tr>
+                      <tr><td colspan="5" class="text-center text-secondary py-3">加载中...</td></tr>
                     </tbody>
                   </table>
                 </div>
               </div>
             </div>
-            <div class="col-md-8">
+            <div class="col-md-7">
               <div class="card h-100">
                 <div class="card-header d-flex justify-content-between align-items-center">
                   <span><i class="bi bi-activity"></i> <span id="specTitle">光谱</span></span>
@@ -952,6 +951,13 @@ export async function render(tid) {
                   <select class="form-select form-select-sm" id="specUpFluxType">
                     <option value="absolute" selected>绝对流量 (erg/s/cm²/Å)</option>
                     <option value="normalized">归一化流量（谱形保留，无量纲）</option>
+                  </select>
+                </div>
+                <div class="col-6"><label class="form-label small">类型</label>
+                  <select class="form-select form-select-sm" id="specUpSpecType">
+                    <option value="transient" selected>Transient（暂现源）</option>
+                    <option value="host">Host（宿主星系）</option>
+                    <option value="mix">Mix（混合）</option>
                   </select>
                 </div>
               </div>
@@ -1182,6 +1188,17 @@ export async function render(tid) {
     };
 
     // ── 基本信息：研究文章条目增删改 ──
+    window.articleListToggle = () => {
+      const rest = document.getElementById('articleOverflow');
+      const b = document.getElementById('articleListToggleBtn');
+      if (!rest || !b) return;
+      const show = rest.style.display === 'none';
+      rest.style.display = show ? '' : 'none';
+      b.innerHTML = show
+        ? '<i class="bi bi-chevron-up"></i> 收起'
+        : `<i class="bi bi-chevron-down"></i> 展开全部 (${articlesData.length})`;
+    };
+
     window.articleAddToggle = () => {
       const f = document.getElementById('articleAddForm');
       const b = document.getElementById('articleAddBtn');
@@ -1358,7 +1375,7 @@ export async function render(tid) {
       const tr = document.createElement('tr');
       tr.id = 'lcNewRow';
       tr.className = 'row-new';
-      tr.innerHTML = '<td class="lc-mark-cell"></td><td class="lc-del-cell"></td>' + LC_COLS.map(([f]) => {
+      tr.innerHTML = '<td class="lc-mark-cell"></td>' + LC_COLS.map(([f]) => {
         if (!LC_NEW_EDITABLE.has(f)) {
           // source / updated_at 由后端自动填充
           return `<td data-col="${f}"><span class="text-secondary small">自动</span></td>`;
@@ -1500,8 +1517,6 @@ export async function render(tid) {
       if (specUpBtn) specUpBtn.style.display = 'inline-block';
     }
     if (isAdmin()) {
-      document.getElementById('lcDelHeader').style.display = '';
-      document.querySelectorAll('.lc-del-cell').forEach(el => el.style.display = '');
       const delBtn = document.getElementById('lcDelBtn');
       if (delBtn) delBtn.style.display = 'inline-block';
     }
@@ -2014,7 +2029,7 @@ async function initSpectraTab(tid, redshift) {
   try {
     const list = await getSpectra(tid);
     if (!list.length) {
-      tbody.innerHTML = '<tr><td colspan="4" class="text-center text-secondary py-3">暂无光谱数据</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="text-center text-secondary py-3">暂无光谱数据</td></tr>';
       document.getElementById('specTitle').textContent = '光谱';
       document.getElementById('specMeta').textContent = '';
       return;
@@ -2029,6 +2044,7 @@ async function initSpectraTab(tid, redshift) {
       <tr class="row-link" id="specRow_${s.id}" onclick="toggleSpectrum(${s.id})">
         <td><i class="bi bi-check-lg text-primary" id="specChk_${s.id}" style="visibility:hidden"></i> ${mjd}</td>
         <td>${s.instrument || '-'} ${ft === 'normalized' ? '<span class="badge-tag" style="background:rgba(210,153,34,0.15);color:#d29922" title="归一化流量">归一</span>' : ''}</td>
+        <td>${({transient:'Transient',host:'Host',mix:'Mix'})[s.spec_type] || 'Transient'}</td>
         <td class="small">${(s.extra_data && s.extra_data.observer) || '-'}</td>
         <td class="text-nowrap" onclick="event.stopPropagation()">
           ${remarks ? `<button class="btn btn-sm btn-outline-info py-0 px-1" title="${escAttr(remarks)}" onclick="toggleSpecRemarks(${s.id})"><i class="bi bi-info-circle"></i></button>` : ''}
@@ -2039,12 +2055,12 @@ async function initSpectraTab(tid, redshift) {
         </td>
       </tr>${remarks ? `
       <tr id="specRem_${s.id}" style="display:none">
-        <td colspan="4" class="small text-secondary" style="white-space:normal"><i class="bi bi-chat-left-text"></i> ${escAttr(remarks)}</td>
+        <td colspan="5" class="small text-secondary" style="white-space:normal"><i class="bi bi-chat-left-text"></i> ${escAttr(remarks)}</td>
       </tr>` : ''}`;
     }).join('');
     toggleSpectrum(list[0].id);
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="4" class="text-center text-danger py-3">加载失败: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">加载失败: ${err.message}</td></tr>`;
   }
 }
 
@@ -2305,6 +2321,7 @@ window.doSpecUpload = async () => {
       observer: document.getElementById('specUpObserver').value.trim() || null,
       reducer: document.getElementById('specUpReducer').value.trim() || null,
       flux_type: document.getElementById('specUpFluxType').value,
+      spec_type: document.getElementById('specUpSpecType').value,
     });
     bootstrap.Modal.getInstance(document.getElementById('specUploadModal')).hide();
     showToast(`光谱已上传: ${resp.filename}（${resp.n_points} 点）`, 'success');

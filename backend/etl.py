@@ -340,6 +340,9 @@ def import_spectra(sess):
                     observation_date=obs_date,
                     file_path=f'catadata/spectra/{tid}/{fname}',
                     file_type='json',
+                    spec_type=(sp.get('spec_type') or 'transient')
+                              if sp.get('spec_type') in ('transient', 'host', 'mix')
+                              else 'transient',
                     extra_data={
                         'observer': sp.get('observer'), 'reducer': sp.get('reducer'),
                         'u_fluxes': sp.get('u_fluxes'),

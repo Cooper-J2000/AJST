@@ -323,6 +323,8 @@ class Spectrum(Base):
     observation_date = Column(DateTime, nullable=True)
     file_path      = Column(Text, nullable=False)
     file_type      = Column(String(16), default='fits')  # fits / txt / csv / ecsv
+    spec_type      = Column(String(16), nullable=False, default='transient',
+                            server_default='transient')  # transient / host / mix
     extra_data       = Column(JSONB, default=dict)
     created_at     = Column(DateTime, default=lambda: utcnow())
 
@@ -339,6 +341,7 @@ class Spectrum(Base):
             'observation_date': self.observation_date.isoformat() if self.observation_date else None,
             'file_path': self.file_path,
             'file_type': self.file_type,
+            'spec_type': self.spec_type,
             'extra_data': self.extra_data or {},
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }

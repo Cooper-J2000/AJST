@@ -194,7 +194,12 @@ export async function render() {
         const z = transientMeta[id]?.z;
         parts.push(`
           <div class="mb-2">
-            <div class="small fw-bold">${id} <span class="text-secondary fw-normal">z=${z != null ? z : '?'}</span></div>
+            <div class="small fw-bold d-flex align-items-center gap-1">${id} <span class="text-secondary fw-normal">z=${z != null ? z : '?'}</span>
+              ${bands.length ? `<span class="fw-normal ms-1">
+                <button class="btn btn-sm btn-outline-secondary py-0 px-1 cmp-band-all" data-tid="${id}" data-on="1" style="font-size:0.72rem">全选</button>
+                <button class="btn btn-sm btn-outline-secondary py-0 px-1 cmp-band-all" data-tid="${id}" data-on="0" style="font-size:0.72rem">全不选</button>
+              </span>` : ''}
+            </div>
             <div class="d-flex flex-wrap gap-2 ms-2">
               ${bands.map(b => `
                 <div class="form-check form-check-inline mb-0">
@@ -214,6 +219,16 @@ export async function render() {
           const cur = new Set(bandSel[tid] || []);
           if (cb.checked) cur.add(b); else cur.delete(b);
           bandSel[tid] = [...cur];
+          renderCompareChart();
+        });
+      });
+      // 每源全选/全不选
+      body.querySelectorAll('.cmp-band-all').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const tid = btn.dataset.tid, on = btn.dataset.on === '1';
+          const cbs = [...body.querySelectorAll('.cmp-band-cb')].filter(c => c.dataset.tid === tid);
+          cbs.forEach(c => { c.checked = on; });
+          bandSel[tid] = on ? cbs.map(c => c.dataset.band) : [];
           renderCompareChart();
         });
       });

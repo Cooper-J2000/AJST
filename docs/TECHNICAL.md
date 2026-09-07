@@ -182,7 +182,7 @@ BibTeX 可能很长，前端不整段展示，仅提供「复制到剪贴板」�
 
 | 表名 | 用途 |
 |---|---|
-| `spectra` | 光谱文件元数据（已启用，111 条：filename/仪器/观测日期/波长范围/file_path→`catadata/spectra/<tid>/`、extra_data 含 observer/reducer/flux_type/来源，见 §8.10、§8.15） |
+| `spectra` | 光谱文件元数据（已启用：filename/仪器/观测日期/波长范围/file_path→`catadata/spectra/<tid>/`、`spec_type` 列（transient/host/mix，非空默认 transient，随库存文件 JSON 持久化、重建可回读）、extra_data 含 observer/reducer/flux_type/来源，见 §8.10、§8.15） |
 | `images` | 图像文件（空，等待扩展） |
 | `fitting_results` | 余辉拟合任务记录（v2.5 起启用，见 §8.14） |
 | `extinction_corrections` | 银河消光改正记录（空，等待扩展） |
