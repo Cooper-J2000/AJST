@@ -5,7 +5,7 @@ import {
   exportLightcurves, showToast, isAuthed, isAdmin, currentUser, updateTransient, updateLightcurve, createLightcurves,
   deleteLightcurve,
   runExtinction, clearExtinction, fitLightcurveModel, getSpectra, getSpectrum, uploadSpectrum,
-  deleteSpectrumApi,
+  deleteSpectrumApi, updateSpectrum,
   getArticles, createArticle, updateArticle, deleteArticle,
   getHost
 } from '../api.js';
@@ -2044,7 +2044,11 @@ async function initSpectraTab(tid, redshift) {
       <tr class="row-link" id="specRow_${s.id}" onclick="toggleSpectrum(${s.id})">
         <td><i class="bi bi-check-lg text-primary" id="specChk_${s.id}" style="visibility:hidden"></i> ${mjd}</td>
         <td>${s.instrument || '-'} ${ft === 'normalized' ? '<span class="badge-tag" style="background:rgba(210,153,34,0.15);color:#d29922" title="归一化流量">归一</span>' : ''}</td>
-        <td>${({transient:'Transient',host:'Host',mix:'Mix'})[s.spec_type] || 'Transient'}</td>
+        <td onclick="event.stopPropagation()">${admin
+          ? `<select class="form-select form-select-sm spec-type-sel" style="width:auto;font-size:0.8rem;padding:1px 4px" onchange="specTypeChange(${s.id}, this.value)">
+              ${['transient','host','mix'].map(v => `<option value="${v}" ${((s.spec_type||'transient')===v)?'selected':''}>${({transient:'Transient',host:'Host',mix:'Mix'})[v]}</option>`).join('')}
+            </select>`
+          : (({transient:'Transient',host:'Host',mix:'Mix'})[s.spec_type] || 'Transient')}</td>
         <td class="small">${(s.extra_data && s.extra_data.observer) || '-'}</td>
         <td class="text-nowrap" onclick="event.stopPropagation()">
           ${remarks ? `<button class="btn btn-sm btn-outline-info py-0 px-1" title="${escAttr(remarks)}" onclick="toggleSpecRemarks(${s.id})"><i class="bi bi-info-circle"></i></button>` : ''}
@@ -2104,6 +2108,18 @@ window.setSpecMode = (mode) => {
 window.setSpecOffset = (id, val) => {
   _specOffsets[id] = parseFloat(val) || 0;
   renderSpectraPlot();
+};
+
+window.specTypeChange = async (id, val) => {
+  if (!isAdmin()) { showToast('仅管理员可修改光谱类型', 'warning'); return; }
+  try {
+    await updateSpectrum(id, { spec_type: val });
+    showToast(`光谱类型已改为 ${({transient:'Transient',host:'Host',mix:'Mix'})[val] || val}`, 'success');
+  } catch (err) {
+    showToast(`修改失败: ${err.message}`, 'danger');
+    _spectraLoadedFor = null;   // 重载列表以还原下拉显示
+    initSpectraTab(currentTid);
+  }
 };
 
 window.deleteSpectrum = async (id) => {

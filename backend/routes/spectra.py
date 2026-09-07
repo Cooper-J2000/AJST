@@ -272,6 +272,42 @@ def upload_spectrum():
         sess.close()
 
 
+@spectra_bp.route('/<int:spec_id>', methods=['PUT'])
+@require_admin
+def update_spectrum(spec_id):
+    """修改光谱元数据（目前仅 spec_type）：DB 记录与库存文件同步写"""
+    body = request.get_json(force=True)
+    spec_type = (body.get('spec_type') or '').strip().lower()
+    if spec_type not in ('transient', 'host', 'mix'):
+        return {'error': "spec_type 只能为 'transient'、'host' 或 'mix'"}, 400
+    sess = get_session()
+    try:
+        r = sess.query(Spectrum).filter(Spectrum.id == spec_id).first()
+        if not r:
+            return {'error': 'Not found'}, 404
+        path = os.path.normpath(os.path.join(PROJECT_ROOT, r.file_path))
+        if not path.startswith(SPECTRA_DIR):
+            return {'error': 'invalid path'}, 400
+        r.spec_type = spec_type
+        sess.commit()
+        # 回写库存文件 JSON，保证全量重建（import_spectra 以文件为准）不丢
+        if os.path.exists(path):
+            with open(path) as f:
+                data = json.load(f)
+            for obj in data.values():
+                sp = obj.get('spectra') if isinstance(obj, dict) else None
+                if sp is not None:
+                    sp['spec_type'] = spec_type
+            with open(path, 'w') as f:
+                json.dump(data, f)
+        return jsonify(r.to_dict())
+    except Exception as e:
+        sess.rollback()
+        return {'error': str(e)}, 500
+    finally:
+        sess.close()
+
+
 @spectra_bp.route('/<int:spec_id>', methods=['DELETE'])
 @require_admin
 def delete_spectrum(spec_id):

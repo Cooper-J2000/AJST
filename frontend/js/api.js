@@ -90,6 +90,7 @@ export const deleteArticle = (id) => api('DELETE', `/articles/${id}`);
 export const getSpectra = (tid) => api('GET', `/spectra?transient_id=${encodeURIComponent(tid)}`);
 export const getSpectrum = (id) => api('GET', `/spectra/${id}`);
 export const uploadSpectrum = (payload) => api('POST', '/spectra/upload', payload);
+export const updateSpectrum = (id, payload) => api('PUT', `/spectra/${id}`, payload);
 export const deleteSpectrumApi = (id) => api('DELETE', `/spectra/${id}`);
 
 // Extinction (银河系消光改正)

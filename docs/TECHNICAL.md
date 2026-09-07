@@ -338,6 +338,7 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | GET | `/api/spectra` | 光谱元数据列表（`?transient_id=` 过滤） | 否 |
 | GET | `/api/spectra/<id>` | 单条光谱完整数据（数值已统一强转） | 否 |
 | POST | `/api/spectra/upload` | 上传光谱（两列/三列文本或 JSON，服务端校验规范化） | 登录 |
+| PUT | `/api/spectra/<id>` | 修改光谱类型 `spec_type`（transient/host/mix，DB 与库存文件同步写） | 管理员 |
 | DELETE | `/api/spectra/<id>` | 删除光谱（记录 + 文件） | 管理员 |
 | GET | `/api/fitting/engines` | 拟合引擎清单（模型情形/默认先验/采样缺省，见 §8.14） | 否 |
 | POST | `/api/fitting/jobs` | 提交余辉拟合任务（异步） | 登录 |
