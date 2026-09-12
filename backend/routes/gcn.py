@@ -174,6 +174,8 @@ _update_status = {
     'finished_at': None,
 }
 _update_lock = threading.Lock()
+_update_thread = None   # 当前更新线程句柄（仅在锁内读写）
+_update_gen = 0         # 任务代数：旧线程收尾时核对，代数不符则不写状态/不动目录
 
 
 def _utcnow_iso():
@@ -186,23 +188,38 @@ def _set_update(state, message=''):
         _update_status['finished_at'] = _utcnow_iso()
 
 
-def _run_update():
+def _is_current(gen):
+    with _update_lock:
+        return gen == _update_gen
+
+
+def _run_update(gen):
+    def _set(state, message=''):
+        if _is_current(gen):
+            _set_update(state, message)
     base = os.path.dirname(GCN_ARCHIVE_DIR)          # catadata/gcn
     tar_path = os.path.join(base, 'archive.json.tar.gz')
     extract_tmp = os.path.join(base, '_gcn_extract_tmp')
     backup_dir = os.path.join(base, 'archive.backup')
     try:
-        # 1. 下载
-        _set_update('downloading', f'正在下载 {GCN_ARCHIVE_URL} ...')
-        urllib.request.urlretrieve(GCN_ARCHIVE_URL, tar_path)
+        # 1. 下载（每次 socket 操作 60s 超时，防止连接挂起导致状态永久卡 downloading）
+        _set('downloading', f'正在下载 {GCN_ARCHIVE_URL} ...')
+        req = urllib.request.Request(GCN_ARCHIVE_URL,
+                                     headers={'User-Agent': 'ajst-catalog/1.0'})
+        with urllib.request.urlopen(req, timeout=60) as r, open(tar_path, 'wb') as f:
+            shutil.copyfileobj(r, f)
 
         # 2. 解压到临时目录（整包内含 archive.json/ 顶层目录）
-        _set_update('extracting', '下载完成，正在解压...')
+        _set('extracting', '下载完成，正在解压...')
         if os.path.exists(extract_tmp):
             shutil.rmtree(extract_tmp)
         os.makedirs(extract_tmp)
         with tarfile.open(tar_path, 'r:gz') as tar:
-            tar.extractall(path=extract_tmp)
+            # filter='data' 拒绝绝对路径/目录穿越成员（3.12+；旧补丁版本无此参数则回退）
+            try:
+                tar.extractall(path=extract_tmp, filter='data')
+            except TypeError:
+                tar.extractall(path=extract_tmp)
         new_archive = os.path.join(extract_tmp, 'archive.json')
         if not os.path.isdir(new_archive) or not any(
                 fn.endswith('.json') for fn in os.listdir(new_archive)):
@@ -220,22 +237,24 @@ def _run_update():
                 os.rename(backup_dir, GCN_ARCHIVE_DIR)
             raise
 
-        # 4. 清理
-        shutil.rmtree(extract_tmp, ignore_errors=True)
-        shutil.rmtree(backup_dir, ignore_errors=True)
-        if os.path.exists(tar_path):
-            os.unlink(tar_path)
-        _invalidate_cache()
-        _set_update('done', f'存档已更新，共 {len(_scan_ids())} 期')
+        # 4. 清理（代数不符说明已有新任务接管共享目录，旧线程不再动目录/状态）
+        if _is_current(gen):
+            shutil.rmtree(extract_tmp, ignore_errors=True)
+            shutil.rmtree(backup_dir, ignore_errors=True)
+            if os.path.exists(tar_path):
+                os.unlink(tar_path)
+            _invalidate_cache()
+            _set_update('done', f'存档已更新，共 {len(_scan_ids())} 期')
     except Exception as e:
-        # 回滚：新目录不存在且备份还在时恢复备份
-        if not os.path.isdir(GCN_ARCHIVE_DIR) and os.path.isdir(backup_dir):
-            os.rename(backup_dir, GCN_ARCHIVE_DIR)
-        shutil.rmtree(extract_tmp, ignore_errors=True)
-        if os.path.exists(tar_path):
-            os.unlink(tar_path)
-        _invalidate_cache()
-        _set_update('error', f'更新失败: {e}')
+        if _is_current(gen):
+            # 回滚：新目录不存在且备份还在时恢复备份
+            if not os.path.isdir(GCN_ARCHIVE_DIR) and os.path.isdir(backup_dir):
+                os.rename(backup_dir, GCN_ARCHIVE_DIR)
+            shutil.rmtree(extract_tmp, ignore_errors=True)
+            if os.path.exists(tar_path):
+                os.unlink(tar_path)
+            _invalidate_cache()
+            _set_update('error', f'更新失败: {e}')
 
 
 @gcn_bp.route('/status')
@@ -257,10 +276,28 @@ def archive_status():
 @gcn_bp.route('/update', methods=['POST'])
 @require_auth
 def update_archive():
+    global _update_thread, _update_gen
     with _update_lock:
         if _update_status['state'] in ('downloading', 'extracting'):
-            return {'error': '已有更新任务正在进行', 'state': _update_status['state']}, 409
+            # 自愈：仅当旧线程确实已死（异常退出未来得及写状态）且超过 30 分钟时
+            # 才重置状态重试；线程仍存活则视为正常慢速任务，直接 409，
+            # 避免新旧线程并发写同一 tar_path/extract_tmp 并互相覆盖状态
+            alive = _update_thread is not None and _update_thread.is_alive()
+            stale = False
+            if not alive:
+                try:
+                    started = datetime.fromisoformat(_update_status['started_at'] or '')
+                    stale = (datetime.now(timezone.utc) - started).total_seconds() > 1800
+                except (TypeError, ValueError):
+                    stale = True
+            if not stale:
+                return {'error': '已有更新任务正在进行',
+                        'state': _update_status['state']}, 409
+            _set_update('error', '上一次更新超时/挂起，已重置状态')
+        _update_gen += 1
         _update_status.update(state='downloading', message='启动下载...',
                               started_at=_utcnow_iso(), finished_at=None)
-        threading.Thread(target=_run_update, daemon=True).start()
+        _update_thread = threading.Thread(target=_run_update,
+                                          args=(_update_gen,), daemon=True)
+        _update_thread.start()
     return {'status': 'started'}

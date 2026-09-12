@@ -14,12 +14,21 @@ from models import (Transient, HostGalaxy, Lightcurve, Spectrum, utcnow,
                     distance_modulus)
 from coords import parse_ra, parse_dec
 from datetime import datetime
+import re
 import extinction
 
 transients_bp = Blueprint('transients', __name__)
 
 # 支持排序的列（白名单）
 SORTABLE = {'id', 'ra', 'dec', 'redshift', 't0'}
+
+# 新建源 id 格式（与前端 create.js 的 pattern 一致）
+ID_PATTERN = re.compile(r'^[A-Za-z0-9]{1,32}$')
+
+
+def _escape_like(s):
+    """转义 LIKE/ILIKE 通配符（PostgreSQL 默认反斜杠转义）"""
+    return s.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
 
 
 def _float_arg(name):
@@ -42,7 +51,7 @@ def list_transients():
         # --- 搜索 ---
         search = request.args.get('search', '').strip()
         if search:
-            like = f'%{search}%'
+            like = f'%{_escape_like(search)}%'
             q = q.filter(
                 or_(
                     Transient.id.ilike(like),
@@ -201,6 +210,9 @@ def create_transient():
     body = request.get_json(force=True)
     if not body or 'id' not in body:
         return {'error': 'id is required'}, 400
+    # id 格式校验（与前端 ^[A-Za-z0-9]+$ 一致；含空格/斜杠的 id 会破坏路由与导出文件名）
+    if not isinstance(body['id'], str) or not ID_PATTERN.match(body['id']):
+        return {'error': 'id 只允许字母和数字（1-32 字符）'}, 400
     sess = get_session()
     try:
         existing = sess.query(Transient).filter(Transient.id == body['id']).first()

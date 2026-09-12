@@ -66,11 +66,14 @@ def _distance_arcsec(ra, dec, t):
 
 
 def _find_by_name(sess, name):
+    # TODO(增长点): 全表载入逐行匹配在源数量上万后应下推到 SQL
+    # （id ILIKE + aliases JSONB 查询）；当前规模（数百源）可接受
     return [t for t in sess.query(Transient).all() if _name_match(t, name)]
 
 
 def _cone_search(sess, ra, dec, radius_arcsec):
     """坐标锥形检索（small-angle 近似，复用 ang_dist），返回 [(transient, dist_arcsec)] 按距离升序"""
+    # TODO(增长点): 同上，源数量大后应先在 SQL 做经纬度框选再精算角距
     hits = []
     for t in sess.query(Transient).all():
         d = _distance_arcsec(ra, dec, t)

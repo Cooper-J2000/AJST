@@ -20,8 +20,10 @@ pcigale 2025.0 的 `pcigale-filters add` CLI 在 numpy>=2 下因 np.trapz 崩溃
 """
 import html
 import io
+import os
 import pickle
 import re
+import shutil
 import time
 import urllib.parse
 import urllib.request
@@ -41,21 +43,29 @@ MIN_CURVE_POINTS = 10
 MAX_TR_VALUE = 1.5          # 上传曲线的原始透过率峰值上限（"略大于 1"）
 MAX_SEARCH_RESULTS = 50
 
-PCIGALE_FILTER_DIR_FALLBACK = Path(
-    '/home/ajst/miniconda3/envs/burst_advocate/lib/python3.12/site-packages/'
-    'pcigale/data/filters')
-
-
 class CurveError(ValueError):
     """曲线数据/参数校验失败，message 面向用户（含行号或具体原因）。"""
 
 
 def _pcigale_filter_dir():
+    """pcigale 滤光片库目录：环境变量 AJST_PCIGALE_FILTER_DIR 优先，
+    其次已安装的 pcigale 包，最后从 PATH 上的 pcigale 可执行文件推导。"""
+    env = os.environ.get('AJST_PCIGALE_FILTER_DIR')
+    if env:
+        return Path(env)
     try:
         import pcigale
         return Path(pcigale.__file__).resolve().parent / 'data' / 'filters'
-    except Exception:  # noqa: BLE001 - pcigale 未安装时退回落写路径
-        return PCIGALE_FILTER_DIR_FALLBACK
+    except Exception:  # noqa: BLE001 - pcigale 未安装时从 PATH 推导
+        pass
+    exe = shutil.which('pcigale')
+    if exe:
+        # <env>/bin/pcigale → <env>/lib/python*/site-packages/pcigale/data/filters
+        env_root = Path(exe).resolve().parent.parent
+        for p in sorted(env_root.glob('lib/python*/site-packages/pcigale/data/filters')):
+            return p
+    raise RuntimeError('找不到 pcigale 滤光片目录：请安装 pcigale 或设置 '
+                       'AJST_PCIGALE_FILTER_DIR')
 
 
 def _fetch_url(url, retries=HTTP_RETRIES, timeout=HTTP_TIMEOUT):

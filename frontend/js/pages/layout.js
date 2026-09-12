@@ -8,8 +8,17 @@ export function showLoading() {
 }
 
 export function showError(msg) {
-  app.innerHTML = `<div class="alert alert-danger m-3">${msg}</div>`;
+  app.innerHTML = '';
+  const div = document.createElement('div');
+  div.className = 'alert alert-danger m-3';
+  div.textContent = msg;
+  app.appendChild(div);
 }
+
+// 全局导航序号（app.js 每次路由切换递增）。异步页在 render 开头取 navSeq()，
+// await 完成后用 navStale(seq) 比对，true 表示用户已切换到其它路由，应丢弃过期渲染
+export function navSeq() { return window._ajstNavSeq || 0; }
+export function navStale(seq) { return navSeq() !== seq; }
 
 // 全局统计页子页面 tab 栏（概览 / 统计关系 / 宿主星系）
 export function statsTabs(active) {

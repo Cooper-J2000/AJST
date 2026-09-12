@@ -1,34 +1,13 @@
 // === Compare Page (multi-source overlay) ===
-import { app, showLoading, showError } from './layout.js';
+import { app, showLoading, showError, navSeq, navStale } from './layout.js';
 import { getTransientMeta, getLightcurves, getFilters } from '../api.js';
 import { dragRectPlugin, attachDragZoom } from '../dragzoom.js';
 import { chartColors, academicFonts } from '../theme.js';
+import { ensureFilterCache, mJyToMagAB, pointToMJy } from '../bands.js';
+import { esc, minOf, maxOf } from '../utils.js';
+import { createYErrBarPlugin } from '../chart_plugins.js';
 
 // ─── 工具函数 ───
-const C = 2.998e8;
-const AB_MJY_ZP = 3.631;
-function magToMJy(m) { return 3.631 * Math.pow(10, 6 - m / 2.5); }
-function mJyToMag(f) { return 16.4 - 2.5 * Math.log10(f); }
-function toMJy(v, u) {
-  if (v == null) return null;
-  switch (u) {
-    case 'mJy': return v;
-    case 'uJy': return v * 1e-3;
-    case 'Jy':  return v * 1e3;
-    case 'cgs': case 'erg/cm2/s/Hz': case 'cgs(erg/cm2/s/Hz)': return v * 1e26;
-    case 'erg/cm2/s/keV': return v * 4.1357e-18 * 1e26; // 每 keV → 每 Hz → mJy
-    default: return v;
-  }
-}
-function normBand(b) { return b.replace(/(\d+)\.0(?=[A-Za-z])/g, '$1'); }
-// 波段 → Vega→AB 星等差（绘图统一转 AB 星等用）
-let _v2aMap = {};
-function getV2A(band) {
-  const b = normBand(band || '');
-  const keys = [b, b.replace(/_{.*}$/, '').replace(/'+$/, ''), b.split('_')[0], b.toLowerCase(), 'uvot-' + b.toLowerCase()];
-  for (const k of keys) { if (k && _v2aMap[k] != null) return _v2aMap[k]; }
-  return 0;
-}
 function sciFmt(v) {
   if (v == null || !isFinite(v)) return '0';
   const a = Math.abs(v);
@@ -52,9 +31,9 @@ let allTransients = [];    // 全部事件（供名称/别名筛选）
 // ─── 事件列表行 HTML（首绘与筛选重绘共用；勾选状态以 selectedTransients 为准） ───
 function compareRowsHTML(items) {
   return items.map(t => `
-    <tr class="row-link" onclick="toggleCompareSelect('${t.id}')">
-      <td style="width:30px"><input type="checkbox" class="form-check-input" id="cb_${t.id}" ${selectedTransients.includes(t.id) ? 'checked' : ''}></td>
-      <td>${t.id}${(t.aliases && t.aliases.length) ? `<div class="small text-secondary">${t.aliases.join(', ')}</div>` : ''}</td>
+    <tr class="row-link" data-tid="${esc(t.id)}">
+      <td style="width:30px"><input type="checkbox" class="form-check-input cmp-cb" ${selectedTransients.includes(t.id) ? 'checked' : ''}></td>
+      <td>${esc(t.id)}${(t.aliases && t.aliases.length) ? `<div class="small text-secondary">${esc(t.aliases.join(', '))}</div>` : ''}</td>
       <td class="small text-secondary">z=${t.redshift != null ? t.redshift.toFixed(2) : '?'}</td>
     </tr>
   `).join('');
@@ -62,19 +41,19 @@ function compareRowsHTML(items) {
 
 export async function render() {
   showLoading();
+  const seq = navSeq();  // 导航序号：请求期间切到其它路由则丢弃本次渲染
   try {
     const [data, filters] = await Promise.all([
       getTransientMeta(),
       getFilters(),
     ]);
+    if (navStale(seq)) return;  // 请求期间已切换路由
     filtersCache = filters;
     transientMeta = {};
     allTransients = data.items;
     for (const t of data.items) transientMeta[t.id] = { z: t.redshift, dm: t.distmod ?? null };
-    // 建立波长映射与 Vega→AB 系数映射
-    const wlMap = {};
-    _v2aMap = {};
-    for (const f of filters) { wlMap[f.id] = f.wavelength; _v2aMap[f.id] = f.vega2ab || 0; }
+    // 滤波器缓存（波长 / Vega→AB 系数）
+    ensureFilterCache(filters);
 
     app.innerHTML = `
       <div class="page-header"><h4><i class="bi bi-layers"></i> 多源光变对比</h4></div>
@@ -140,14 +119,21 @@ export async function render() {
       </div>
     `;
 
-    window.toggleCompareSelect = (id) => {
+    window.toggleCompareSelect = (id, checked) => {
       const idx = selectedTransients.indexOf(id);
-      if (idx >= 0) selectedTransients.splice(idx, 1);
-      else selectedTransients.push(id);
+      if (checked && idx < 0) selectedTransients.push(id);
+      if (!checked && idx >= 0) selectedTransients.splice(idx, 1);
       document.getElementById('selectedCount').textContent = `已选 ${selectedTransients.length} 个`;
-      const cb = document.getElementById(`cb_${id}`);
-      if (cb) cb.checked = idx < 0;
     };
+
+    // 行点击/勾选（事件委托，避免内联 onclick 拼接待转义 ID）
+    document.getElementById('cmpListBody').addEventListener('click', (e) => {
+      const row = e.target.closest('tr[data-tid]');
+      if (!row) return;
+      const cb = row.querySelector('.cmp-cb');
+      if (e.target !== cb) cb.checked = !cb.checked;
+      window.toggleCompareSelect(row.dataset.tid, cb.checked);
+    });
 
     // ── 按名称或别名筛选事件列表（大小写不敏感子串匹配） ──
     window.filterCompareList = (q) => {
@@ -194,18 +180,18 @@ export async function render() {
         const z = transientMeta[id]?.z;
         parts.push(`
           <div class="mb-2">
-            <div class="small fw-bold d-flex align-items-center gap-1">${id} <span class="text-secondary fw-normal">z=${z != null ? z : '?'}</span>
+            <div class="small fw-bold d-flex align-items-center gap-1">${esc(id)} <span class="text-secondary fw-normal">z=${z != null ? z : '?'}</span>
               ${bands.length ? `<span class="fw-normal ms-1">
-                <button class="btn btn-sm btn-outline-secondary py-0 px-1 cmp-band-all" data-tid="${id}" data-on="1" style="font-size:0.72rem">全选</button>
-                <button class="btn btn-sm btn-outline-secondary py-0 px-1 cmp-band-all" data-tid="${id}" data-on="0" style="font-size:0.72rem">全不选</button>
+                <button class="btn btn-sm btn-outline-secondary py-0 px-1 cmp-band-all" data-tid="${esc(id)}" data-on="1" style="font-size:0.72rem">全选</button>
+                <button class="btn btn-sm btn-outline-secondary py-0 px-1 cmp-band-all" data-tid="${esc(id)}" data-on="0" style="font-size:0.72rem">全不选</button>
               </span>` : ''}
             </div>
             <div class="d-flex flex-wrap gap-2 ms-2">
               ${bands.map(b => `
                 <div class="form-check form-check-inline mb-0">
-                  <input class="form-check-input cmp-band-cb" type="checkbox" id="bb_${id}_${b}"
-                         data-tid="${id}" data-band="${b}" ${newSel[id].includes(b) ? 'checked' : ''}>
-                  <label class="form-check-label small" for="bb_${id}_${b}">${b}</label>
+                  <input class="form-check-input cmp-band-cb" type="checkbox" id="bb_${esc(id)}_${esc(b)}"
+                         data-tid="${esc(id)}" data-band="${esc(b)}" ${newSel[id].includes(b) ? 'checked' : ''}>
+                  <label class="form-check-label small" for="bb_${esc(id)}_${esc(b)}">${esc(b)}</label>
                 </div>`).join('') || '<span class="small text-secondary">（无波段数据）</span>'}
             </div>
           </div>`);
@@ -247,51 +233,17 @@ export async function render() {
     };
 
   } catch (err) {
+    if (navStale(seq)) return;  // 已离开本页，错误提示不覆盖新页面
     showError(`加载事件列表失败: ${err.message}`);
   }
 }
 
 // ─── 误差棒插件：数据点带 err 字段时绘制竖直误差棒（画在数据点下层） ───
 let _cmpShowErr = true;   // 是否绘制误差棒（图头「误差棒」开关）
-const _cmpErrorBarPlugin = {
-  id: 'errorBar',
-  beforeDatasetsDraw(chart) {
-    if (!_cmpShowErr) return;
-    try {
-    const ctx = chart.ctx, yScale = chart.scales.y;
-    if (!ctx || !yScale) return;
-    chart.data.datasets.forEach((ds, dsIdx) => {
-      if (!chart.isDatasetVisible(dsIdx)) return;   // 图例取消勾选时不画其误差棒
-      const meta = chart.getDatasetMeta(dsIdx);
-      if (!meta || !meta.data) return;
-      ctx.save();
-      ctx.strokeStyle = ds.borderColor || '#fff';
-      ctx.lineWidth = 1;
-      const n = Math.min(meta.data.length, ds.data.length);
-      for (let i = 0; i < n; i++) {
-        const raw = ds.data[i];
-        const err = raw && raw.err;
-        if (err == null || !(err > 0)) continue;
-        const el = meta.data[i];
-        if (!el || el.skip || raw.y == null || !isFinite(raw.y)) continue;
-        const yTop = yScale.getPixelForValue(raw.y + err);
-        const yBot = yScale.getPixelForValue(raw.y - err);
-        if (!isFinite(yTop) || !isFinite(yBot)) continue;
-        const cx = el.x;
-        ctx.beginPath();
-        ctx.moveTo(cx, Math.min(yTop, yBot));
-        ctx.lineTo(cx, Math.max(yTop, yBot));
-        ctx.moveTo(cx - 3, yTop);
-        ctx.lineTo(cx + 3, yTop);
-        ctx.moveTo(cx - 3, yBot);
-        ctx.lineTo(cx + 3, yBot);
-        ctx.stroke();
-      }
-      ctx.restore();
-    });
-    } catch (e) { console.error('errorBar plugin:', e); }
-  },
-};
+const _cmpErrorBarPlugin = createYErrBarPlugin({
+  enabled: () => _cmpShowErr,
+  errOf: (ds, raw) => raw.err,
+});
 
 function renderCompareChart() {
   const allLC = lastAllLC;
@@ -326,28 +278,20 @@ function renderCompareChart() {
       (byBand[b] = byBand[b] || []).push(p);
     }
     Object.keys(byBand).sort().forEach((band, bi) => {
-      // 统一绘到 mJy 空间（星等数据转 AB 后按 AB 零点换算；Vega 系统先加 vega2ab）
+      // 统一绘到 mJy 空间（bands.js pointToMJy；星等转 AB，Vega/ST 系统先改正）
       const pts = byBand[band].map(p => {
-        const unit = p.flux_density_unit;
-        let y, err = null;
-        if (unit === 'mag' || unit === 'magnitude') {
-          let mag = p.flux_density;
-          if ((p.mag_system || '').trim().toLowerCase() === 'vega') mag += getV2A(band);
-          y = magToMJy(mag);
-          // 星等误差换算到流量空间: σ_F = F·ln10·σ_m/2.5
-          err = p.flux_density_err != null ? (Math.LN10 / 2.5) * y * p.flux_density_err : null;
-        } else {
-          y = toMJy(p.flux_density, unit);
-          err = p.flux_density_err != null ? toMJy(p.flux_density_err, unit) : null;
-        }
-        if (y == null || !(y > 0)) return null;
+        const conv = pointToMJy(p, false);
+        if (!conv) return null;
+        const { y, err, clipped } = conv;
+        // 绝对星等模式下原始值≤0 的点无对应星等，不绘制（流量模式截断到 log 轴底部并在 tooltip 标注）
+        if (absMag && clipped) return null;
         const tObs = p.time;
         if (absMag) {
           // 绝对星等模式:误差换算到星等空间 σ_m = (2.5/ln10)·σ_F/F
           const errMag = err != null && err > 0 ? (2.5 / Math.LN10) * err / y : null;
-          return { x: tObs / zfac, y: mJyToMag(y) - meta.dm, err: errMag, tObs };
+          return { x: tObs / zfac, y: mJyToMagAB(y) - meta.dm, err: errMag, tObs, clipped };
         }
-        return { x: tObs / zfac, y, err, tObs };
+        return { x: tObs / zfac, y, err, tObs, clipped };
       }).filter(d => d && isFinite(d.x) && isFinite(d.y));
       if (pts.length > 0) {
         datasets.push({
@@ -376,7 +320,7 @@ function renderCompareChart() {
     });
     if (mode === 'x') {
       if (allX.length === 0) return { min: 0.1, max: 1000 };
-      const mn = Math.min(...allX), mx = Math.max(...allX);
+      const mn = minOf(allX), mx = maxOf(allX);
       let r;
       if (xType === 'logarithmic') {
         r = { min: mn * 0.8, max: mx * 1.5 };
@@ -390,7 +334,7 @@ function renderCompareChart() {
       return r;
     } else {
       if (allY.length === 0) return absMag ? { min: -30, max: -10 } : { min: 1e-13, max: 1 };
-      const mn = Math.min(...allY), mx = Math.max(...allY);
+      const mn = minOf(allY), mx = maxOf(allY);
       const r = absMag
         ? { min: mn - Math.max(0.3, (mx - mn) * 0.08), max: mx + Math.max(0.3, (mx - mn) * 0.08) }
         : { min: Math.max(1e-13, mn * 0.5), max: mx * 2 };
@@ -420,7 +364,7 @@ function renderCompareChart() {
                 : `t=${sciFmt(p.x)}s`;
               const yTxt = absMag
                 ? `M=${p.y.toFixed(2)}${raw.err != null ? `±${raw.err.toFixed(2)}` : ''}`
-                : `${sciFmt(p.y)}${raw.err != null ? `±${sciFmt(raw.err)}` : ''} mJy (AB=${mJyToMag(p.y).toFixed(2)})`;
+                : `${sciFmt(p.y)}${raw.err != null ? `±${sciFmt(raw.err)}` : ''} mJy (AB=${mJyToMagAB(p.y).toFixed(2)})${raw.clipped ? ' [原始值≤0，已截断]' : ''}`;
               return `${ctx.dataset.label}: ${tTxt}, ${yTxt}`;
             },
           },
@@ -459,7 +403,7 @@ function renderCompareChart() {
           title: { display: true, text: '星等 (AB)', color: cc.tick, font: fonts.title },
           grid: { drawOnChartArea: false },
           border: { color: cc.tick },
-          ticks: { color: cc.tick, font: fonts.tick, callback: v => mJyToMag(v).toFixed(1) },
+          ticks: { color: cc.tick, font: fonts.tick, callback: v => mJyToMagAB(v).toFixed(1) },
           afterDataLimits(scale) {
             const ys = scale.chart.scales.y;
             if (ys) { scale.min = ys.min; scale.max = ys.max; }

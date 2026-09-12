@@ -32,6 +32,8 @@ config 结构：
 import json
 import math
 import os
+import re
+import threading
 import time
 
 import numpy as np
@@ -52,6 +54,7 @@ _PRIOR_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 _SAMPLER_DEFAULTS = {'nsteps': 20000, 'nburn': 6000, 'seed': 42, 'top_k': 10,
                      'npool': 4}
 _NPOOL_MAX = 8
+_NSTEPS_MAX = 200000   # 单 worker 串行队列，nsteps 无界会造成数天级任务
 
 # 四个物理轴的合法取值与展示标签
 MODELS = ('fs', 'fs_rs', 'fs_inject', 'frs_plus_fs')
@@ -104,11 +107,17 @@ def _resolve_case(config):
     """config → case 名：优先旧式 case 字段（含别名），否则按四轴拼"""
     case = config.get('case')
     if case:
-        return _CASE_ALIAS.get(case, case)
-    return _case_name(config.get('model', 'fs'),
-                      config.get('jet', 'tophat'),
-                      config.get('medium', 'ism'),
-                      config.get('extinction', 'none'))
+        case = _CASE_ALIAS.get(case, case)
+    else:
+        case = _case_name(config.get('model', 'fs'),
+                          config.get('jet', 'tophat'),
+                          config.get('medium', 'ism'),
+                          config.get('extinction', 'none'))
+    # 纵深防御：case 直接拼进先验文件路径（_load_prior_file），
+    # 白名单兜底防路径遍历，不依赖调用方先做 validate_config
+    if not re.fullmatch(r'[\w\-]+', case):
+        raise ValueError(f'非法 case 名: {case!r}')
+    return case
 
 
 def _cases():
@@ -198,21 +207,34 @@ def _bands_to_dataframe(bands):
 
 
 class _redirect_stdio:
-    """把 fd 级的 stdout/stderr（含 C++/tqdm 输出）重定向到日志文件"""
+    """把 fd 级的 stdout/stderr（含 C++/tqdm 输出）重定向到日志文件。
+
+    dup2 改的是进程级 fd，重定向期间本进程其它线程的输出也会进本任务
+    run.log；用进程级锁保证任意时刻只有一个任务处于重定向状态（当前
+    拟合队列为单 worker，锁主要防未来并发改动引入串扰）。子进程隔离
+    才是彻底方案，但改动太大，暂取此折中。"""
+
+    _lock = threading.Lock()
 
     def __init__(self, fp):
         self._fp = fp
 
     def __enter__(self):
-        self._saved = [os.dup(1), os.dup(2)]
-        os.dup2(self._fp.fileno(), 1)
-        os.dup2(self._fp.fileno(), 2)
+        self._lock.acquire()
+        try:
+            self._saved = [os.dup(1), os.dup(2)]
+            os.dup2(self._fp.fileno(), 1)
+            os.dup2(self._fp.fileno(), 2)
+        except Exception:
+            self._lock.release()
+            raise
         return self
 
     def __exit__(self, *exc):
         for fd, saved in zip((1, 2), self._saved):
             os.dup2(saved, fd)
             os.close(saved)
+        self._lock.release()
         return False
 
 
@@ -301,8 +323,12 @@ class VegasUnifiedEngine(BaseEngine):
                 errors.append(f'{name}: scale 须为 log/linear/fixed')
                 continue
             lo, hi = p.get('min'), p.get('max')
-            if not isinstance(lo, (int, float)) or not isinstance(hi, (int, float)):
-                errors.append(f'{name}: min/max 缺失或非法')
+            # 显式拒绝 bool（是 int 子类）与 NaN/inf（NaN 比较恒 False 会穿透校验）
+            if (isinstance(lo, bool) or isinstance(hi, bool)
+                    or not isinstance(lo, (int, float))
+                    or not isinstance(hi, (int, float))
+                    or not math.isfinite(lo) or not math.isfinite(hi)):
+                errors.append(f'{name}: min/max 缺失、非有限值或非法')
                 continue
             if p['scale'] == 'log' and lo <= 0:
                 errors.append(f'{name}: log 先验要求 min > 0')
@@ -337,13 +363,51 @@ class VegasUnifiedEngine(BaseEngine):
                     errors.append(f'缺少必需参数先验: {sorted(missing)}')
                 if extra:
                     errors.append(f'多余的参数先验: {sorted(extra)}')
+            # 预检联合约束与先验区间是否有交集：交集为空时自定义外壳的
+            # 初始位置重采会撞上限报错，这里提前给出更明确的错误
+            constraint, constraint_desc = _constraint_for(case)
+            if constraint is not None and not errors:
+                try:
+                    from VegasAfterglow import Scale as _Scale
+                    from ..vegas_unified.custom_mcmc import _sample_space_bounds
+                    all_defs = _build_param_defs(priors)
+                except ImportError:
+                    errors.append('VegasAfterglow 未安装，无法校验带联合约束的'
+                                  '模型组合（运行该组合的拟合同样依赖此包）')
+                else:
+                    free = [d for d in all_defs if d.scale != _Scale.fixed]
+                    fixed = {d.name: float(d.lower) for d in all_defs
+                             if d.scale == _Scale.fixed}
+                    lo_v, hi_v = _sample_space_bounds(free)
+                    rng = np.random.default_rng(0)
+                    X = rng.uniform(lo_v, hi_v, size=(2048, len(free)))
+                    if not any(constraint({**fixed, **_to_physical(x, free)})
+                               for x in X):
+                        errors.append(f'联合约束（{constraint_desc}）在当前先验区间内'
+                                      '找不到可行点，请检查相关参数的先验边界')
         samp = {**_SAMPLER_DEFAULTS, **(config.get('sampler') or {})}
         for key in ('nsteps', 'nburn', 'seed', 'top_k', 'npool'):
+            v = samp[key]
+            # 显式拒绝 bool（int(True)=1 会静默通过）与非整数值
+            if isinstance(v, bool):
+                errors.append(f'sampler.{key} 须为整数，不接受布尔值')
+                continue
             try:
-                if int(samp[key]) < 0:
+                iv = int(v)
+                if iv != v or iv < 0:
                     raise ValueError
-            except (TypeError, ValueError):
+                samp[key] = iv
+            except (TypeError, ValueError, OverflowError):
                 errors.append(f'sampler.{key} 须为非负整数')
+        if errors:
+            return errors
+        if samp['nsteps'] < 1:
+            errors.append('sampler.nsteps 须 >= 1')
+        elif samp['nsteps'] > _NSTEPS_MAX:
+            errors.append(f'sampler.nsteps 超过上限 {_NSTEPS_MAX}'
+                          '（单 worker 串行队列，过大任务会占死队列）')
+        if samp['nburn'] >= samp['nsteps']:
+            errors.append('sampler.nburn 须小于 nsteps（否则 burn-in 后无样本）')
         return errors
 
     # ── 执行拟合 ──
@@ -422,26 +486,36 @@ class VegasUnifiedEngine(BaseEngine):
                                  f'{d.scale.name}]' for d in param_defs))
 
         # ── 拟合 ──
+        warnings = []
+        logp_max = None   # 全链最大 logp（custom 路径可取；chi2_min 对应真 MAP）
         if engine_kind == 'fitter':
             from VegasAfterglow import Fitter
 
-            np.random.seed(seed)   # 控制内置 Fitter 初始 walker 位置
-            fitter = Fitter(z=z, lumi_dist=lumi_dist, **_fitter_kwargs(case))
-            for band in data['bands']:
-                fitter.add_flux_density(
-                    float(band['nu']), np.asarray(band['t'], dtype=float),
-                    np.asarray(band['f'], dtype=float) * MJY_TO_CGS,
-                    np.asarray(band['ferr'], dtype=float) * MJY_TO_CGS,
-                    weights=np.asarray(band['weights'], dtype=float),
-                    label=band['band'])
-            result = fitter.fit(param_defs, sampler='emcee', nsteps=nsteps,
-                                nburn=nburn, top_k=int(samp['top_k']), npool=npool)
+            # 内置 Fitter 用全局 np.random 定初始 walker 位置且不接受 RNG
+            # 注入（上游 2.0.6 限制）；种子污染无法根除，保存/恢复全局状态
+            # 把影响限制在本任务运行期间
+            rng_state = np.random.get_state()
+            np.random.seed(seed)
+            try:
+                fitter = Fitter(z=z, lumi_dist=lumi_dist, **_fitter_kwargs(case))
+                for band in data['bands']:
+                    fitter.add_flux_density(
+                        float(band['nu']), np.asarray(band['t'], dtype=float),
+                        np.asarray(band['f'], dtype=float) * MJY_TO_CGS,
+                        np.asarray(band['ferr'], dtype=float) * MJY_TO_CGS,
+                        weights=np.asarray(band['weights'], dtype=float),
+                        label=band['band'])
+                result = fitter.fit(param_defs, sampler='emcee', nsteps=nsteps,
+                                    nburn=nburn, top_k=int(samp['top_k']),
+                                    npool=npool)
+            finally:
+                np.random.set_state(rng_state)
             log(str(result))
             fitter.save(os.path.join(workdir, 'chain_record.h5'))
             flat = result.samples.reshape(-1, len(free_defs))
             flat_logp = result.log_probs
         else:
-            _, flat, flat_logp, _, _ = run_mcmc(
+            sampler, flat, flat_logp, _, _ = run_mcmc(
                 model_flux, free_defs, df, workdir,
                 nsteps=nsteps, nburn=nburn, seed=seed,
                 constraint=constraint,
@@ -451,11 +525,18 @@ class VegasUnifiedEngine(BaseEngine):
                             z=z, lumi_dist=lumi_dist, xi_e=1.0,
                             host_extinction=extinction),
                 n_workers=npool)
+            accept = float(np.mean(sampler.acceptance_fraction))
+            if accept < 0.1 or accept > 0.9:
+                warnings.append(
+                    f'MCMC 平均接受率 {accept:.3f} 超出合理区间 [0.1, 0.9]，'
+                    '链很可能未收敛，结果需谨慎解读')
+            logp_max = float(np.max(sampler.get_log_prob()))
+            del sampler
 
         # ── 后处理：metrics.txt + corner + 光变图（错位分波段 + 比值子图） ──
         metrics = save_products(workdir, flat, flat_logp, free_defs, names, df,
                                 model_flux, header, component_flux_fn=comp_fn,
-                                with_ratio=True)
+                                with_ratio=True, logp_max=logp_max)
         # 前端契约文件名：corner.png
         os.replace(os.path.join(workdir, 'corner_plot.png'),
                    os.path.join(workdir, 'corner.png'))
@@ -482,6 +563,7 @@ class VegasUnifiedEngine(BaseEngine):
             'aic': float(metrics['AIC']),
             'n_steps': nsteps,
             'runtime_s': runtime,
+            'warnings': warnings,
         }
 
     # ── 参数汇总 ──
@@ -498,11 +580,14 @@ class VegasUnifiedEngine(BaseEngine):
         p84 = np.percentile(phys, 84, axis=0)
         params_out = {}
         for j, d in enumerate(free_defs):
+            # err 保留对称形式兼容前端；lo/hi 保留 16/84 分位以保留偏斜信息
             params_out[d.name] = {'v': float(best[j]),
-                                  'err': float((p84[j] - p16[j]) / 2.0)}
+                                  'err': float((p84[j] - p16[j]) / 2.0),
+                                  'lo': float(p16[j]), 'hi': float(p84[j])}
         # 固定参数一并给出，便于前端展示完整模型
         for name, val in fixed_params.items():
-            params_out[name] = {'v': float(val), 'err': 0.0}
+            params_out[name] = {'v': float(val), 'err': 0.0,
+                                'lo': float(val), 'hi': float(val)}
         return params_out
 
     # ── 模型光变 lc_model.json ──

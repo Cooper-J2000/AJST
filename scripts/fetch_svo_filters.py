@@ -26,7 +26,9 @@
 幂等：已有 transmission 且已注册 pcigale 的默认跳过，--force 覆盖重做。
 """
 import argparse
+import os
 import pickle
+import shutil
 import sys
 import time
 import urllib.request
@@ -36,15 +38,34 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BACKEND_DIR = REPO_ROOT / 'backend'
 sys.path.insert(0, str(BACKEND_DIR))
 
-PCIGALE_FILTER_DIR = (
-    Path('/home/ajst/miniconda3/envs/burst_advocate/lib/python3.12/site-packages/'
-         'pcigale/data/filters')
-)
+
+def _find_pcigale_filter_dir():
+    """pcigale 滤光片库目录：环境变量 AJST_PCIGALE_FILTER_DIR 优先，
+    其次已安装的 pcigale 包，最后从 PATH 上的 pcigale 可执行文件推导。
+    找不到返回 None。"""
+    env = os.environ.get('AJST_PCIGALE_FILTER_DIR')
+    if env:
+        return Path(env)
+    try:
+        import pcigale
+        return Path(pcigale.__file__).resolve().parent / 'data' / 'filters'
+    except ImportError:
+        pass
+    exe = shutil.which('pcigale')
+    if exe:
+        # <env>/bin/pcigale → <env>/lib/python*/site-packages/pcigale/data/filters
+        env_root = Path(exe).resolve().parent.parent
+        for p in sorted(env_root.glob('lib/python*/site-packages/pcigale/data/filters')):
+            return p
+    return None
+
+
+PCIGALE_FILTER_DIR = _find_pcigale_filter_dir()
 PCIGALE_OUT_DIR = Path('/tmp/pcigale_filters')
 
-SVO_FPS_URL = 'http://svo2.cab.inta-csic.es/theory/fps/fps.php?ID={}'
-SVO_ASCII_URL = 'http://svo2.cab.inta-csic.es/theory/fps/getdata.php?format=ascii&id={}'
-SVO_INFO_URL = 'http://svo2.cab.inta-csic.es/theory/fps/index.php?id={}'
+SVO_FPS_URL = 'https://svo2.cab.inta-csic.es/theory/fps/fps.php?ID={}'
+SVO_ASCII_URL = 'https://svo2.cab.inta-csic.es/theory/fps/getdata.php?format=ascii&id={}'
+SVO_INFO_URL = 'https://svo2.cab.inta-csic.es/theory/fps/index.php?id={}'
 
 # AJST filter id → (pcigale_name, svo_id 或 None 表示用 pcigale 自带库)
 # 注：AJST 库中 J/H 标注为 UKIRT/UKIDSS，pcigale 无 UKIRT 滤光片，
@@ -195,8 +216,9 @@ def main():
                         help='已有 transmission / 已注册 pcigale 的也重做')
     args = parser.parse_args()
 
-    if not PCIGALE_FILTER_DIR.is_dir():
-        sys.exit(f'错误: 找不到 pcigale 滤光片目录 {PCIGALE_FILTER_DIR}')
+    if PCIGALE_FILTER_DIR is None or not PCIGALE_FILTER_DIR.is_dir():
+        sys.exit(f'错误: 找不到 pcigale 滤光片目录 {PCIGALE_FILTER_DIR}'
+                 '（可设 AJST_PCIGALE_FILTER_DIR 指定）')
 
     from app import get_session
     from models import FilterDef

@@ -1,7 +1,9 @@
 // === 统计关系页面（Amati / Yonetoku / Ghirlanda / lag-lum / var-lum / Ep-alpha） ===
-import { app, showLoading, showError, statsTabs } from './layout.js';
+import { app, showLoading, showError, statsTabs, navSeq, navStale } from './layout.js';
 import { api, showToast } from '../api.js';
 import { chartColors, academicFonts } from '../theme.js';
+import { esc, safeUrl, sci3, normErr, minOf, maxOf } from '../utils.js';
+import { xyErrBarPlugin } from '../chart_plugins.js';
 
 // ─── 常量 ───
 const LN10 = Math.LN10;
@@ -24,22 +26,6 @@ const state = {
 };
 
 // ─── 工具函数 ───
-// 科学计数法，3 位有效数字
-function sci3(v) {
-  if (v == null || !isFinite(v)) return '-';
-  if (v === 0) return '0';
-  const a = Math.abs(v);
-  if (a >= 1e-3 && a < 1e4) return Number(v.toPrecision(3)).toString();
-  return v.toExponential(2);
-}
-
-// 误差统一为 [正误差, 负误差]，无误差返回 null
-function normErr(e) {
-  if (e == null) return null;
-  if (Array.isArray(e)) return [Math.abs(e[0]), Math.abs(e[1])];
-  return [Math.abs(e), Math.abs(e)];
-}
-
 // 单值误差转 log10 空间误差（取不对称两侧平均）
 function logErr(val, err) {
   const e = normErr(err);
@@ -136,47 +122,7 @@ function pearsonR(lpts) {
   return (cxx > 0 && cyy > 0) ? cxy / Math.sqrt(cxx * cyy) : null;
 }
 
-// ─── 误差棒插件：在散点上画 x/y 误差棒（细线、50% 透明，支持不对称误差） ───
-const errorBarPlugin = {
-  id: 'errorBars',
-  afterDatasetsDraw(chart) {
-    const { ctx } = chart;
-    chart.data.datasets.forEach((ds, di) => {
-      if (!ds._isScatter || ds._noErrBar) return;   // 高亮层不画误差棒，保持星形醒目
-      const meta = chart.getDatasetMeta(di);
-      if (meta.hidden) return;
-      const xs = chart.scales.x, ys = chart.scales.y;
-      ctx.save();
-      ctx.strokeStyle = chartColors().errorBar;
-      ctx.lineWidth = 1;
-      meta.data.forEach((el, i) => {
-        const raw = ds.data[i];
-        if (!raw) return;
-        const px = el.x, py = el.y;
-        // log 轴上误差按线性值换算像素
-        const xe = normErr(raw.xerr);
-        if (xe) {
-          const lo = Math.max(raw.x - xe[1], xs.min);
-          const hi = Math.min(raw.x + xe[0], xs.max);
-          ctx.beginPath();
-          ctx.moveTo(xs.getPixelForValue(lo), py);
-          ctx.lineTo(xs.getPixelForValue(hi), py);
-          ctx.stroke();
-        }
-        const ye = normErr(raw.yerr);
-        if (ye) {
-          const lo = Math.max(raw.y - ye[1], ys.min);
-          const hi = Math.min(raw.y + ye[0], ys.max);
-          ctx.beginPath();
-          ctx.moveTo(px, ys.getPixelForValue(lo));
-          ctx.lineTo(px, ys.getPixelForValue(hi));
-          ctx.stroke();
-        }
-      });
-      ctx.restore();
-    });
-  },
-};
+// ─── 误差棒插件：共享实现见 ../chart_plugins.js（xyErrBarPlugin） ───
 
 // ─── 特殊标记：五角星插件（Chart.js 内置 'star' 只是空心星号线，不够醒目） ───
 function drawStarPath(ctx, cx, cy, outerR, innerR) {
@@ -350,7 +296,7 @@ async function buildChart(name) {
     }
     if (!lxs.length) { fitTexts.push(`${prefix}点数不足，无法拟合`); continue; }
     // 拟合线（覆盖该组数据 x 范围，留 5% 边距）
-    const lo = Math.min(...lxs), hi = Math.max(...lxs);
+    const lo = minOf(lxs), hi = maxOf(lxs);
     const pad = (hi - lo) * 0.05 || 0.1;
     const linePts = [];
     for (let i = 0; i <= 50; i++) {
@@ -395,7 +341,7 @@ async function buildChart(name) {
     const xbar = lpts.reduce((s, p) => s + p.lx, 0) / lpts.length;
     const ybar = lpts.reduce((s, p) => s + p.ly, 0) / lpts.length;
     const lxs = lpts.map(p => p.lx);
-    const lo = Math.min(...lxs), hi = Math.max(...lxs);
+    const lo = minOf(lxs), hi = maxOf(lxs);
     const pad = (hi - lo) * 0.05 || 0.1;
     const data = [];
     for (let i = 0; i <= 50; i++) {
@@ -489,7 +435,7 @@ async function buildChart(name) {
         },
       },
     },
-    plugins: [errorBarPlugin, highlightStarPlugin],
+    plugins: [xyErrBarPlugin, highlightStarPlugin],
   });
   charts[name]._fitSets = fitSets;
   charts[name]._litSet = litSet;
@@ -497,7 +443,7 @@ async function buildChart(name) {
   applyRangeToChart(name);
 
   fitEl.innerHTML = fitTexts.length
-    ? fitTexts.map(t => `<div><i class="bi bi-graph-up"></i> ${t}</div>`).join('')
+    ? fitTexts.map(t => `<div><i class="bi bi-graph-up"></i> ${esc(t)}</div>`).join('')
     : '<div class="text-secondary">点数不足（<3），无法拟合</div>';
   renderExcludedList(name);
 }
@@ -510,7 +456,7 @@ function renderExcludedList(name) {
   if (!excl.length) { el.innerHTML = ''; return; }
   el.innerHTML = `<div class="d-flex flex-wrap align-items-center gap-1">
     <span class="text-secondary me-1">已排除:</span>
-    ${excl.map(id => `<span class="badge bg-secondary" style="cursor:pointer" data-restore="${id}" title="点击恢复">${id} <i class="bi bi-x"></i></span>`).join('')}
+    ${excl.map(id => `<span class="badge bg-secondary" style="cursor:pointer" data-restore="${esc(id)}" title="点击恢复">${esc(id)} <i class="bi bi-x"></i></span>`).join('')}
     <button class="btn btn-sm btn-outline-secondary py-0 ms-1" data-clear="${name}">清空排除</button>
   </div>`;
   el.querySelectorAll('[data-restore]').forEach(b => {
@@ -638,16 +584,21 @@ function exportCsv(name) {
 }
 
 // ─── 拉取当前来源下全部关系数据 ───
+let _fetchReqId = 0;   // 请求令牌：先发后至的旧响应整体丢弃
 async function fetchAllData() {
-  rawPoints = {};
+  const req = ++_fetchReqId;
+  const result = {};
   await Promise.all(relDefs.map(async def => {
     try {
       const d = await api('GET', `/relations/${def.name}/data?source=${encodeURIComponent(state.source)}`);
-      rawPoints[def.name] = d.points || [];
+      result[def.name] = d.points || [];
     } catch {
-      rawPoints[def.name] = [];   // 该来源对此关系无数据
+      result[def.name] = [];   // 该来源对此关系无数据
     }
   }));
+  if (req !== _fetchReqId) return false;   // 期间发起了更新的拉取，丢弃旧结果
+  rawPoints = result;
+  return true;
 }
 
 // ─── 重建 tag 多选列表（选项来自当前已加载数据点） ───
@@ -661,7 +612,7 @@ function rebuildTagList() {
   const tags = [...tagSet].sort();
   box.innerHTML = tags.length
     ? tags.map(t => `<label class="dropdown-item d-flex align-items-center gap-2 py-1 mb-0" style="cursor:pointer">
-        <input type="checkbox" class="form-check-input m-0" value="${t}" ${state.tags.has(t) ? 'checked' : ''}> ${t}
+        <input type="checkbox" class="form-check-input m-0" value="${esc(t)}" ${state.tags.has(t) ? 'checked' : ''}> ${esc(t)}
       </label>`).join('')
     : '<span class="dropdown-item text-secondary small">无标签</span>';
   box.querySelectorAll('input[type=checkbox]').forEach(cb => {
@@ -687,14 +638,16 @@ function rebuildAllCharts() {
 // ─── 主渲染 ───
 export async function render() {
   showLoading();
+  const seq = navSeq();  // 导航序号：请求期间切到其它路由则丢弃本次渲染
   try {
     const d = await api('GET', '/relations');
     relDefs = d.relations || [];
     relSources = d.sources || {};
   } catch (err) {
-    showError(`加载统计关系失败: ${err.message}`);
+    if (!navStale(seq)) showError(`加载统计关系失败: ${err.message}`);
     return;
   }
+  if (navStale(seq)) return;  // 请求期间已切换路由
 
   // 全局来源下拉：best + 各关系来源的并集
   const allSources = ['best', ...new Set(Object.values(relSources).flat().filter(s => s !== 'best'))];
@@ -712,7 +665,7 @@ export async function render() {
         <div class="d-flex align-items-center gap-1">
           <label class="small text-secondary">数据来源:</label>
           <select class="form-select form-select-sm" style="width:auto" id="sourceSelect">
-            ${allSources.map(s => `<option value="${s}" ${s === state.source ? 'selected' : ''}>${s}</option>`).join('')}
+            ${allSources.map(s => `<option value="${esc(s)}" ${s === state.source ? 'selected' : ''}>${esc(s)}</option>`).join('')}
           </select>
         </div>
         <div class="dropdown">
@@ -724,7 +677,7 @@ export async function render() {
           <label class="small text-secondary">特殊标记:</label>
           <input type="text" class="form-control form-control-sm" style="width:220px"
                  id="highlightInput" placeholder="GRB030329A, GRB170817A"
-                 value="${[...state.highlight].join(', ')}">
+                 value="${esc([...state.highlight].join(', '))}">
         </div>
         <div class="form-check form-switch mb-0">
           <input class="form-check-input" type="checkbox" id="sigmaIntCheck" ${state.sigmaInt ? 'checked' : ''}>
@@ -739,7 +692,7 @@ export async function render() {
         <div class="col-lg-6">
           <div class="card" id="card-${def.name}">
             <div class="card-header d-flex justify-content-between align-items-center">
-              <span>${def.title}${def.lit && def.lit.label ? ` · <span class="text-secondary small">${def.lit.label}${def.lit.bibcode ? ` (${def.lit.bibcode})` : ''}</span>` : ''}</span>
+              <span>${esc(def.title)}${def.lit && def.lit.label ? ` · <span class="text-secondary small">${esc(def.lit.label)}${def.lit.bibcode ? ` (${esc(def.lit.bibcode)})` : ''}</span>` : ''}</span>
               <div class="d-flex gap-1">
                 <button class="btn btn-sm btn-outline-secondary py-0" data-range-toggle="${def.name}" title="坐标范围">
                   <i class="bi bi-gear"></i>
@@ -775,8 +728,8 @@ export async function render() {
               ${Array.isArray(def.refs) && def.refs.length ? `
               <div class="text-secondary mt-2" style="font-size:0.78rem">参考文献: ${def.refs.map(r =>
                 r && r.url
-                  ? `<a href="${r.url}" target="_blank" rel="noopener noreferrer" class="link-secondary">${r.label || r.url}</a>`
-                  : (r && r.label) || ''
+                  ? `<a href="${esc(safeUrl(r.url))}" target="_blank" rel="noopener noreferrer" class="link-secondary">${esc(r.label || r.url)}</a>`
+                  : esc((r && r.label) || '')
               ).filter(Boolean).join(' · ')}</div>` : ''}
             </div>
           </div>
@@ -787,9 +740,10 @@ export async function render() {
   // 控件事件
   document.getElementById('sourceSelect').onchange = async e => {
     state.source = e.target.value;
-    await fetchAllData();
-    rebuildTagList();
-    rebuildAllCharts();
+    if (await fetchAllData()) {
+      rebuildTagList();
+      rebuildAllCharts();
+    }
   };
   let hlTimer = null;
   document.getElementById('highlightInput').oninput = e => {
@@ -823,7 +777,8 @@ export async function render() {
   });
   relDefs.forEach(def => fillRangeInputs(def.name));   // 回填已记忆的范围
 
-  await fetchAllData();
-  rebuildTagList();
-  rebuildAllCharts();
+  if (await fetchAllData()) {
+    rebuildTagList();
+    rebuildAllCharts();
+  }
 }

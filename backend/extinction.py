@@ -20,6 +20,8 @@ CSFD 尘埃图首次使用前需 dustmaps.csfd.fetch()（本机已完成）。
 """
 import math
 
+from sqlalchemy import select
+
 RV = 3.1                # 银河系平均 Rv，固定 3.1
 LN10 = math.log(10)
 
@@ -64,13 +66,21 @@ def status():
     }
 
 
+# E(B-V) 进程内缓存：CSFD 尘埃图是静态数据，同一坐标（约 11m 精度分桶）
+# 全目录只需查一次；消光批量改正与宿主统计共用
+_ebv_cache = {}
+
+
 def get_ebv(ra, dec):
-    """查询 CSFD 尘埃图，返回 E(B-V)（mag）"""
-    from astropy.coordinates import SkyCoord
-    import astropy.units as u
-    _load()
-    coords = SkyCoord(ra, dec, unit=(u.deg, u.deg), frame='icrs')
-    return float(_csfd_query(coords))
+    """查询 CSFD 尘埃图，返回 E(B-V)（mag）；结果按坐标缓存"""
+    key = (round(float(ra), 4), round(float(dec), 4))
+    if key not in _ebv_cache:
+        from astropy.coordinates import SkyCoord
+        import astropy.units as u
+        _load()
+        coords = SkyCoord(ra, dec, unit=(u.deg, u.deg), frame='icrs')
+        _ebv_cache[key] = float(_csfd_query(coords))
+    return _ebv_cache[key]
 
 
 def compute_alambda(ebv, wavelength_a):
@@ -182,8 +192,13 @@ def run(sess, transient_id=None, lightcurve_id=None):
     ebv_cache = {}   # transient_id → E(B-V)
     alam_cache = {}  # (transient_id, band) → A_λ
 
+    # 一次性预取涉及源的坐标（只取所需列，不载入完整 ORM 实体），避免逐行 query（N+1）
+    t_map = {r.id: r for r in sess.execute(
+        select(Transient.id, Transient.ra, Transient.dec)
+        .where(Transient.id.in_({lc.transient_id for lc in rows}))).all()}
+
     for lc in rows:
-        t = sess.query(Transient).filter(Transient.id == lc.transient_id).first()
+        t = t_map.get(lc.transient_id)
         if t is None or t.ra is None or t.dec is None:
             stats['skipped_no_coords'] += 1
             continue
@@ -343,11 +358,15 @@ def recompute_band(sess, band):
     if not _load():
         return
     ebv_cache = {}
+    # 一次性预取涉及源的坐标（只取所需列，不载入完整 ORM 实体），避免逐行 query（N+1）
+    t_map = {r.id: r for r in sess.execute(
+        select(Transient.id, Transient.ra, Transient.dec)
+        .where(Transient.id.in_({lc.transient_id for lc in rows}))).all()}
     for lc in rows:
         if obs_mag(lc) is None:
             clear_point(lc)
             continue
-        t = sess.query(Transient).filter(Transient.id == lc.transient_id).first()
+        t = t_map.get(lc.transient_id)
         if t is None or t.ra is None or t.dec is None:
             clear_point(lc)
             continue

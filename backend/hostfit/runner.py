@@ -20,6 +20,7 @@ config = {'mode': 'fixed'|'photoz',
 import math
 import os
 import shutil
+import signal
 import subprocess
 
 import configobj
@@ -32,9 +33,14 @@ _LN10 = math.log(10)
 _C_AA_PER_S = 2.99792458e18      # 光速 [Å/s]
 _MJY_PER_CGS_FNU = 1e26          # 1 erg/s/cm²/Hz = 1e26 mJy
 
-_PCIGALE_BIN = os.environ.get(
-    'AJST_PCIGALE_BIN',
-    '/home/ajst/miniconda3/envs/burst_advocate/bin/pcigale')
+# pcigale 二进制解析优先级：AJST_PCIGALE_BIN 环境变量 > PATH 中的 pcigale
+# > 本机 burst_advocate 环境硬编码回退（换机器/换 conda env 时必须设环境变量）
+_PCIGALE_BIN_ENV = os.environ.get('AJST_PCIGALE_BIN')
+_PCIGALE_BIN_FALLBACK = '/home/ajst/miniconda3/envs/burst_advocate/bin/pcigale'
+
+
+def _find_pcigale():
+    return _PCIGALE_BIN_ENV or shutil.which('pcigale') or _PCIGALE_BIN_FALLBACK
 
 _TIMEOUT_S = 600  # pcigale run 超时 10 分钟
 
@@ -147,6 +153,12 @@ def _mag_to_mjy(point, filt, warnings):
     except (TypeError, ValueError):
         warnings.append(f'波段 {band}: 星等非法（{mag!r}），已跳过')
         return None
+    try:
+        mag_err = float(mag_err) if mag_err is not None else None
+    except (TypeError, ValueError):
+        # 与 mag 非法同口径：优雅跳过，不让单个脏点炸掉整个任务
+        warnings.append(f'波段 {band}: 星等误差非法（{mag_err!r}），已跳过')
+        return None
 
     if mag_sys in ('ab', ''):
         mag_ab = mag
@@ -165,8 +177,8 @@ def _mag_to_mjy(point, filt, warnings):
         f_lam = 10.0 ** (-0.4 * (mag + 21.10))          # erg/s/cm²/Å
         f_nu = f_lam * lam * lam / _C_AA_PER_S          # erg/s/cm²/Hz
         f_mjy = f_nu * _MJY_PER_CGS_FNU
-        if mag_err is not None and float(mag_err) > 0:
-            ferr = f_mjy * _LN10 / 2.5 * float(mag_err)
+        if mag_err is not None and mag_err > 0:
+            ferr = f_mjy * _LN10 / 2.5 * mag_err
         else:
             warnings.append(f'波段 {band}: 星等误差缺失，按 σ=0.2 mag 处理')
             ferr = f_mjy * _LN10 / 2.5 * 0.2
@@ -175,9 +187,11 @@ def _mag_to_mjy(point, filt, warnings):
         warnings.append(f'波段 {band}: 未知星等系统 {mag_sys!r}，已跳过')
         return None
 
-    f_mjy = 10.0 ** (-0.4 * (mag_ab - 8.90))
-    if mag_err is not None and float(mag_err) > 0:
-        ferr = f_mjy * _LN10 / 2.5 * float(mag_err)
+    # AB 零点 16.4 mag = 3631 Jy（mJy 制，与 fitting/jobs.py 口径一致；
+    # 8.90 是 Jy 制零点，直接用会差 1000 倍）
+    f_mjy = 10.0 ** ((16.4 - mag_ab) / 2.5)
+    if mag_err is not None and mag_err > 0:
+        ferr = f_mjy * _LN10 / 2.5 * mag_err
     else:
         warnings.append(f'波段 {band}: 星等误差缺失，按 σ=0.2 mag 处理')
         ferr = f_mjy * _LN10 / 2.5 * 0.2
@@ -377,6 +391,9 @@ def plot_sed(fits_path, points, out_png):
 
     fig, ax = plt.subplots(figsize=(7, 5))
     m = fnu > 0
+    if not m.any():
+        plt.close(fig)
+        raise ValueError('best model 流量全为 <= 0，无法绘图')
     ax.plot(wave[m], fnu[m], '-', color='0.3', lw=1.2, label='pcigale best model')
     xs = [pt['wave_nm'] for pt in points if pt['wave_nm']]
     if xs:
@@ -398,6 +415,18 @@ def plot_sed(fits_path, points, out_png):
 
 
 # ─── 主入口 ───
+
+def _ini_validation_detail(stdout):
+    """从 pcigale stdout 识别 ini 校验失败并提取错误明细；未匹配返回 None。
+
+    注意：匹配文案 'issues have been found in pcigale.ini' 与 pcigale 2025.0
+    耦合，pcigale 升级改文案后需同步修改（即便匹配失效，run() 仍以
+    out/results.txt 是否生成作为主判据，只是错误信息退化）。
+    """
+    if 'issues have been found in pcigale.ini' not in stdout:
+        return None
+    return '; '.join(l.strip() for l in stdout.splitlines() if 'ERROR' in l)
+
 
 def run(job_id, config, log, workdir=None, filters=None):
     """执行一次 pcigale 拟合。返回 {'params', 'chi2', 'warnings'}。
@@ -440,28 +469,36 @@ def run(job_id, config, log, workdir=None, filters=None):
     build_spec(config, os.path.join(workdir, 'pcigale.ini.spec'))
 
     # 2. 跑 pcigale（OMP_NUM_THREADS=1，10 分钟超时）
-    pcigale = shutil.which('pcigale') or _PCIGALE_BIN
+    pcigale = _find_pcigale()
     env = dict(os.environ, OMP_NUM_THREADS='1')
     env['PATH'] = os.path.dirname(pcigale) + os.pathsep + env.get('PATH', '')
     log(f'执行: {pcigale} run  (cwd={workdir})')
+    # start_new_session 让 pcigale 自成进程组，超时时 killpg 连孙进程一起杀，
+    # 避免孙进程持有管道导致 communicate 永久阻塞
+    proc = subprocess.Popen([pcigale, 'run'], cwd=workdir, env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, start_new_session=True)
     try:
-        proc = subprocess.run([pcigale, 'run'], cwd=workdir, env=env,
-                              capture_output=True, text=True, timeout=_TIMEOUT_S)
+        stdout, stderr = proc.communicate(timeout=_TIMEOUT_S)
     except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        proc.communicate()
         raise RuntimeError(f'pcigale run 超时（{_TIMEOUT_S}s）')
-    log('--- pcigale stdout ---\n' + (proc.stdout or '')[-4000:])
+    log('--- pcigale stdout ---\n' + (stdout or '')[-4000:])
     if proc.returncode != 0:
-        log('--- pcigale stderr ---\n' + (proc.stderr or '')[-4000:])
+        log('--- pcigale stderr ---\n' + (stderr or '')[-4000:])
         raise RuntimeError(f'pcigale run 失败（exit {proc.returncode}），详见 run.log')
 
     # pcigale 校验 ini 失败时不算崩溃：exit 0 且不产出 out/，需单独识别，
-    # 与真正的拟合失败区分开
+    # 与真正的拟合失败区分开（主判据是 out/results.txt 是否生成，
+    # stdout 字符串匹配只用于给出更具体的错误信息）
     results_txt = os.path.join(workdir, 'out', 'results.txt')
     if not os.path.exists(results_txt):
-        stdout = proc.stdout or ''
-        if 'issues have been found in pcigale.ini' in stdout:
-            detail = '; '.join(l.strip() for l in stdout.splitlines()
-                               if 'ERROR' in l)
+        detail = _ini_validation_detail(stdout or '')
+        if detail is not None:
             raise RuntimeError(
                 f'pcigale.ini 校验未通过（pcigale 拒绝运行）: {detail}')
         raise RuntimeError('pcigale 正常退出但未产出 out/results.txt，详见 run.log')

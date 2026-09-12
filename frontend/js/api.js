@@ -23,8 +23,15 @@ export async function api(method, path, body = null) {
       if (err.message) msg = err.message;
       else if (err.error) msg = err.error;
     } catch {}
-    if (resp.status === 401 || resp.status === 403) {
-      if (resp.status === 401) { _authed = false; _user = { username: null, role: null }; }
+    if (resp.status === 401) {
+      // 仅「客户端处于登录态但服务端会话失效」才视为登录过期：
+      // /auth/login 的 401 是密码错误（业务性 401），匿名请求的 401 是「需要登录」而非过期。
+      // _authed 翻转天然去重——并行 N 个 401 只在第一次派发事件（detail.path 供监听方过滤）
+      if (_authed && !path.startsWith('/auth/login')) {
+        _authed = false;
+        _user = { username: null, role: null };
+        document.dispatchEvent(new CustomEvent('ajst:auth-expired', { detail: { path } }));
+      }
     }
     throw new Error(msg);
   }
@@ -76,7 +83,7 @@ export const fitLightcurveModel = (payload) => api('POST', '/lightcurves/fit_mod
 
 // Filters
 export const getFilters = () => api('GET', '/filters');
-// 删除需随请求提交管理员密码（后端二次校验，错误返回 401）
+// 删除需随请求提交管理员密码（后端二次校验，密码缺失/错误返回 403）
 export const deleteFilter = (id, password) =>
   api('DELETE', `/filters/${encodeURIComponent(id)}`, { password });
 
@@ -155,11 +162,19 @@ export function showToast(msg, type = 'info') {
   const container = document.getElementById('toastContainer');
   const toast = document.createElement('div');
   toast.className = 'toast align-items-center show';
-  toast.innerHTML = `
-    <div class="d-flex">
-      <div class="toast-body" style="color:${colors[type] || 'var(--text-secondary)'}">${msg}</div>
-      <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button>
-    </div>`;
+  const flex = document.createElement('div');
+  flex.className = 'd-flex';
+  const body = document.createElement('div');
+  body.className = 'toast-body';
+  body.style.color = colors[type] || 'var(--text-secondary)';
+  body.textContent = msg;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn-close me-2 m-auto';
+  btn.setAttribute('data-bs-dismiss', 'toast');
+  flex.appendChild(body);
+  flex.appendChild(btn);
+  toast.appendChild(flex);
   container.appendChild(toast);
   setTimeout(() => toast.remove(), 5000);
 }

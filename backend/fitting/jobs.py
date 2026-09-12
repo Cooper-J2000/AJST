@@ -98,6 +98,7 @@ def prepare_data(transient_id, selection=None):
         warnings = []
         bands = {}  # band -> 累积字典
         skip_no_filter, skip_bad_t, skip_bad_flux, skip_no_err = set(), 0, 0, 0
+        skip_no_vega2ab = set()  # Vega 星等但缺转换系数的波段
         n_gext, n_raw = 0, 0  # 银消改正/未改正点数统计
         n_sel_skip = 0        # 用户数据选取剔除的点数
 
@@ -117,7 +118,8 @@ def prepare_data(transient_id, selection=None):
                     continue
             # 时间 → s，模型要求 t > 0
             factor = _TIME_UNIT_TO_S.get((lc.time_unit or 's').lower())
-            t_s = lc.time * factor if factor else None
+            t_s = (lc.time * factor
+                   if (factor is not None and lc.time is not None) else None)
             if t_s is None or t_s <= 0:
                 skip_bad_t += 1
                 continue
@@ -134,7 +136,7 @@ def prepare_data(transient_id, selection=None):
                 ferr_mjy = lc.flux_density_gextcor_err
                 n_gext += 1
             else:
-                conv = _raw_to_mjy(lc, filt)
+                conv = _raw_to_mjy(lc, filt, skip_no_vega2ab)
                 if conv is None:
                     skip_bad_flux += 1
                     continue
@@ -187,6 +189,9 @@ def prepare_data(transient_id, selection=None):
             warnings.append(f'{skip_bad_t} 点时间非法（t<=0 或未知时间单位），已跳过')
         if skip_bad_flux:
             warnings.append(f'{skip_bad_flux} 点流量非法/单位不支持，已跳过')
+        if skip_no_vega2ab:
+            warnings.append(f'Vega 星等但缺 vega2ab 转换系数，已跳过波段: '
+                            f'{sorted(skip_no_vega2ab)}')
         if skip_no_err:
             warnings.append(f'{skip_no_err} 个探测点误差缺失或为 0，已跳过')
 
@@ -198,13 +203,23 @@ def prepare_data(transient_id, selection=None):
         sess.close()
 
 
-def _raw_to_mjy(lc, filt):
-    """原始（未银消改正）flux_density → (f_mjy, ferr_mjy)；无法换算返回 None"""
+def _raw_to_mjy(lc, filt, vega_missing=None):
+    """原始（未银消改正）flux_density → (f_mjy, ferr_mjy)；无法换算返回 None。
+
+    vega_missing: 可选的集合，Vega 星等但缺 vega2ab 转换系数时把波段名
+    收集进去（不再静默按 AB 处理）。"""
     unit = (lc.flux_density_unit or '').strip().lower()
     if unit in ('mag', 'magnitude'):
         mag = lc.flux_density
+        if mag is None:
+            return None
         if (lc.mag_system or '').strip().lower() == 'vega':
-            mag = mag + ((filt.vega2ab or 0.0) if filt else 0.0)  # Vega → AB
+            v2ab = getattr(filt, 'vega2ab', None) if filt is not None else None
+            if v2ab is None:  # 缺转换系数（真值为 0.0 的滤光片正常换算）
+                if vega_missing is not None:
+                    vega_missing.add(lc.band)
+                return None
+            mag = mag + v2ab  # Vega → AB
         f_mjy = 10.0 ** ((16.4 - mag) / 2.5)   # AB 零点 16.4
         ferr_mjy = None
         if lc.flux_density_err and lc.flux_density_err > 0:
@@ -265,56 +280,98 @@ def create_job(transient_id, engine_name, config, warnings=None, created_by=None
     return job_id
 
 
+def _update_status(job_id, status, **extra):
+    """用全新 session 更新任务状态（短 session 模式：不在 MCMC 期间持有连接）"""
+    sess = get_session()
+    try:
+        row = sess.get(FittingResult, job_id)
+        if row is not None:
+            _set_status(sess, row, status, **extra)
+    finally:
+        sess.close()
+
+
+def _fail_job(job_id, err):
+    """失败回写：全新 session 写 failed；再失败则兜底写 interrupted"""
+    try:
+        _update_status(job_id, 'failed', error=err)
+        return
+    except Exception:
+        pass
+    try:
+        _update_status(job_id, 'interrupted',
+                       error=err + '（failed 状态回写失败，按 interrupted 兜底）')
+    except Exception:
+        pass  # 数据库持续不可用，只能等服务重启时 mark_interrupted 收拾
+
+
 def _run_job(job_id):
-    """worker：pending → running → done/failed"""
+    """worker：pending → running → done/failed
+
+    短 session 模式：运行前读配置即关 session；MCMC 期间不持有 DB 连接
+    （可达数小时，长持有会被 idle 超时/池回收断掉，导致结束时写结果失败、
+    任务永久卡 running）；结束后新开 session 写结果，失败回写双层兜底。
+    """
     sess = get_session()
     try:
         row = sess.get(FittingResult, job_id)
         if row is None:
             return
-        ed = row.extra_data or {}
-        engine = get_engine(ed.get('engine'))
-        if engine is None:
-            _set_status(sess, row, 'failed', error=f"未知引擎: {ed.get('engine')}")
-            return
-        _set_status(sess, row, 'running')
+        ed = dict(row.extra_data or {})
         transient_id = row.transient_id
-        workdir = job_dir(transient_id, job_id)
+    finally:
+        sess.close()
+    engine = get_engine(ed.get('engine'))
+    workdir = job_dir(transient_id, job_id)
+    try:
+        if engine is None:
+            raise ValueError(f"未知引擎: {ed.get('engine')}")
+        _update_status(job_id, 'running')
+        data = prepare_data(transient_id, (ed.get('config') or {}).get('data_selection'))
+        if data['n_points'] == 0:
+            raise ValueError('无可用数据点')
+        result = engine.run(ed.get('config') or {}, data, workdir, log=None)
+        files = {}
+        for kind, fname in (('h5', 'chain_record.h5'), ('corner', 'corner.png'),
+                            ('lc_model', 'lc_model.json'),
+                            ('lc_plot', 'lc_plot.png'),
+                            ('lc_ratio', 'lc_ratio_plot.png'),
+                            ('metrics', 'metrics.txt')):
+            if os.path.exists(os.path.join(workdir, fname)):
+                files[kind] = fname
+        sess = get_session()
         try:
-            data = prepare_data(transient_id, (ed.get('config') or {}).get('data_selection'))
-            if data['n_points'] == 0:
-                raise ValueError('无可用数据点')
-            result = engine.run(ed.get('config') or {}, data, workdir, log=None)
-            files = {}
-            for kind, fname in (('h5', 'chain_record.h5'), ('corner', 'corner.png'),
-                                ('lc_model', 'lc_model.json'),
-                                ('lc_plot', 'lc_plot.png'),
-                                ('lc_ratio', 'lc_ratio_plot.png'),
-                                ('metrics', 'metrics.txt')):
-                if os.path.exists(os.path.join(workdir, fname)):
-                    files[kind] = fname
+            row = sess.get(FittingResult, job_id)
+            if row is None:
+                return
             row.parameters = result['params']
             row.chi_squared = result['chi2']
             _set_status(sess, row, 'done',
                         runtime_s=result['runtime_s'],
                         dof=result['dof'], bic=result['bic'], aic=result['aic'],
-                        warnings=data['warnings'], files=files, error=None)
-        except Exception as e:
-            # 失败详情同时落 run.log
-            os.makedirs(workdir, exist_ok=True)
-            with open(os.path.join(workdir, 'run.log'), 'a', encoding='utf-8') as lf:
-                lf.write('\n===== 任务失败 =====\n' + traceback.format_exc())
-            _set_status(sess, row, 'failed', error=str(e))
-    finally:
-        sess.close()
+                        warnings=(data['warnings']
+                                  + (result.get('warnings') or [])),
+                        files=files, error=None)
+        finally:
+            sess.close()
+    except Exception as e:
+        # 失败详情同时落 run.log
+        os.makedirs(workdir, exist_ok=True)
+        with open(os.path.join(workdir, 'run.log'), 'a', encoding='utf-8') as lf:
+            lf.write('\n===== 任务失败 =====\n' + traceback.format_exc())
+        _fail_job(job_id, str(e))
 
 
 def mark_interrupted():
-    """服务启动时调用：残留的 running/pending 一律标记 interrupted"""
+    """服务启动时调用：残留的 running/pending 一律标记 interrupted。
+
+    只处理余辉拟合任务；pcigale 宿主任务由 hostfit.jobs.mark_interrupted
+    处理（按 model_name 区分，互不越界）。"""
     sess = get_session()
     try:
         n = 0
-        for row in sess.query(FittingResult).all():
+        for row in (sess.query(FittingResult)
+                    .filter(FittingResult.model_name != 'pcigale_host').all()):
             ed = row.extra_data or {}
             if ed.get('status') in ('running', 'pending'):
                 ed = dict(ed)

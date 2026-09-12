@@ -12,6 +12,8 @@ import { chartColors, academicFonts } from '../theme.js';
 import {
   ensureFilterCache, buildSpectralColors, sortBandsByFreq, magABtoMJy,
 } from '../bands.js';
+import { minOf, maxOf } from '../utils.js';
+import { createYErrBarPlugin } from '../chart_plugins.js';
 
 function sciFmt(v) {
   if (v == null || !isFinite(v)) return '0';
@@ -69,7 +71,7 @@ function dateTag() {
 function logHist(values, nBins = 12) {
   const logs = (values || []).filter(v => isFinite(v) && v > 0).map(v => Math.log10(v));
   if (!logs.length) return null;
-  const min = Math.min(...logs), max = Math.max(...logs);
+  const min = minOf(logs), max = maxOf(logs);
   const w = (max - min) / nBins || 1;
   const counts = new Array(nBins).fill(0);
   for (const v of logs) counts[Math.min(Math.floor((v - min) / w), nBins - 1)]++;
@@ -163,43 +165,12 @@ let _mstarPoints = [];
 let _sfrPoints = [];
 
 // 误差棒插件（beforeDatasetsDraw：画在数据点下层）
-const _absErrPlugin = {
+const _absErrPlugin = createYErrBarPlugin({
   id: 'absErrBar',
-  beforeDatasetsDraw(chart) {
-    if (!_absShowErr) return;
-    const ctx = chart.ctx;
-    const yScale = chart.scales.y;
-    if (!ctx || !yScale) return;
-    chart.data.datasets.forEach((ds, dsIdx) => {
-      if (!ds._errorValues || ds._isUpperLimit) return;
-      if (!chart.isDatasetVisible(dsIdx)) return;
-      const meta = chart.getDatasetMeta(dsIdx);
-      if (!meta || !meta.data) return;
-      ctx.save();
-      ctx.strokeStyle = ds.borderColor || '#fff';
-      ctx.lineWidth = 1;
-      const n = Math.min(meta.data.length, ds._errorValues.length);
-      for (let i = 0; i < n; i++) {
-        const err = ds._errorValues[i];
-        if (err == null || err <= 0) continue;
-        const el = meta.data[i];
-        const raw = ds.data[i];
-        if (!el || el.skip || !raw || raw.y == null || !isFinite(raw.y)) continue;
-        const cx = el.x;
-        const yTop = yScale.getPixelForValue(raw.y + err);
-        const yBot = yScale.getPixelForValue(raw.y - err);
-        if (!isFinite(yTop) || !isFinite(yBot)) continue;
-        ctx.beginPath();
-        ctx.moveTo(cx, Math.min(yTop, yBot));
-        ctx.lineTo(cx, Math.max(yTop, yBot));
-        ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(cx - 3, yTop); ctx.lineTo(cx + 3, yTop); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(cx - 3, yBot); ctx.lineTo(cx + 3, yBot); ctx.stroke();
-      }
-      ctx.restore();
-    });
-  },
-};
+  enabled: () => _absShowErr,
+  errOf: (ds, raw, i) => ds._errorValues ? ds._errorValues[i] : null,
+  skipDataset: ds => ds._isUpperLimit,
+});
 
 function _absToY(p, mJyMode) {
   // 星等模式：y = M（线性反向轴）；mJy 模式：y = 10pc 处流量密度（对数轴）
@@ -264,7 +235,7 @@ function buildAbsMagChart() {
   const limitMag = parseFloat(document.getElementById('hostAbsLimitMag')?.value);
   if (limitOn && isFinite(limitMag)) {
     const visPts = pts.filter(p => _absBandVisible[p.band] !== false);
-    const zmax = visPts.length ? Math.max(...visPts.map(p => p.z)) : 0;
+    const zmax = visPts.length ? maxOf(visPts, p => p.z) : 0;
     if (zmax > 0) {
       const data = [];
       const N = 100;

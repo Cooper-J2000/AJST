@@ -4,6 +4,7 @@
 import { app, showLoading } from './layout.js';
 import { getTransients, createTransient, createLightcurves, uploadSpectrum, isAuthed, showToast } from '../api.js';
 import { parseRA, parseDec } from '../coords.js';
+import { esc } from '../utils.js';
 import {
   makeCalibTransform, rgbToLab, avgColorLab, buildMask, traceLine, detectSymbols,
   sampleLine, sampleSpline,
@@ -45,10 +46,6 @@ function abMagToFlambda(mag, wlAng) {
 // 零点 F_λ = 3.6307805e-9 erg/s/cm²/Å（astropy 精确值），直接定义在波长通量上，无需波长参与
 function stMagToFlambda(mag) {
   return 3.6307805e-9 * Math.pow(10, -0.4 * mag);
-}
-
-function esc(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ═══ 页面渲染 ═══
@@ -351,6 +348,7 @@ export async function render() {
   });
 
   initCanvas();
+  _dsMapSig = '';  // DOM 已重建，强制重渲染数据集映射 UI
   // 会话内再次进入：恢复已有工作状态
   if (_img) { fitView(); redraw(); }
   if (!_datasets.length) addDataset();
@@ -729,8 +727,12 @@ function loadImageFile(file) {
     setMode('calib');
     redraw();
     showToast(`已加载 ${file.name}（${off.width}×${off.height}）`, 'success');
+    window._dgzDirty = true;  // 有未保存的取数工作（主题切换刷新前提示）
   };
-  img.onerror = () => showToast('图片加载失败', 'danger');
+  img.onerror = () => {
+    URL.revokeObjectURL(url);
+    showToast('图片加载失败', 'danger');
+  };
   img.src = url;
 }
 
@@ -861,6 +863,7 @@ function pushUndo(ds) {
   _undoStack.push({ dsId: ds.id, points: ds.points.map(p => ({ ...p })) });
   if (_undoStack.length > 20) _undoStack.shift();
   _pendingRecords = null;
+  window._dgzDirty = true;  // 有未保存的取数工作（主题切换刷新前提示）
   const w = document.getElementById('dgzWrite');
   if (w) w.disabled = true;
 }
@@ -1247,6 +1250,7 @@ async function writeRecords() {
       }
       showToast(`已写入 ${ok} 条光谱到 ${_src.id}，可到详情页「光谱数据」标签核对`, 'success');
       _pendingRecords = null;
+      window._dgzDirty = false;  // 已入库，主题切换不再需要「未保存」提示
     } catch (err) {
       showToast(`光谱写入失败（已成功 ${ok} 条）: ${err.message}`, 'danger');
       btn.disabled = false;
@@ -1264,6 +1268,7 @@ async function writeRecords() {
     }
     showToast(`已写入 ${created} 条测光记录到 ${_src.id}，可到详情页核对`, 'success');
     _pendingRecords = null;
+    window._dgzDirty = false;  // 已入库，主题切换不再需要「未保存」提示
   } catch (err) {
     showToast(`写入失败（已写入 ${created} 条）: ${err.message}`, 'danger');
     btn.disabled = false;

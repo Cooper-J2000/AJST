@@ -39,6 +39,7 @@ CSV_FIELD_MAP = {
     'flux_density_Gextcor_unit': 'flux_density_gextcor_unit',
     'weights': 'weights', 'discard': 'discard', 'telescope': 'telescope',
     'instrument': 'instrument', 'reference': 'reference', 'comment': 'comment',
+    'source': 'source',
 }
 BOOL_FIELDS = {'gext_corr', 'upperlimit', 'discard'}
 FLOAT_FIELDS = {'time', 'time_err', 'flux_density', 'flux_density_err',
@@ -69,23 +70,13 @@ def get_file_mtime(path):
         return 0
 
 
-# ─── 时间单位 → 秒 ───
+# ─── 时间单位 → 秒（供 import_one_lightcurve 的内联换算使用） ───
 TIME_UNIT_MAP = {
     's': 1, 'sec': 1, 'second': 1, 'seconds': 1,
     'min': 60, 'm': 60, 'minute': 60, 'minutes': 60,
     'h': 3600, 'hour': 3600, 'hours': 3600,
     'd': 86400, 'day': 86400, 'days': 86400,
 }
-
-
-def to_seconds(value, unit):
-    """将时间和时间误差统一转为秒"""
-    if value is None:
-        return None, 's'
-    factor = TIME_UNIT_MAP.get(unit.strip().lower()) if unit else None
-    if factor and factor != 1:
-        return value * factor, 's'
-    return value, 's'
 
 
 def list_available_tids():
@@ -282,10 +273,16 @@ def import_one_lightcurve(sess, tid):
                 # 时间单位统一转为秒
                 if lc.time_unit and lc.time_unit.lower().strip() != 's':
                     factor = TIME_UNIT_MAP.get(lc.time_unit.lower().strip())
-                    if factor and factor != 1:
-                        if lc.time is not None: lc.time *= factor
-                        if lc.time_err is not None: lc.time_err *= factor
-                    lc.time_unit = 's'
+                    if factor is None:
+                        # 未知单位：不换算、保留原始单位标注（不能谎报为 's'，
+                        # 否则时间数量级被静默改错）；下游对未知单位会跳过
+                        print(f'  [WARN] {tid}: unknown time_unit '
+                              f'{lc.time_unit!r}, time values kept unconverted')
+                    else:
+                        if factor != 1:
+                            if lc.time is not None: lc.time *= factor
+                            if lc.time_err is not None: lc.time_err *= factor
+                        lc.time_unit = 's'
                 # 流量/星等保留原始值与原始单位（mag/uJy/Jy/cgs/mJy 原样入库），
                 # mJy 统一在银河系消光改正后写入 flux_density_gextcor 列
                 sess.add(lc)
@@ -481,6 +478,7 @@ def from_dump(sess):
                 'flux_density_Gextcor', 'flux_density_Gextcor_err',
                 'flux_density_Gextcor_unit', 'weights', 'discard',
                 'telescope', 'instrument', 'reference', 'comment',
+                'source',
             ]
             with open(os.path.join(LC_DIR, f'{t.id}.csv'), 'w', newline='') as f:
                 writer = csv_mod.writer(f)
@@ -558,8 +556,8 @@ def main():
                 print('\n--- Filters (needed) ---')
                 import_filters(sess, force=True)
 
-        # ---- 标签 ----
-        if tids is None or args.sync:
+        # ---- 标签（增量模式；全量模式必须在 TRUNCATE 之后重建，见下） ----
+        if args.sync:
             ensure_default_tags(sess)
 
         # ---- 全量模式：清空重建 ----
@@ -577,6 +575,9 @@ def main():
             with engine.connect() as conn:
                 conn.execute(text('SELECT 1'))
             import_filters(sess, force=True)
+
+            # 默认标签同样被 TRUNCATE 清掉，必须在清空之后重建
+            ensure_default_tags(sess)
 
             tids = list_available_tids()
             print(f'\n--- Importing {len(tids)} transients ---')

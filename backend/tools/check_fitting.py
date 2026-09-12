@@ -19,6 +19,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# 本脚本是与本机数据库强耦合的内部端到端检查工具：硬编码依赖库中存在
+# GRB201103B（z=1.105、多波段含上限点），换环境跑前需先确认该源在库。
 TRANSIENT = 'GRB201103B'
 FIT_CONFIG = {
     'model': 'fs', 'jet': 'tophat', 'medium': 'ism', 'extinction': 'smc',
@@ -147,9 +149,9 @@ def main():
     r = client.get('/api/fitting/engines')
     check('GET /engines', r.status_code == 200)
     check('engines 含 vegas_unified',
-          any(e['name'] == 'vegas_unified' for e in r.get_json()))
+          any(e['name'] == 'vegas_unified' for e in (r.get_json() or [])))
     check('engines 不含 vegas_fs',
-          not any(e['name'] == 'vegas_fs' for e in r.get_json()))
+          not any(e['name'] == 'vegas_fs' for e in (r.get_json() or [])))
 
     r = client.post('/api/fitting/jobs', json={
         'transient_id': TRANSIENT, 'engine': 'vegas_unified',
@@ -182,14 +184,18 @@ def main():
     if r.status_code != 200:
         _report_failures()
         sys.exit(1)
-    job_id = r.get_json()['id']
+    job_id = (r.get_json() or {}).get('id')
+    if not job_id:
+        check('提交任务返回 id', False, r.get_data(as_text=True)[:200])
+        _report_failures()
+        sys.exit(1)
     print(f'job_id = {job_id}，开始轮询…')
 
     status = None
     while time.time() - t0 < POLL_TIMEOUT:
         time.sleep(POLL_INTERVAL)
         r = client.get(f'/api/fitting/jobs/{job_id}')
-        detail = r.get_json()
+        detail = r.get_json() or {}   # 非 JSON 响应（如 500 HTML）按空处理
         status = detail.get('status')
         print(f'  [{time.time()-t0:6.0f}s] status={status}')
         if status in ('done', 'failed', 'interrupted'):
@@ -231,7 +237,7 @@ def main():
     check('corner.png', r.status_code == 200 and r.data[:4] == b'\x89PNG')
     r = client.get(f'/api/fitting/jobs/{job_id}/files/lc_model')
     check('lc_model.json', r.status_code == 200)
-    lc = r.get_json()
+    lc = r.get_json() or {}
     check('lc_model 结构', lc.get('unit') == 'mJy' and
           all({'band', 't', 'f_med', 'f_lo', 'f_hi'} <= set(b)
               for b in lc.get('bands', [])))
@@ -240,7 +246,7 @@ def main():
 
     # 任务列表
     r = client.get(f'/api/fitting/jobs?transient_id={TRANSIENT}')
-    check('任务列表含该任务', any(j['id'] == job_id for j in r.get_json()))
+    check('任务列表含该任务', any(j['id'] == job_id for j in (r.get_json() or [])))
 
     # 删除（done 状态可删）
     r = client.delete(f'/api/fitting/jobs/{job_id}')

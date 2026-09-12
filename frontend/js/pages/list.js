@@ -1,10 +1,13 @@
 // === Transient List Page ===
 import { app, showLoading, showError } from './layout.js';
 import {
-  getTransients, deleteTransient, exportTransients, showToast, isAuthed, isAdmin, runExtinction
+  getTransients, deleteTransient, showToast, isAuthed, isAdmin, runExtinction
 } from '../api.js';
+import { esc } from '../utils.js';
 
 let currentState = { page: 1, sort: 'id', order: 'asc' };
+let _listReqId = 0;     // 异步请求令牌（竞态防护）
+let _applyTimer = null; // 筛选输入防抖
 
 export async function render() {
   app.innerHTML = `
@@ -112,7 +115,7 @@ export async function render() {
               </tr>
             </thead>
             <tbody id="tableBody">
-              <tr><td colspan="11" class="text-center text-secondary py-4">加载中...</td></tr>
+              <tr><td colspan="12" class="text-center text-secondary py-4">加载中...</td></tr>
             </tbody>
           </table>
         </div>
@@ -130,7 +133,11 @@ export async function render() {
     const el = document.getElementById('filterPanel');
     el.style.display = el.style.display === 'none' ? 'block' : 'none';
   };
-  window.applyFilter = () => { currentState.page = 1; loadData(); };
+  window.applyFilter = () => {
+    currentState.page = 1;
+    clearTimeout(_applyTimer);
+    _applyTimer = setTimeout(loadData, 300);
+  };
   window.clearFilter = () => {
     document.querySelectorAll('#filterPanel input').forEach(i => i.value = '');
     document.getElementById('fHasZ').checked = false;
@@ -140,7 +147,18 @@ export async function render() {
     currentState.page = 1;
     loadData();
   };
-  window.APIImport = { exportTransients };
+
+  // 行点击导航 + 删除按钮（事件委托，避免内联 onclick 拼接待转义 ID）
+  document.getElementById('tableBody').addEventListener('click', (e) => {
+    const delBtn = e.target.closest('[data-del]');
+    if (delBtn) {
+      e.stopPropagation();
+      window.confirmDelete(delBtn.dataset.del);
+      return;
+    }
+    const row = e.target.closest('tr.row-link');
+    if (row && row.dataset.tid) location.hash = '#/transient/' + encodeURIComponent(row.dataset.tid);
+  });
 
   // 全局银消改正（登录后显示按钮）
   if (isAdmin()) {
@@ -170,7 +188,10 @@ export async function render() {
     const sel = document.getElementById('fTag');
     if (sel && data.tags) {
       data.tags.forEach(tag => {
-        sel.innerHTML += `<option value="${tag}">${tag}</option>`;
+        const opt = document.createElement('option');
+        opt.value = tag;
+        opt.textContent = tag;
+        sel.appendChild(opt);
       });
     }
   });
@@ -200,6 +221,7 @@ export async function render() {
 }
 
 async function loadData() {
+  if (!document.getElementById('tableBody')) return;  // 已离开列表页（防抖回调迟到）
   const params = {
     page: currentState.page,
     per_page: 50,
@@ -234,45 +256,47 @@ async function loadData() {
   if (document.getElementById('fHasHost')?.checked) params.has_host = 'true';
 
   try {
+    const reqId = ++_listReqId;
     const data = await getTransients(params);
+    if (reqId !== _listReqId) return;  // 已有更新的请求发出，丢弃过期响应
+    if (!document.getElementById('tableBody')) return;  // 请求期间已离开列表页
     renderTable(data);
     renderPagination(data);
     // 登录后显示删除按钮
     if (isAdmin()) {
       document.getElementById('listDelHeader').style.display = '';
-      data.items.forEach(t => {
-        const el = document.getElementById(`delBtn_${t.id}`);
-        if (el) el.style.display = '';
-      });
+      document.querySelectorAll('#tableBody [data-delbtn]').forEach(el => el.style.display = '');
     }
   } catch (err) {
-    document.getElementById('tableBody').innerHTML =
-      `<tr><td colspan="11" class="text-center text-danger py-4">加载失败: ${err.message}</td></tr>`;
+    const tbody = document.getElementById('tableBody');
+    if (!tbody) return;  // 已离开列表页
+    tbody.innerHTML =
+      `<tr><td colspan="12" class="text-center text-danger py-4">加载失败: ${esc(err.message)}</td></tr>`;
   }
 }
 
 function renderTable(data) {
   const tbody = document.getElementById('tableBody');
+  if (!tbody) return;
   if (!data.items.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="text-center text-secondary py-4">没有匹配的事件</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="text-center text-secondary py-4">没有匹配的事件</td></tr>';
     return;
   }
   tbody.innerHTML = data.items.map(t => `
-    <tr class="row-link" onclick="location.href='#/transient/${t.id}'">
-      <td><strong>${t.id}</strong></td>
+    <tr class="row-link" data-tid="${esc(t.id)}">
+      <td><strong>${esc(t.id)}</strong></td>
       <td>${t.ra != null ? t.ra.toFixed(4) : '-'}</td>
       <td>${t.dec != null ? t.dec.toFixed(4) : '-'}</td>
       <td>${t.redshift != null ? t.redshift.toFixed(3) : '<span class="text-secondary">-</span>'}</td>
-      <td class="small">${t.t0 ? t.t0.substring(0, 10) : '-'}</td>
-      <td>${(t.tags || []).map(tag => `<span class="badge-tag">${tag}</span>`).join('')}</td>
-      <td class="small">${(t.aliases || []).join(', ') || '-'}</td>
-      <td class="small">${t.trigger_instrument || '-'}</td>
+      <td class="small">${t.t0 ? esc(t.t0.substring(0, 10)) : '-'}</td>
+      <td>${(t.tags || []).map(tag => `<span class="badge-tag">${esc(tag)}</span>`).join('')}</td>
+      <td class="small">${esc((t.aliases || []).join(', ')) || '-'}</td>
+      <td class="small">${esc(t.trigger_instrument) || '-'}</td>
       <td>${t.lc_count || 0}</td>
       <td>${t.spectra_count ? `<span class="badge-tag" style="background:rgba(188,140,255,0.15);color:#bc8cff">${t.spectra_count}</span>` : '-'}</td>
       <td>${t.has_host ? `<span class="badge-tag" style="background:rgba(63,185,80,0.15);color:#3fb950">宿主</span>` : ''}</td>
-      <td id="delBtn_${t.id}" style="display:none">
-        <button class="btn btn-sm btn-outline-danger py-0 px-1" title="删除"
-          onclick="event.stopPropagation(); confirmDelete('${t.id}')">
+      <td data-delbtn style="display:none">
+        <button class="btn btn-sm btn-outline-danger py-0 px-1" title="删除" data-del="${esc(t.id)}">
           <i class="bi bi-trash"></i>
         </button>
       </td>

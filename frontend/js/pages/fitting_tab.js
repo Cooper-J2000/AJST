@@ -7,6 +7,11 @@ import {
   getFittingJobFile, deleteFittingJob,
 } from '../api.js';
 import { chartColors, academicFonts } from '../theme.js';
+// 光变数据 → mJy 换算统一用 bands.js 实现（口径唯一来源；Vega/ST 星等、erg/cm2/s/keV 均已处理）
+// 滤波器缓存（getVega2ab）由 detail.js 页面加载时填充
+import { pointToMJy } from '../bands.js';
+import { createYErrBarPlugin } from '../chart_plugins.js';
+import { esc, sci3 } from '../utils.js';
 
 const POLL_INTERVAL = 5000;
 const BAND_COLORS = chartColors().bands;   // 波段配色（随主题；切换主题后 reload 生效）
@@ -24,6 +29,7 @@ let _bandColorMap = {};     // band → color
 let _axisRange = { xmin: null, xmax: null, ymin: null, ymax: null };  // 叠加图手动范围
 let _selChart = null;       // 数据选取预览散点图
 let _selExcluded = new Set();  // 数据选取：手动排除的 lightcurve id
+let _resultReqId = 0;       // 结果加载请求令牌（竞态防护）
 
 // ─── 叠加图坐标范围（手动输入 + 框选缩放共用） ───
 function _applyAxisRangeToChart() {
@@ -121,13 +127,17 @@ function _attachDragZoom(chart, canvas) {
       e.preventDefault();
     }
   });
-  canvas.ownerDocument.addEventListener('mousemove', (e) => {
+  const doc = canvas.ownerDocument;
+  // canvas 被移除后惰性自清理 document 级监听器（防泄漏）
+  const onMove = (e) => {
+    if (!canvas.isConnected) { doc.removeEventListener('mousemove', onMove); return; }
     if (!start) return;
     const p = rel(e);
     chart._fitDragRect = { x0: start.x, y0: start.y, x1: p.x, y1: p.y };
     chart.draw();
-  });
-  canvas.ownerDocument.addEventListener('mouseup', (e) => {
+  };
+  const onUp = () => {
+    if (!canvas.isConnected) { doc.removeEventListener('mouseup', onUp); return; }
     if (!start) return;
     start = null;
     const r = chart._fitDragRect;
@@ -143,23 +153,12 @@ function _attachDragZoom(chart, canvas) {
     _axisRange = { xmin, xmax, ymin, ymax };
     _fillAxisInputs();
     _applyAxisRangeToChart();
-  });
+  };
+  doc.addEventListener('mousemove', onMove);
+  doc.addEventListener('mouseup', onUp);
 }
 
 // ─── 工具 ───
-function esc(s) {
-  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function sci3(v) {
-  if (v == null || !isFinite(v)) return '-';
-  if (v === 0) return '0';
-  const a = Math.abs(v);
-  if (a >= 0.01 && a < 10000) return String(parseFloat(Number(v).toPrecision(3)));
-  return Number(v).toExponential(2);
-}
-
 function fmtTime(iso) {
   if (!iso) return '-';
   const d = new Date(iso);
@@ -172,82 +171,15 @@ function fmtRuntime(s) {
   return `${(s / 60).toFixed(1)}min`;
 }
 
-// ─── 光变数据 → mJy（与 detail.js 的换算口径一致：优先银消改正值） ───
-function magABtoMJy(mag) { return Math.pow(10, (16.4 - mag) / 2.5); }
-
-function toMJy(value, unit) {
-  if (value == null) return null;
-  switch (unit) {
-    case 'mJy': return value;
-    case 'uJy': return value * 1e-3;
-    case 'Jy': return value * 1e3;
-    case 'cgs': case 'erg/cm2/s/Hz': case 'cgs(erg/cm2/s/Hz)': return value * 1e26;
-    default: return value;
-  }
-}
-
-// 返回 {y, err}；星等误差按 σ_F = F·ln10·σ_m/2.5 换算（与 detail.js 口径一致）
-function pointToMJy(p) {
-  let y = null, err = null;
-  if (p.gext_corr && p.flux_density_gextcor != null) {
-    y = p.flux_density_gextcor;
-    err = p.flux_density_gextcor_err != null ? p.flux_density_gextcor_err : null;
-  } else if (p.gext_corr && p.mag_gextcor != null) {
-    y = magABtoMJy(p.mag_gextcor);
-    err = p.mag_gextcor_err != null ? (Math.LN10 / 2.5) * y * p.mag_gextcor_err : null;
-  } else if (p.flux_density_unit === 'mag' || p.flux_density_unit === 'magnitude') {
-    y = magABtoMJy(p.flux_density);
-    err = p.flux_density_err != null ? (Math.LN10 / 2.5) * y * p.flux_density_err : null;
-  } else {
-    y = toMJy(p.flux_density, p.flux_density_unit);
-    err = p.flux_density_err != null ? toMJy(p.flux_density_err, p.flux_density_unit) : null;
-  }
-  if (y == null || !isFinite(y)) return null;
-  if (y <= 0) y = 1e-6;
-  return { y, err };
-}
+// ─── 光变数据 → mJy：bands.js 的 pointToMJy（拟合恒优先银消改正值，即 useGext=true） ───
 
 // ─── 误差棒插件：数据点带 err 字段时绘制竖直误差棒（画在数据点下层；上限点与模型线不画） ───
 let _lcShowErr = true;   // 是否绘制误差棒（选取预览图与结果图共用此开关状态）
-const _lcErrorBarPlugin = {
-  id: 'errorBar',
-  beforeDatasetsDraw(chart) {
-    if (!_lcShowErr) return;
-    try {
-    const ctx = chart.ctx, yScale = chart.scales.y;
-    if (!ctx || !yScale) return;
-    chart.data.datasets.forEach((ds, dsIdx) => {
-      if (!chart.isDatasetVisible(dsIdx)) return;   // 图例取消勾选时不画其误差棒
-      const meta = chart.getDatasetMeta(dsIdx);
-      if (!meta || !meta.data) return;
-      ctx.save();
-      ctx.strokeStyle = ds.borderColor || '#fff';
-      ctx.lineWidth = 1;
-      const n = Math.min(meta.data.length, ds.data.length);
-      for (let i = 0; i < n; i++) {
-        const raw = ds.data[i];
-        const err = raw && !raw.isUL ? raw.err : null;
-        if (err == null || !(err > 0)) continue;
-        const el = meta.data[i];
-        if (!el || el.skip || raw.y == null || !isFinite(raw.y)) continue;
-        const yTop = yScale.getPixelForValue(raw.y + err);
-        const yBot = yScale.getPixelForValue(raw.y - err);
-        if (!isFinite(yTop) || !isFinite(yBot)) continue;
-        const cx = el.x;
-        ctx.beginPath();
-        ctx.moveTo(cx, Math.min(yTop, yBot));
-        ctx.lineTo(cx, Math.max(yTop, yBot));
-        ctx.moveTo(cx - 3, yTop);
-        ctx.lineTo(cx + 3, yTop);
-        ctx.moveTo(cx - 3, yBot);
-        ctx.lineTo(cx + 3, yBot);
-        ctx.stroke();
-      }
-      ctx.restore();
-    });
-    } catch (e) { console.error('errorBar plugin:', e); }
-  },
-};
+const _lcErrorBarPlugin = createYErrBarPlugin({
+  enabled: () => _lcShowErr,
+  errOf: (ds, raw) => raw.err,
+  skipPoint: raw => raw.isUL,
+});
 
 async function loadLightcurveBands() {
   _lcBands = {};
@@ -256,7 +188,7 @@ async function loadLightcurveBands() {
     const bandSet = new Set();
     for (const p of (lcData.items || [])) {
       if (p.discard) continue;
-      const conv = pointToMJy(p);
+      const conv = pointToMJy(p, true);
       if (!conv || !(p.time > 0)) continue;
       if (!_lcBands[p.band]) _lcBands[p.band] = [];
       _lcBands[p.band].push({ x: p.time, y: conv.y, err: conv.err, isUL: !!p.upperlimit, id: p.id });
@@ -925,6 +857,7 @@ function renderJobs() {
 async function loadResult(jobId) {
   const area = document.getElementById('fitResultArea');
   if (!area) return;
+  const req = ++_resultReqId;
   _selectedId = jobId;
   _axisRange = { xmin: null, xmax: null, ymin: null, ymax: null };  // 新结果回默认范围
   renderJobs(); // 高亮选中行
@@ -935,9 +868,11 @@ async function loadResult(jobId) {
   try {
     detail = await getFittingJob(jobId);
   } catch (e) {
+    if (req !== _resultReqId) return;
     area.innerHTML = `<div class="card"><div class="card-body text-danger small">结果加载失败: ${esc(e.message)}</div></div>`;
     return;
   }
+  if (req !== _resultReqId) return;  // 已切换到其他任务，丢弃过期结果
 
   let lcModel = null;
   if (detail.files && detail.files.lc_model) {
@@ -945,6 +880,7 @@ async function loadResult(jobId) {
       console.warn('lc_model 加载失败:', e);
     }
   }
+  if (req !== _resultReqId) return;
 
   const params = detail.parameters || {};
   const warnings = detail.warnings || [];
@@ -960,9 +896,9 @@ async function loadResult(jobId) {
       <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
         <span><i class="bi bi-graph-up-arrow"></i> 拟合结果 — 任务 #${detail.id} <span class="text-secondary small">${esc(detail.model_name)}</span></span>
         <span class="d-flex gap-1">
-          ${detail.files && detail.files.metrics ? `<a class="btn btn-sm btn-outline-secondary" href="${detail.files.metrics}" target="_blank" title="查看 metrics.txt">
+          ${detail.files && detail.files.metrics ? `<a class="btn btn-sm btn-outline-secondary" href="${esc(detail.files.metrics)}" target="_blank" title="查看 metrics.txt">
             <i class="bi bi-file-text"></i> metrics</a>` : ''}
-          ${detail.files && detail.files.h5 ? `<a class="btn btn-sm btn-outline-secondary" href="${detail.files.h5}" title="下载采样链 h5">
+          ${detail.files && detail.files.h5 ? `<a class="btn btn-sm btn-outline-secondary" href="${esc(detail.files.h5)}" title="下载采样链 h5">
             <i class="bi bi-download"></i> chain_record.h5</a>` : ''}
         </span>
       </div>
@@ -1007,7 +943,7 @@ async function loadResult(jobId) {
         <div class="row mt-3">
           <div class="col-lg-8 mx-auto">
             <div class="small text-secondary mb-1">角图 (corner)</div>
-            <img src="${detail.files.corner}" class="img-fluid rounded border" alt="corner plot"
+            <img src="${esc(detail.files.corner)}" class="img-fluid rounded border" alt="corner plot"
                  onerror="this.parentElement.innerHTML='<div class=\\'text-secondary small\\'>角图加载失败</div>'">
           </div>
         </div>` : ''}
@@ -1015,11 +951,11 @@ async function loadResult(jobId) {
         <div class="row mt-3">
           <div class="col-lg-10 mx-auto">
             <div class="small text-secondary mb-1">光变拟合图（错位分波段，虚线为成分拆分）</div>
-            <img src="${detail.files.lc_plot}" class="img-fluid rounded border" alt="lightcurve plot"
+            <img src="${esc(detail.files.lc_plot)}" class="img-fluid rounded border" alt="lightcurve plot"
                  onerror="this.parentElement.innerHTML='<div class=\\'text-secondary small\\'>光变图加载失败</div>'">
             ${detail.files.lc_ratio ? `
             <div class="small text-secondary mt-2 mb-1">光变拟合图 + data/model 比值子图</div>
-            <img src="${detail.files.lc_ratio}" class="img-fluid rounded border" alt="lightcurve ratio plot"
+            <img src="${esc(detail.files.lc_ratio)}" class="img-fluid rounded border" alt="lightcurve ratio plot"
                  onerror="this.style.display='none'">` : ''}
           </div>
         </div>` : ''}

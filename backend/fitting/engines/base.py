@@ -35,8 +35,10 @@ class BaseEngine:
 
 
 def register(engine_cls):
-    """注册引擎类（实例化后放入注册表）"""
+    """注册引擎类（实例化后放入注册表）；同名重复注册直接报错而非静默覆盖"""
     eng = engine_cls()
+    if eng.name in _ENGINES:
+        raise ValueError(f'拟合引擎重复注册: {eng.name}')
     _ENGINES[eng.name] = eng
     return engine_cls
 

@@ -150,8 +150,10 @@ def compute_derived(t):
         elif 'L' in st:
             gt, gs = 'II', 'sub_tag'
     if gt is None and best.get('t90_obs'):
-        gt = 'I' if best['t90_obs']['v'] < 2 else 'II'
-        gs = f"t90_obs:{best['t90_obs']['src']}"
+        v90 = best['t90_obs']['v']
+        if v90 > 0:  # 排除负哨兵值（如 -999）误判 I 型
+            gt = 'I' if v90 < 2 else 'II'
+            gs = f"t90_obs:{best['t90_obs']['src']}"
 
     derived = {'sources': sources, 'best': best, 'computed': date.today().isoformat()}
     if gt:
@@ -284,4 +286,5 @@ def main():
     print(f'\n已写库: {n_done} 个源的 extra_data.derived')
 
 
-main()
+if __name__ == '__main__':
+    main()

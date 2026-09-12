@@ -16,6 +16,8 @@ export_bp = Blueprint('export', __name__)
 @export_bp.route('/transients', methods=['GET'])
 @require_export_auth
 def export_transients():
+    # NOTE(增长点): JSON 分支对全表逐行 to_dict（含 comment/extra_data 大字段），
+    # 无分页。当前规模（数百源）可接受；源数量上万后应加分页或改用 CSV。
     fmt = request.args.get('format', 'csv')
     sess = get_session()
     try:

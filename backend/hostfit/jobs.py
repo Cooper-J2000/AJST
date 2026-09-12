@@ -69,45 +69,77 @@ def create_job(transient_id, config, created_by=None):
     return job_id
 
 
+def _update_status(job_id, status, **extra):
+    """用全新 session 更新任务状态（短 session 模式：不在 pcigale 运行期间持有连接）"""
+    sess = get_session()
+    try:
+        row = sess.get(FittingResult, job_id)
+        if row is not None:
+            _set_status(sess, row, status, **extra)
+    finally:
+        sess.close()
+
+
+def _fail_job(job_id, err):
+    """失败回写：全新 session 写 failed；再失败则兜底写 interrupted"""
+    try:
+        _update_status(job_id, 'failed', error=err)
+        return
+    except Exception:
+        pass
+    try:
+        _update_status(job_id, 'interrupted',
+                       error=err + '（failed 状态回写失败，按 interrupted 兜底）')
+    except Exception:
+        pass  # 数据库持续不可用，只能等服务重启时 mark_interrupted 收拾
+
+
 def _run_job(job_id):
-    """worker：pending → running → done/failed"""
+    """worker：pending → running → done/failed（短 session 模式，理由同 fitting/jobs）"""
     sess = get_session()
     try:
         row = sess.get(FittingResult, job_id)
         if row is None or row.model_name != MODEL_NAME:
             return
-        ed = row.extra_data or {}
-        _set_status(sess, row, 'running')
+        ed = dict(row.extra_data or {})
         transient_id = row.transient_id
-        workdir = job_dir(transient_id, job_id)
-        os.makedirs(workdir, exist_ok=True)
-        t0 = time.time()
-        with open(os.path.join(workdir, 'run.log'), 'a', encoding='utf-8') as lf:
-            def log(msg):
-                lf.write(str(msg) + '\n')
-                lf.flush()
-            log(f'===== hostfit job {job_id} (transient {transient_id}) 开始 =====')
+    finally:
+        sess.close()
+    workdir = job_dir(transient_id, job_id)
+    os.makedirs(workdir, exist_ok=True)
+    t0 = time.time()
+    with open(os.path.join(workdir, 'run.log'), 'a', encoding='utf-8') as lf:
+        def log(msg):
+            lf.write(str(msg) + '\n')
+            lf.flush()
+        log(f'===== hostfit job {job_id} (transient {transient_id}) 开始 =====')
+        try:
+            _update_status(job_id, 'running')
+            result = runner.run(job_id, ed.get('config') or {}, log, workdir=workdir)
+            files = {}
+            for kind, rel in (('results', os.path.join('out', 'results.txt')),
+                              ('sed_png', 'sed.png'),
+                              ('best_model', os.path.join('out', 'host_best_model.fits')),
+                              ('log', 'run.log')):
+                if os.path.exists(os.path.join(workdir, rel)):
+                    files[kind] = rel
+            sess = get_session()
             try:
-                result = runner.run(job_id, ed.get('config') or {}, log, workdir=workdir)
-                files = {}
-                for kind, rel in (('results', os.path.join('out', 'results.txt')),
-                                  ('sed_png', 'sed.png'),
-                                  ('best_model', os.path.join('out', 'host_best_model.fits')),
-                                  ('log', 'run.log')):
-                    if os.path.exists(os.path.join(workdir, rel)):
-                        files[kind] = rel
+                row = sess.get(FittingResult, job_id)
+                if row is None:
+                    return
                 row.parameters = result['params']
                 row.chi_squared = result['chi2']
                 _set_status(sess, row, 'done',
                             runtime_s=round(time.time() - t0, 2),
                             warnings=result.get('warnings') or [],
                             files=files, error=None)
-                log('===== 任务完成 =====')
-            except Exception as e:
-                log('\n===== 任务失败 =====\n' + traceback.format_exc())
-                _set_status(sess, row, 'failed', error=str(e))
-    finally:
-        sess.close()
+            finally:
+                sess.close()
+            log('===== 任务完成 =====')
+        except Exception as e:
+            log('\n===== 任务失败 =====\n' + traceback.format_exc())
+            _fail_job(job_id, str(e))
 
 
 def mark_interrupted():

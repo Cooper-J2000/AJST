@@ -1,6 +1,7 @@
 """
 光变曲线 CRUD
 GET    /api/lightcurves?transient_id=X    — 列表（支持筛选）
+POST   /api/lightcurves/fit_model         — 光变时变函数拟合（需登录）
 POST   /api/lightcurves                    — 批量添加
 PUT    /api/lightcurves/<id>               — 更新单条
 DELETE /api/lightcurves/<id>               — 删除单条
@@ -13,8 +14,13 @@ import extinction
 
 lightcurves_bp = Blueprint('lightcurves', __name__)
 
+# 支持排序的列（白名单）
+LC_SORTABLE = {'id', 'time', 'time_err', 'band', 'flux_density', 'flux_density_err',
+               'telescope', 'instrument', 'created_at', 'updated_at'}
+
 
 @lightcurves_bp.route('/fit_model', methods=['POST'])
+@require_auth
 def fit_model():
     """光变曲线时变函数拟合（线性 mJy 空间加权最小二乘）
 
@@ -197,14 +203,19 @@ def list_lightcurves():
         telescope = request.args.get('telescope')
         if telescope:
             q = q.filter(Lightcurve.telescope.ilike(f'%{telescope}%'))
-        # 排序
+        # 排序（白名单列，防止 getattr 取到关系等非列属性导致 500）
         sort = request.args.get('sort', 'time')
+        if sort not in LC_SORTABLE:
+            sort = 'time'
         order = request.args.get('order', 'asc')
-        col = getattr(Lightcurve, sort, Lightcurve.time)
+        col = getattr(Lightcurve, sort)
         q = q.order_by(col.desc() if order == 'desc' else col)
-        # 分页
-        page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 500))
+        # 分页（非法值回退默认；per_page 上限与 transients 列表一致）
+        try:
+            page = max(1, int(request.args.get('page', 1)))
+            per_page = min(10000, max(1, int(request.args.get('per_page', 500))))
+        except ValueError:
+            page, per_page = 1, 500
         total = q.count()
         items = q.offset((page - 1) * per_page).limit(per_page).all()
         return jsonify({

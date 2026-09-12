@@ -27,11 +27,29 @@ SECRET_KEY = os.environ.get('AJST_SECRET_KEY') or secrets.token_hex(32)
 AJST_INGEST_TOKEN = os.environ.get('AJST_INGEST_TOKEN')
 
 
+# CORS 允许来源白名单：环境变量 AJST_CORS_ORIGINS（逗号分隔）覆盖；
+# 默认仅本机常见端口（本地单人部署够用）。显式设为 '*' 可恢复通配（不推荐）。
+_cors_env = os.environ.get('AJST_CORS_ORIGINS', '').strip()
+if _cors_env == '*':
+    CORS_ORIGINS = '*'
+else:
+    CORS_ORIGINS = [o.strip() for o in _cors_env.split(',') if o.strip()] or [
+        'http://localhost:5000', 'http://127.0.0.1:5000',
+        'http://localhost:8000', 'http://127.0.0.1:8000',
+        'http://localhost:8080', 'http://127.0.0.1:8080',
+    ]
+
+# 请求体大小上限（光谱上传文本 < 几 MB，32 MB 足够）
+MAX_CONTENT_LENGTH = 32 * 1024 * 1024
+
+
 class Config:
     SQLALCHEMY_DATABASE_URI = DB_URL
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     JSON_AS_ASCII = False  # 支持中文
-    CORS_ORIGINS = '*' if os.environ.get('FLASK_ENV') == 'development' else []
+    CORS_ORIGINS = CORS_ORIGINS
+    MAX_CONTENT_LENGTH = MAX_CONTENT_LENGTH
     SECRET_KEY = SECRET_KEY
     AUTH_PASSWORD = AUTH_PASSWORD
     AJST_INGEST_TOKEN = AJST_INGEST_TOKEN
+    SESSION_COOKIE_SAMESITE = 'Lax'

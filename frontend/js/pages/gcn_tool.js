@@ -8,11 +8,14 @@ import {
   getTransients, getTransient, createTransient, updateTransient,
   getLightcurves, createLightcurves, updateLightcurve, isAuthed, showToast,
 } from '../api.js';
+import { parseCoord } from '../coords.js';
+import { esc } from '../utils.js';
 
 // ─── 模块状态 ───
 let _ids = [];            // 全部 circular id（数值升序）
 let _idx = -1;            // 当前在 _ids 中的位置
 let _cid = null;          // 当前 circular id
+let _circReqId = 0;       // circular 加载请求令牌（竞态防护）
 let _tid = null;          // 当前源 id（源信息卡 ↔ 测光录入卡联动）
 let _editLcId = null;     // 测光录入卡正在编辑的已有记录 id（null = 新增模式）
 let _editTid = null;      // 被编辑记录所属的源 id
@@ -23,42 +26,7 @@ let _pollTimer = null;
 
 const TIME_FACTOR = { s: 1, m: 60, h: 3600, d: 86400 };
 
-// ─── 坐标解析：十进制 = 度；sexagesimal（hh:mm:ss / 12h34m56s / 空格分隔）RA 按小时角 ×15、Dec 按度 ───
-// 算法与 astropy.coordinates.Angle 一致：val = sign * (d + m/60 + s/3600)（RA 再 ×15）
-// 返回 { deg } 或 { err }；空串返回 { deg: null }（不填）
-function parseCoord(str, isRA) {
-  const s0 = String(str).trim();
-  if (!s0) return { deg: null };
-  // 纯十进制 → 度
-  if (/^[+-]?\d+(?:\.\d+)?$/.test(s0)) {
-    return checkCoordRange(parseFloat(s0), s0, isRA);
-  }
-  // sexagesimal：h/d/°/m/′ → ':'；s/″ 去掉；空白 → ':'
-  const sign = s0.startsWith('-') ? -1 : 1;
-  const body = s0.replace(/^[+-]/, '');
-  const norm = body
-    .replace(/[hd°m′']/gi, ':')
-    .replace(/[s″]/gi, '')
-    .replace(/\s+/g, ':')
-    .replace(/:+/g, ':')
-    .replace(/^:|:$/g, '');
-  const parts = norm.split(':');
-  if (parts.length < 2 || parts.length > 3 || parts.some(p => !/^\d+(?:\.\d+)?$/.test(p))) {
-    return { err: `无法解析坐标 '${s0}'（支持十进制度或 hh:mm:ss / dd:mm:ss）` };
-  }
-  const [a, b, c = 0] = parts.map(parseFloat);
-  if (b >= 60 || c >= 60) return { err: `坐标分/秒应小于 60: '${s0}'` };
-  let deg = sign * (a + b / 60 + c / 3600);
-  if (isRA) deg *= 15;  // 小时角 → 度
-  return checkCoordRange(deg, s0, isRA);
-}
-
-function checkCoordRange(deg, raw, isRA) {
-  if (!isFinite(deg)) return { err: `无法解析坐标 '${raw}'` };
-  if (isRA && (deg < 0 || deg >= 360)) return { err: `RA 超出 [0, 360) 度范围: '${raw}'` };
-  if (!isRA && (deg < -90 || deg > 90)) return { err: `Dec 超出 [-90, 90] 度范围: '${raw}'` };
-  return { deg };
-}
+// ─── 坐标解析：统一用 coords.js 的 parseCoord（{deg}/{err} 契约；支持十进制与时分秒） ───
 
 // 输入框下方实时显示换算结果（或错误）
 function coordFeedback(inputId, isRA) {
@@ -73,11 +41,6 @@ function coordFeedback(inputId, isRA) {
   } else {
     fb.textContent = '';
   }
-}
-
-// ─── HTML 转义 ───
-function esc(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // ─── JSON 展示：\n 展开 + 数字/key/bool 高亮（算法复刻自 tkinter 版工具） ───
@@ -489,11 +452,13 @@ async function showCircular(cid) {
   const label = document.getElementById('gcnCurLabel');
   const idx = _ids.indexOf(cid);
   if (idx < 0) { showToast(`存档中未找到 GCN #${cid}`, 'warning'); return; }
+  const req = ++_circReqId;
   _idx = idx; _cid = cid;
   label.textContent = `#${cid}（${_idx + 1}/${_ids.length}）`;
   viewer.innerHTML = '<span class="text-secondary small">加载中...</span>';
   try {
     const data = await getGcnCircular(cid);
+    if (req !== _circReqId) return;  // 已跳转到其他期，丢弃过期响应
     viewer.innerHTML = formatGcnHtml(data);
     renderChips(data);
     exitEditMode();
@@ -502,8 +467,9 @@ async function showCircular(cid) {
     if (gcnIdInp) gcnIdInp.value = String(data.circularId ?? cid);
     const refInp = document.getElementById('gcnObsRef');
     if (refInp) refInp.value = `GCN ${data.circularId ?? cid}`;
-    loadRelated(cid);
+    loadRelated(cid, req);
   } catch (err) {
+    if (req !== _circReqId) return;
     viewer.innerHTML = `<span class="text-danger small">加载失败: ${esc(err.message)}</span>`;
     const row = document.getElementById('gcnRelatedRow');
     if (row) row.style.display = 'none';
@@ -511,7 +477,7 @@ async function showCircular(cid) {
 }
 
 // ═══ 关联光变记录面板 ═══
-async function loadRelated(cid) {
+async function loadRelated(cid, req) {
   const row = document.getElementById('gcnRelatedRow');
   const summary = document.getElementById('gcnRelatedSummary');
   const body = document.getElementById('gcnRelatedBody');
@@ -521,6 +487,7 @@ async function loadRelated(cid) {
   body.innerHTML = '';
   try {
     const resp = await getGcnRelated(cid);
+    if (req != null && req !== _circReqId) return;  // 已跳转到其他期
     renderRelated(resp);
     // 命中的记录只涉及一个源时，自动加载源信息卡（GCN 上下文一目了然）
     const tids = new Set([...resp.exact, ...resp.fuzzy].map(r => r.transient_id));
@@ -532,6 +499,7 @@ async function loadRelated(cid) {
       }
     }
   } catch (err) {
+    if (req != null && req !== _circReqId) return;
     summary.innerHTML = `<span class="text-danger">查询失败: ${esc(err.message)}</span>`;
   }
 }

@@ -16,8 +16,10 @@
 物理/统计约定
 -------------
 - 似然: chi2 = sum_i w_i * (F_model(t_i, nu_i) - F_obs_i)^2 / err_i^2，
-  logL = -chi2 / 2（与 VegasAfterglow 2.0.6 内置 Fitter 一致；上限点编码为
-  flux=0 / err=上限，即模型流量高出上限即受罚）。
+  logL = -chi2 / 2；上限点编码为 flux=0 / err=上限（与内置 Fitter 的数据
+  约定一致），但本外壳对上限点改用单侧罚 w*max(0, F_model-UL)^2/UL^2
+  （有意偏离 VegasAfterglow 2.0.6 内置 Fitter 的对称编码：对称罚会把
+  模型流量系统性压向 0，污染含上限波段的拟合）。
 - 先验: 各自由参数在 [lower, upper] 内均匀；Scale.log 参数在 log10 空间采样。
 - xi_e 固定为 1（Radiation 构造默认值），on-axis (theta_obs=0，可在 JSON 中放开)。
 - 环境介质（ISM/星风）、喷流结构（top-hat/gaussian/...）、宿主星系消光
@@ -73,6 +75,7 @@ COMP_CASES = ("fs_rs", "frs_plus_fs")   # 支持成分虚线拆分的情形
 
 _C_CGS = 2.99792458e10                  # 光速 [cm/s]
 _LN10_OVER_2P5 = 0.4 * math.log(10.0)   # A_V * k(λ) -> 光学深度（与内置 Fitter 一致）
+_MAX_INIT_RESAMPLE = 10000              # 初始位置满足约束的重采上限（防死循环）
 
 # 喷流结构注册表（与核心包 VegasAfterglow.fitting.config.JETS 一致）:
 # jet 类型 -> (构造函数, 从参数字典读取的参数名, 固定 kwargs, 是否支持磁星注入)
@@ -360,16 +363,28 @@ def run_mcmc(model_flux_fn, defs, data, outdir, nsteps=20000, nburn=6000,
     f_obs = data["f_nu_cgs"].values
     f_err = data["f_nu_err_cgs"].values
     weights = data["weights"].values
+    is_ul = data["upperlimit"].values.astype(bool)
+
+    n_ll_exc = 0  # 似然异常计数（日志限次，防止刷屏）
 
     def log_likelihood(theta):
+        nonlocal n_ll_exc
         try:
             f_mod = model_flux_fn(_to_physical(theta, defs), t_data, nu_data)
             f_mod = np.asarray(f_mod, dtype=float)
             if f_mod.shape != f_obs.shape or not np.all(np.isfinite(f_mod)):
                 return -np.inf
-            chi2 = np.sum(weights * (f_mod - f_obs) ** 2 / f_err**2)
+            # 上限点（f_obs=0, f_err=UL）单侧罚：只罚模型超过上限的部分；
+            # 探测点按对称高斯。偏离内置 Fitter 的对称编码见模块头注释。
+            diff = np.where(is_ul, np.maximum(0.0, f_mod - f_err),
+                            f_mod - f_obs)
+            chi2 = np.sum(weights * diff ** 2 / f_err**2)
             return -0.5 * chi2 if np.isfinite(chi2) else -np.inf
-        except Exception:
+        except Exception as e:
+            if n_ll_exc < 5:
+                n_ll_exc += 1
+                print(f"[log_likelihood] 异常（按 -inf 处理）: "
+                      f"{type(e).__name__}: {e}")
             return -np.inf
 
     # 线程数：显式形参优先，其次 VEGAS_MCMC_WORKERS 环境变量（批量并发跑时人工
@@ -383,49 +398,69 @@ def run_mcmc(model_flux_fn, defs, data, outdir, nsteps=20000, nburn=6000,
         n_workers = max(1, int(n_cores * 0.8))
     pool = ThreadPoolExecutor(max_workers=n_workers)
 
-    def log_prob_batch(X):
-        """emcee vectorize=True 的批量接口：硬边界先验 + 约束 + 线程池并行似然。"""
-        X = np.atleast_2d(X)
-        logp = np.full(X.shape[0], -np.inf)
-        ok = np.all((X >= lo) & (X <= hi), axis=1)
-        if constraint is not None:
-            for i in np.where(ok)[0]:
-                if not constraint(_to_physical(X[i], defs)):
-                    ok[i] = False
-        idx = np.where(ok)[0]
-        if len(idx):
-            logp[idx] = list(pool.map(log_likelihood, [X[i] for i in idx]))
-        return logp
-
-    if nwalkers is None:
-        nwalkers = max(4 * ndim, 2 * (ndim + 1))
-        nwalkers += nwalkers % 2  # 取偶
-    rng = np.random.default_rng(seed)
-    pos0 = rng.uniform(lo, hi, size=(nwalkers, ndim))
-    if constraint is not None:   # 初始位置重采至满足约束，避免 walker 卡在 -inf
-        for i in range(nwalkers):
-            while not constraint(_to_physical(pos0[i], defs)):
-                pos0[i] = rng.uniform(lo, hi)
-
-    sampler = emcee.EnsembleSampler(
-        nwalkers, ndim, log_prob_batch, vectorize=True,
-        moves=[(emcee.moves.DEMove(), 0.7), (emcee.moves.DESnookerMove(), 0.3)],
-    )
-    print(f"[{datetime.now():%H:%M:%S}] emcee 开始: ndim={ndim}, nwalkers={nwalkers}, "
-          f"nsteps={nsteps}, nburn={nburn}")
     try:
+        def log_prob_batch(X):
+            """emcee vectorize=True 的批量接口：硬边界先验 + 约束 + 线程池并行似然。"""
+            X = np.atleast_2d(X)
+            logp = np.full(X.shape[0], -np.inf)
+            ok = np.all((X >= lo) & (X <= hi), axis=1)
+            if constraint is not None:
+                for i in np.where(ok)[0]:
+                    if not constraint(_to_physical(X[i], defs)):
+                        ok[i] = False
+            idx = np.where(ok)[0]
+            if len(idx):
+                logp[idx] = list(pool.map(log_likelihood, [X[i] for i in idx]))
+            return logp
+
+        if nwalkers is None:
+            nwalkers = max(4 * ndim, 2 * (ndim + 1))
+            nwalkers += nwalkers % 2  # 取偶
+        rng = np.random.default_rng(seed)
+        pos0 = rng.uniform(lo, hi, size=(nwalkers, ndim))
+        if constraint is not None:   # 初始位置重采至满足约束，避免 walker 卡在 -inf
+            for i in range(nwalkers):
+                for _ in range(_MAX_INIT_RESAMPLE):
+                    if constraint(_to_physical(pos0[i], defs)):
+                        break
+                    pos0[i] = rng.uniform(lo, hi)
+                else:
+                    raise ValueError(
+                        f'初始位置重采 {_MAX_INIT_RESAMPLE} 次仍不满足联合约束：'
+                        '先验区间与约束可能无交集，请检查相关参数的先验边界')
+
+        # 初始位置批量试算：全 -inf 说明模型对所有先验内参数组合求值失败
+        # （或约束不可满足），继续跑只会得到一条伪装成功的全 -inf 链
+        init_logp = log_prob_batch(pos0)
+        if not np.any(np.isfinite(init_logp)):
+            raise RuntimeError(
+                f'全部 {nwalkers} 个初始 walker 的似然均为 -inf，'
+                '模型在当前先验/约束下无法求值，请检查配置与数据')
+
+        sampler = emcee.EnsembleSampler(
+            nwalkers, ndim, log_prob_batch, vectorize=True,
+            moves=[(emcee.moves.DEMove(), 0.7), (emcee.moves.DESnookerMove(), 0.3)],
+        )
+        print(f"[{datetime.now():%H:%M:%S}] emcee 开始: ndim={ndim}, nwalkers={nwalkers}, "
+              f"nsteps={nsteps}, nburn={nburn}")
         sampler.run_mcmc(pos0, nsteps, progress=True)
     finally:
         pool.shutdown(wait=True)
 
     accept = float(np.mean(sampler.acceptance_fraction))
     print(f"[{datetime.now():%H:%M:%S}] 完成, 平均接受率 = {accept:.3f}")
+    if accept < 0.1 or accept > 0.9:
+        print(f"警告: 平均接受率 {accept:.3f} 超出合理区间 [0.1, 0.9]，"
+              "链很可能未收敛，结果需谨慎解读")
 
     # ---- 保存完整链（采样空间）+ 数据 + 配置，保证可复现 ----
+    # get_chain/get_log_prob 每次调用都完整拷贝，只取一次，后续用切片视图
+    chain = sampler.get_chain()             # (nsteps, nwalkers, ndim)
+    logp_full = sampler.get_log_prob()      # (nsteps, nwalkers)
     h5_path = os.path.join(outdir, "chain_record.h5")
     with h5py.File(h5_path, "w") as f:
-        f.create_dataset("chain", data=sampler.get_chain())          # (nsteps, nwalkers, ndim)
-        f.create_dataset("log_prob", data=sampler.get_log_prob())    # (nsteps, nwalkers)
+        f.create_dataset("chain", data=chain)
+        f.create_dataset("log_prob", data=logp_full)
         f.create_dataset("data/t_sec", data=t_data)
         f.create_dataset("data/nu_hz", data=nu_data)
         f.create_dataset("data/f_nu_cgs", data=f_obs)
@@ -443,21 +478,30 @@ def run_mcmc(model_flux_fn, defs, data, outdir, nsteps=20000, nburn=6000,
             ndim=ndim, nwalkers=nwalkers, nsteps=nsteps, nburn=nburn,
             seed=seed, sampler="emcee", moves="0.7*DEMove + 0.3*DESnookerMove",
             acceptance_fraction=accept, n_data=len(data),
+            logp_max_full=float(np.max(logp_full)),
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
         f.attrs["config_json"] = json.dumps(meta)
     print(f"链数据已保存: {h5_path}")
 
-    flat = sampler.get_chain(discard=nburn, flat=True)               # (nsamples, ndim)
-    flat_logp = sampler.get_log_prob(discard=nburn, flat=True)
+    # .copy() 拷出 burn-in 后的样本（ascontiguousarray 对连续切片视图不会真拷贝），
+    # 再 del 才能释放完整链缓冲
+    flat = chain[nburn:].reshape(-1, ndim).copy()  # (nsamples, ndim)
+    flat_logp = logp_full[nburn:].ravel().copy()
+    del chain, logp_full
     return sampler, flat, flat_logp, names, defs
 
 
 # ==================== 后处理：指标 / 角图 / 光变 ====================
 
-def compute_metrics(flat_logp, n_data, n_free):
-    """由最大对数似然（均匀先验下 logp_max = -chi2_min/2）计算评价指标。"""
-    chi2_min = -2.0 * float(np.max(flat_logp))
+def compute_metrics(flat_logp, n_data, n_free, logp_max=None):
+    """由最大对数似然（均匀先验下 logp_max = -chi2_min/2）计算评价指标。
+
+    flat_logp 通常是 burn-in 后的样本；logp_max 可显式传全链最大 logp
+    （burn-in 内可能出现更高的 logp，取全链最大才对应真正的 MAP）。"""
+    if logp_max is None:
+        logp_max = float(np.max(flat_logp))
+    chi2_min = -2.0 * float(logp_max)
     dof = n_data - n_free
     return {
         "chi2_min": chi2_min,
@@ -564,7 +608,7 @@ def _draw_lightcurve(ax, model_flux_fn, flat, flat_logp, defs, data,
 
     # 波段颜色：按频率升序的序号均匀归一化到 0-1，映射到 Spectral 色阶
     # （Spectral 低端=红、高端=蓝紫，即低频偏红、高频偏蓝紫）
-    cmap = plt.get_cmap("Spectral")
+    cmap = matplotlib.colormaps["Spectral"]
     band_colors = [cmap(j / max(len(nus) - 1, 1)) for j in range(len(nus))]
     offsets = _band_offsets(nus, offset_base)      # 分段基准 + 段内依次 ×10
     y_floor = np.inf   # 用于定 y 轴下限（只看总流量与数据，忽略极小的成分尾巴）
@@ -588,9 +632,13 @@ def _draw_lightcurve(ax, model_flux_fn, flat, flat_logp, defs, data,
             ax.plot(t_grid, curves[j] / mJy * offsets[j], color=color, lw=0.9,
                     ls=comp_styles[k % len(comp_styles)], alpha=0.8)
         band_tot = best_curve[j] / mJy * offsets[j]
-        y_floor = min(y_floor, band_tot[band_tot > 0].min(),
-                      (det["f_nu_cgs"].min() / mJy * offsets[j]) if len(det) else np.inf)
-    ax.set_ylim(bottom=y_floor * 0.3)   # 截掉成分曲线中无关紧要的小值尾巴
+        band_pos = band_tot[band_tot > 0]
+        if len(band_pos):   # 该波段模型流量全 <= 0 时跳过，避免空数组 min()
+            y_floor = min(y_floor, band_pos.min(),
+                          (det["f_nu_cgs"].min() / mJy * offsets[j])
+                          if len(det) else np.inf)
+    if np.isfinite(y_floor):
+        ax.set_ylim(bottom=y_floor * 0.3)   # 截掉成分曲线中无关紧要的小值尾巴
     ax.set_xscale("log")
     ax.set_yscale("log")
     if xlabel:
@@ -673,11 +721,12 @@ def plot_lightcurve_with_ratio(model_flux_fn, flat, flat_logp, defs, data, outpa
 
 def save_products(outdir, flat, flat_logp, defs, names, data, model_flux_fn,
                   header_lines=(), component_flux_fn=None, with_ratio=True,
-                  offset_base=None):
+                  offset_base=None, logp_max=None):
     """
     生成 metrics.txt / corner_plot.png / lc_plot.png；
     with_ratio=True 时额外输出 lc_ratio_plot.png（光变图 + data/model 比值子图）。
     offset_base 可分别指定 radio/optical/xray 波段的偏移基准（见 _band_offsets）。
+    logp_max 可传全链最大 logp（chi2_min 用；缺省取 burn-in 后样本最大）。
     """
     phys = np.column_stack([
         10.0 ** flat[:, i] if d.scale == Scale.log else flat[:, i]
@@ -687,7 +736,7 @@ def save_products(outdir, flat, flat_logp, defs, names, data, model_flux_fn,
     med = np.percentile(phys, 50, axis=0)
     lo68 = np.percentile(phys, 16, axis=0)
     hi68 = np.percentile(phys, 84, axis=0)
-    metrics = compute_metrics(flat_logp, len(data), len(defs))
+    metrics = compute_metrics(flat_logp, len(data), len(defs), logp_max=logp_max)
 
     lines = list(header_lines)
     lines += [

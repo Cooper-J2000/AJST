@@ -2,6 +2,10 @@
 import { app, showLoading, showError, statsTabs } from './layout.js';
 import { getOverview, getRedshiftDist, getBandCoverage, getTransientMeta, getFilters } from '../api.js';
 import { chartColors } from '../theme.js';
+import { minOf, maxOf } from '../utils.js';
+
+// 窗口缩放重绘全天图：只绑一次（handler 经 window.redrawSky 始终调最新实现；redrawSky 内部判 canvas 存在）
+let _skyResizeBound = false;
 
 // ─── 工具 ───
 const C = 2.998e8;
@@ -301,7 +305,10 @@ export async function render() {
     const zTagSelect = document.getElementById('zTagFilter');
     if (zTagSelect) {
       [...zTagSet].sort().forEach(tag => {
-        zTagSelect.innerHTML += `<option value="${tag}">${tag}</option>`;
+        const opt = document.createElement('option');
+        opt.value = tag;
+        opt.textContent = tag;
+        zTagSelect.appendChild(opt);
       });
     }
     let zHistChart = null;
@@ -319,7 +326,7 @@ export async function render() {
       }
       if (!zValues.length) return;
       const nBins = Math.max(3, Math.min(100, parseInt(document.getElementById('zBinCount')?.value) || 20));
-      const min = Math.min(...zValues), max = Math.max(...zValues);
+      const min = minOf(zValues), max = maxOf(zValues);
       const binW = (max - min) / nBins;
       const hist = new Array(nBins).fill(0);
       for (const z of zValues) {
@@ -402,12 +409,15 @@ export async function render() {
       if (canvas) drawSkyChart(canvas, filtered, tagColors);
     };
 
-    // 首次绘制 + 窗口缩放重绘
+    // 首次绘制 + 窗口缩放重绘（监听器模块级只绑一次，避免每次进统计页累加）
     window.redrawSky();
-    window.addEventListener('resize', () => {
-      clearTimeout(window._skyResizeTimer);
-      window._skyResizeTimer = setTimeout(window.redrawSky, 200);
-    });
+    if (!_skyResizeBound) {
+      _skyResizeBound = true;
+      window.addEventListener('resize', () => {
+        clearTimeout(window._skyResizeTimer);
+        window._skyResizeTimer = setTimeout(() => window.redrawSky && window.redrawSky(), 200);
+      });
+    }
 
   } catch (err) {
     showError(`加载统计数据失败: ${err.message}`);

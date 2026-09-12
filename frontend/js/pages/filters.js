@@ -1,24 +1,8 @@
 // === Filters Page ===
 import { app, showLoading, showError } from './layout.js';
-import { isAuthed, isAdmin, showToast, deleteFilter } from '../api.js';
+import { api, isAuthed, isAdmin, showToast, deleteFilter } from '../api.js';
 import { chartColors } from '../theme.js';
-
-const API_BASE = '/api';
-
-async function api(method, path, body = null) {
-  const opts = {
-    method,
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-    credentials: 'same-origin',
-  };
-  if (body) opts.body = JSON.stringify(body);
-  const r = await fetch(API_BASE + path, opts);
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({ message: r.statusText }));
-    throw new Error(err.message || r.statusText);
-  }
-  return r.json();
-}
+import { esc } from '../utils.js';
 
 let _sort = 'wavelength', _order = 'asc';
 let _filters = [];                  // 最近一次加载的滤光片列表
@@ -48,10 +32,10 @@ async function _afLoadBuiltin() {
   try {
     const r = await api('GET', '/filters/pcigale_builtin');
     sel.innerHTML = '<option value="">-- 请选择 --</option>' +
-      r.names.map(n => `<option value="${n}">${n}</option>`).join('');
+      r.names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
     _afBuiltinLoaded = true;
   } catch (err) {
-    sel.innerHTML = `<option value="">加载失败: ${err.message}</option>`;
+    sel.innerHTML = `<option value="">加载失败: ${esc(err.message)}</option>`;
   }
 }
 
@@ -78,7 +62,7 @@ async function _afCurveValidate() {
     const r = await api('POST', '/filters/parse_curve', { text });
     msg.innerHTML = `<span class="text-success">✓ ${r.npoints} 个点，λ ${r.wl_min.toFixed(1)}–${r.wl_max.toFixed(1)} Å（已归一化）</span>`;
   } catch (err) {
-    msg.innerHTML = `<span class="text-danger">✗ ${err.message}</span>`;
+    msg.innerHTML = `<span class="text-danger">✗ ${esc(err.message)}</span>`;
   }
 }
 
@@ -100,15 +84,15 @@ async function _afSvoSearch() {
     msg.textContent = results.length ? `共 ${results.length} 条候选，点击选定：` : '无匹配结果';
     box.innerHTML = results.map((it, i) => `
       <div class="form-check small">
-        <input class="form-check-input af-svo-pick" type="radio" name="afSvoPick" id="afSvoPick${i}" value="${it.id.replace(/"/g, '&quot;')}">
-        <label class="form-check-label" for="afSvoPick${i}"><strong>${it.id}</strong> <span class="text-secondary">${[it.facility, it.instrument].filter(Boolean).join('/')}${it.description ? ' — ' + it.description : ''}</span></label>
+        <input class="form-check-input af-svo-pick" type="radio" name="afSvoPick" id="afSvoPick${i}" value="${esc(it.id)}">
+        <label class="form-check-label" for="afSvoPick${i}"><strong>${esc(it.id)}</strong> <span class="text-secondary">${esc([it.facility, it.instrument].filter(Boolean).join('/'))}${it.description ? ' — ' + esc(it.description) : ''}</span></label>
       </div>`).join('');
     box.querySelectorAll('.af-svo-pick').forEach(radio => {
       radio.addEventListener('change', () => { _afSvoSelected = radio.value; });
     });
   } catch (err) {
     msg.textContent = '';
-    box.innerHTML = `<div class="small text-danger">搜索失败: ${err.message}</div>`;
+    box.innerHTML = `<div class="small text-danger">搜索失败: ${esc(err.message)}</div>`;
   }
 }
 
@@ -132,10 +116,10 @@ async function _cfLoadBuiltin() {
   try {
     const r = await api('GET', '/filters/pcigale_builtin');
     sel.innerHTML = '<option value="">-- 请选择 --</option>' +
-      r.names.map(n => `<option value="${n}">${n}</option>`).join('');
+      r.names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
     _cfBuiltinLoaded = true;
   } catch (err) {
-    sel.innerHTML = `<option value="">加载失败: ${err.message}</option>`;
+    sel.innerHTML = `<option value="">加载失败: ${esc(err.message)}</option>`;
   }
 }
 
@@ -169,7 +153,7 @@ async function _cfCurveValidate() {
     const r = await api('POST', '/filters/parse_curve', { text });
     msg.innerHTML = `<span class="text-success">✓ ${r.npoints} 个点，λ ${r.wl_min.toFixed(1)}–${r.wl_max.toFixed(1)} Å（已归一化）</span>`;
   } catch (err) {
-    msg.innerHTML = `<span class="text-danger">✗ ${err.message}</span>`;
+    msg.innerHTML = `<span class="text-danger">✗ ${esc(err.message)}</span>`;
   }
 }
 
@@ -190,15 +174,15 @@ async function _cfSvoSearch() {
     msg.textContent = results.length ? `共 ${results.length} 条候选，点击选定：` : '无匹配结果';
     box.innerHTML = results.map((it, i) => `
       <div class="form-check small">
-        <input class="form-check-input cf-svo-pick" type="radio" name="cfSvoPick" id="cfSvoPick${i}" value="${it.id.replace(/"/g, '&quot;')}">
-        <label class="form-check-label" for="cfSvoPick${i}"><strong>${it.id}</strong> <span class="text-secondary">${[it.facility, it.instrument].filter(Boolean).join('/')}${it.description ? ' — ' + it.description : ''}</span></label>
+        <input class="form-check-input cf-svo-pick" type="radio" name="cfSvoPick" id="cfSvoPick${i}" value="${esc(it.id)}">
+        <label class="form-check-label" for="cfSvoPick${i}"><strong>${esc(it.id)}</strong> <span class="text-secondary">${esc([it.facility, it.instrument].filter(Boolean).join('/'))}${it.description ? ' — ' + esc(it.description) : ''}</span></label>
       </div>`).join('');
     box.querySelectorAll('.cf-svo-pick').forEach(radio => {
       radio.addEventListener('change', () => { _cfSvoSelected = radio.value; });
     });
   } catch (err) {
     msg.textContent = '';
-    box.innerHTML = `<div class="small text-danger">搜索失败: ${err.message}</div>`;
+    box.innerHTML = `<div class="small text-danger">搜索失败: ${esc(err.message)}</div>`;
   }
 }
 
@@ -571,6 +555,20 @@ export async function render() {
     });
   });
 
+  // 表格行内操作（加粗 / 曲线 / 编辑 / 编辑态按钮）事件委托（data-* 携带滤光片 id，避免内联 onclick 拼接）
+  document.getElementById('filterBody').addEventListener('click', (e) => {
+    const hl = e.target.closest('[data-hl]');
+    if (hl) { window.filterToggleHl(hl.dataset.hl); return; }
+    const cv = e.target.closest('[data-curve]');
+    if (cv) { window.filterShowCurve(cv.dataset.curve); return; }
+    const ed = e.target.closest('[data-edit]');
+    if (ed) { window.filterEditStart(ed.dataset.edit); return; }
+    const sv = e.target.closest('[data-save]');
+    if (sv) { window.filterEditSave(sv.dataset.save); return; }
+    const cf = e.target.closest('[data-cfetch]');
+    if (cf) { window.filterCurveShowFetch(cf.dataset.cfetch); return; }
+  });
+
   // 总图横轴范围（应用 / 恢复自动 / 回车）
   document.getElementById('ovXApply').addEventListener('click', applyXRange);
   document.getElementById('ovXReset').addEventListener('click', () => {
@@ -633,12 +631,13 @@ export async function render() {
     const msgEl = document.getElementById('delPwMsg');
     if (!pw) { msgEl.textContent = '请输入管理员密码'; return; }
     msgEl.textContent = '';
+    const results = await Promise.allSettled(ids.map(id => deleteFilter(id, pw)));
     let ok = 0;
     const fails = [];
-    for (const id of ids) {
-      try { await deleteFilter(id, pw); ok++; }
-      catch (err) { fails.push(`${id}: ${err.message}`); }
-    }
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') ok++;
+      else fails.push(`${ids[i]}: ${r.reason && r.reason.message}`);
+    });
     bootstrap.Modal.getInstance(modalEl).hide();
     showToast(fails.length
       ? `已删除 ${ok} 个；失败 ${fails.length} 个: ${fails.join('; ')}`
@@ -697,18 +696,18 @@ async function loadFilters() {
     document.getElementById('filterCount').textContent = `共 ${filters.length} 个`;
     const tbody = document.getElementById('filterBody');
     tbody.innerHTML = filters.map(f => `
-      <tr id="filterRow_${f.id}">
-        <td><input type="checkbox" class="filter-check" data-id="${f.id}" ${_unchecked.has(f.id) ? '' : 'checked'}></td>
-        <td><strong style="cursor:pointer;color:${wlColor(f)}" title="点击在总图中加粗/取消加粗" onclick="filterToggleHl('${f.id}')">${f.id}</strong></td>
+      <tr id="filterRow_${esc(f.id)}">
+        <td><input type="checkbox" class="filter-check" data-id="${esc(f.id)}" ${_unchecked.has(f.id) ? '' : 'checked'}></td>
+        <td><strong style="cursor:pointer;color:${wlColor(f)}" title="点击在总图中加粗/取消加粗" data-hl="${esc(f.id)}">${esc(f.id)}</strong></td>
         <td class="fv" data-field="wavelength">${f.wavelength != null ? f.wavelength.toFixed(2) : '-'}</td>
-        <td class="fv" data-field="filter_type">${f.filter_type || '-'}</td>
+        <td class="fv" data-field="filter_type">${esc(f.filter_type) || '-'}</td>
         <td class="fv" data-field="vega2ab">${f.vega2ab != null ? f.vega2ab.toFixed(3) : '0.000'}</td>
         <td>${hasCurve(f)
-          ? `<span class="badge bg-success" style="cursor:pointer" title="点击查看透过率曲线" onclick="filterShowCurve('${f.id}')">曲线 ${f.extra_data.transmission.wl.length} 点</span>`
+          ? `<span class="badge bg-success" style="cursor:pointer" title="点击查看透过率曲线" data-curve="${esc(f.id)}">曲线 ${f.extra_data.transmission.wl.length} 点</span>`
           : '<span class="badge bg-secondary">—</span>'}</td>
-        <td class="fv" data-field="description" style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${f.description || '-'}</td>
+        <td class="fv" data-field="description" style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${esc(f.description) || '-'}</td>
         <td class="filter-edit-cell" style="display:${isAdmin() ? '' : 'none'}">
-          <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="filterEditStart('${f.id}')" title="编辑"><i class="bi bi-pencil"></i></button>
+          <button class="btn btn-sm btn-outline-secondary py-0 px-1" data-edit="${esc(f.id)}" title="编辑"><i class="bi bi-pencil"></i></button>
         </td>
       </tr>
     `).join('');
@@ -842,7 +841,7 @@ async function loadFilters() {
             <option value="" ${val === '-' ? 'selected' : ''}>-</option>
           </select>`;
         } else {
-          cell.innerHTML = `<input type="text" class="form-control form-control-sm fi" data-field="${field}" value="${val === '-' ? '' : val}" style="width:${field === 'description' ? 280 : 120}px">`;
+          cell.innerHTML = `<input type="text" class="form-control form-control-sm fi" data-field="${field}" value="${esc(val === '-' ? '' : val)}" style="width:${field === 'description' ? 280 : 120}px">`;
         }
       });
       const editCell = row.querySelector('.filter-edit-cell');
@@ -850,9 +849,9 @@ async function loadFilters() {
         // 取消固定走 filterEditCancel()（重新拉取列表恢复该行显示态），
         // 避免动态赋值时机问题导致个别行点取消无反应
         editCell.innerHTML = `
-          <button class="btn btn-sm btn-primary py-0 px-1" onclick="filterEditSave('${id}')" title="保存"><i class="bi bi-check-lg"></i></button>
+          <button class="btn btn-sm btn-primary py-0 px-1" data-save="${esc(id)}" title="保存"><i class="bi bi-check-lg"></i></button>
           <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="filterEditCancel()" title="取消"><i class="bi bi-x-lg"></i></button>
-          <button class="btn btn-sm btn-outline-info py-0 px-1" onclick="filterCurveShowFetch('${id}')" title="获取/补录透过率曲线"><i class="bi bi-graph-up-arrow"></i></button>
+          <button class="btn btn-sm btn-outline-info py-0 px-1" data-cfetch="${esc(id)}" title="获取/补录透过率曲线"><i class="bi bi-graph-up-arrow"></i></button>
         `;
       }
     };
@@ -886,6 +885,6 @@ async function loadFilters() {
 
   } catch (err) {
     document.getElementById('filterBody').innerHTML =
-      `<tr><td colspan="8" class="text-center text-danger py-4">加载失败: ${err.message}</td></tr>`;
+      `<tr><td colspan="8" class="text-center text-danger py-4">加载失败: ${esc(err.message)}</td></tr>`;
   }
 }

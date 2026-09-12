@@ -3,6 +3,8 @@ GET    /api/hosts/<transient_id>   — 查询宿主（公开；无记录 404）
 PUT    /api/hosts/<transient_id>   — upsert 宿主数据（需登录；transient 必须存在）
 DELETE /api/hosts/<transient_id>   — 删除宿主记录（仅管理员）
 """
+import math
+
 from flask import Blueprint, jsonify, request, abort
 
 from app import get_session, require_auth, require_admin, current_username
@@ -57,6 +59,16 @@ def upsert_host(transient_id):
                     abort(400, description=f"波段 {p.get('band')}: mag_err 非法")
     if 'derived' in body and not isinstance(body['derived'], dict):
         abort(400, description='derived 必须是对象')
+    # redshift/redshift_err 数值校验（字符串等非法值会在 DB 层变 500）
+    for field in ('redshift', 'redshift_err'):
+        if field in body and body[field] is not None:
+            try:
+                v = float(body[field])
+            except (TypeError, ValueError):
+                abort(400, description=f'{field} 必须是数值或 null')
+            if not math.isfinite(v):
+                abort(400, description=f'{field} 必须是有限数值')
+            body[field] = v
 
     sess = get_session()
     try:

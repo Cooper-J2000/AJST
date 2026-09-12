@@ -2,13 +2,15 @@
 统计关系接口（基于 extra_data.derived 派生量）
 GET  /api/relations               — 关系定义列表 + 各关系可用来源目录
 GET  /api/relations/<name>/data   — 取数点（source=best 或目录短名）
-POST /api/relations/<name>/fit    — 带内禀弥散的最大似然拟合（linmix / Kelly 2007 风格）
+POST /api/relations/<name>/fit    — 带内禀弥散的最大似然拟合（linmix / Kelly 2007 风格；需登录）
 """
 import json, math, os
+from types import SimpleNamespace
 import numpy as np
 from scipy.optimize import minimize
+from sqlalchemy import select
 from flask import Blueprint, jsonify, request, abort
-from app import get_session
+from app import get_session, require_auth
 from models import Transient
 
 relations_bp = Blueprint('relations', __name__)
@@ -21,15 +23,19 @@ _REL_BY_NAME = {r['name']: r for r in _RELATIONS}
 
 
 def _load_derived():
-    """读出所有源的 derived（顺带一级列），返回 [(t, derived), ...]"""
+    """读出所有源的 derived（顺带一级列），返回 [(meta, derived), ...]。
+    只 SELECT 需要的列（extra_data 只取 derived 子键），
+    避免每次请求把全表 comment/extra_data 大字段载入内存。"""
     sess = get_session()
     try:
-        rows = []
-        for t in sess.query(Transient).all():
-            d = (t.extra_data or {}).get('derived')
-            if d:
-                rows.append((t, d))
-        return rows
+        rows = sess.execute(
+            select(Transient.id, Transient.tags, Transient.sub_tag,
+                   Transient.redshift,
+                   Transient.extra_data['derived'].label('derived'))
+        ).all()
+        return [(SimpleNamespace(id=r.id, tags=r.tags, sub_tag=r.sub_tag,
+                                 redshift=r.redshift), r.derived)
+                for r in rows if isinstance(r.derived, dict) and r.derived]
     finally:
         sess.close()
 
@@ -230,6 +236,7 @@ def _fit_group(rows, fit_sigma):
 
 
 @relations_bp.route('/<name>/fit', methods=['POST'])
+@require_auth
 def relation_fit(name):
     """带内禀弥散的最大似然拟合。请求体:
     {"points": [{"x":.., "y":.., "xerr":.., "yerr":.., "grb_type":..}, ...],

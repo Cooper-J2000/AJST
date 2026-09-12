@@ -15,6 +15,11 @@ export function getTheme() {
 
 export function setTheme(t) {
   if (t !== 'light' && t !== 'dark') return;
+  if (t === getTheme()) return;
+  // 切换主题会整页刷新：抠图取数页有未保存工作时先确认
+  if (location.hash.startsWith('#/tools/digitizer') && window._dgzDirty) {
+    if (!confirm('切换主题将刷新页面，抠图取数的未保存工作会丢失，继续？')) return;
+  }
   try { localStorage.setItem(STORAGE_KEY, t); } catch {}
   document.documentElement.setAttribute('data-bs-theme', t);
   location.reload();

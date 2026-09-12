@@ -6,6 +6,7 @@
 时间约定：全项目所有时间字段一律为 naive UTC，不做任何时区转换。
 """
 from datetime import datetime, timezone
+from functools import lru_cache
 from sqlalchemy import (
     Column, String, Float, Boolean, Text, BigInteger,
     ForeignKey, DateTime, UniqueConstraint, Index
@@ -19,12 +20,20 @@ def utcnow():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+@lru_cache(maxsize=8192)
+def _distmod_cached(z_bucket):
+    from astropy.cosmology import Planck18
+    return round(float(Planck18.distmod(z_bucket).value), 3)
+
+
 def distance_modulus(redshift):
-    """由红移计算距离模数 μ (mag)，Planck18 宇宙学；无红移时返回 None。"""
+    """由红移计算距离模数 μ (mag)，Planck18 宇宙学；无红移时返回 None。
+    astropy distmod 有可观的每行开销，z 按 1e-6 分桶做进程内缓存
+    （z≳0.01 时 dz=1e-6 引起的 μ 误差远小于返回值本身的 0.001 mag 舍入；
+    极低 z 时桶边界误差可达数 mmag，科学上可忽略）。"""
     if redshift is None or redshift <= 0:
         return None
-    from astropy.cosmology import Planck18
-    return round(float(Planck18.distmod(redshift).value), 3)
+    return _distmod_cached(round(float(redshift), 6))
 
 
 class Base(DeclarativeBase):

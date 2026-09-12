@@ -7,6 +7,8 @@ from flask_cors import CORS
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 from functools import wraps
+import threading
+import time
 
 from config import Config
 from models import Base, User
@@ -14,12 +16,16 @@ from models import Base, User
 
 # 全局 engine + session 工厂（非 ORM 集成模式，保持简单直接）
 _engine = None
+_engine_lock = threading.Lock()
 
 
 def get_engine():
     global _engine
     if _engine is None:
-        _engine = create_engine(Config.SQLALCHEMY_DATABASE_URI, pool_pre_ping=True)
+        with _engine_lock:  # 多线程首波请求竞态保护（双重检查）
+            if _engine is None:
+                _engine = create_engine(Config.SQLALCHEMY_DATABASE_URI,
+                                        pool_pre_ping=True)
     return _engine
 
 
@@ -92,10 +98,51 @@ def current_username():
     return session.get('username')
 
 
+# ─── 登录失败限流（进程内计数：同一 IP+账户 15 分钟内失败 5 次即锁定） ───
+_login_fails = {}        # 'ip|username' → [失败时间戳]
+_login_fails_lock = threading.Lock()
+LOGIN_MAX_FAILS = 5
+LOGIN_WINDOW_S = 15 * 60
+# dict 条目数上限，防海量随机用户名撑大内存；超限时先惰性清理过期条目，
+# 仍超限则全清（代价是已有锁定被重置，换取内存有界）
+LOGIN_FAILS_MAX_KEYS = 10000
+
+
+def _login_key(username):
+    return f'{request.remote_addr}|{username}'
+
+
+def _login_is_blocked(key):
+    now = time.time()
+    with _login_fails_lock:
+        fails = [t for t in _login_fails.get(key, []) if now - t < LOGIN_WINDOW_S]
+        if fails:
+            _login_fails[key] = fails
+        else:
+            _login_fails.pop(key, None)
+        return len(fails) >= LOGIN_MAX_FAILS
+
+
+def _record_login_fail(key):
+    now = time.time()
+    with _login_fails_lock:
+        if len(_login_fails) >= LOGIN_FAILS_MAX_KEYS:
+            for k in [k for k, ts in _login_fails.items()
+                      if not any(now - t < LOGIN_WINDOW_S for t in ts)]:
+                del _login_fails[k]
+            if len(_login_fails) >= LOGIN_FAILS_MAX_KEYS:
+                _login_fails.clear()
+        fails = [t for t in _login_fails.get(key, []) if now - t < LOGIN_WINDOW_S]
+        fails.append(now)
+        _login_fails[key] = fails
+
+
 def create_app():
     app = Flask(__name__, static_folder='../frontend', static_url_path='')
     app.config.from_object(Config)
-    CORS(app, origins='*', supports_credentials=True)
+    # CORS 白名单（config.py：AJST_CORS_ORIGINS 环境变量，默认本机端口），
+    # 会话基于 cookie，绝不能 origins='*' + supports_credentials
+    CORS(app, origins=app.config['CORS_ORIGINS'], supports_credentials=True)
 
     # 创建表
     init_db()
@@ -106,10 +153,15 @@ def create_app():
         data = request.get_json(force=True)
         username = (data.get('username') or '').strip() or 'admin'  # 兼容旧版仅密码登录 → admin
         password = data.get('password', '')
+        key = _login_key(username)
+        if _login_is_blocked(key):
+            abort(429, description='登录失败次数过多，请 15 分钟后再试')
         sess = get_session()
         try:
             user = sess.query(User).filter(User.username == username).first()
             if user and user.check_password(password):
+                with _login_fails_lock:
+                    _login_fails.pop(key, None)
                 session['authenticated'] = True
                 session['user_id'] = user.id
                 session['username'] = user.username
@@ -119,6 +171,7 @@ def create_app():
                         'username': user.username, 'role': user.role}
         finally:
             sess.close()
+        _record_login_fail(key)
         abort(403, description='用户名或密码错误')
 
     @app.route('/api/auth/logout', methods=['POST'])
@@ -205,6 +258,15 @@ def create_app():
     @app.errorhandler(404)
     def not_found(e):
         return {'error': 'Not found'}, 404
+
+    @app.errorhandler(413)
+    def too_large(e):
+        return {'error': 'Payload too large',
+                'message': '请求体超过大小限制（32 MB）'}, 413
+
+    @app.errorhandler(429)
+    def too_many(e):
+        return {'error': 'Too many requests', 'message': str(e.description)}, 429
 
     @app.errorhandler(500)
     def server_error(e):

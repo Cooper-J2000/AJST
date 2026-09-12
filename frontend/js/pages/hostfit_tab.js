@@ -9,6 +9,7 @@ import {
   hostfitJobFileUrl, deleteHostfitJob, exportHostPhotometry,
 } from '../api.js';
 import { parseRA, parseDec, attachCoordHint } from '../coords.js';
+import { esc, escAttr, sci3 } from '../utils.js';
 
 const POLL_INTERVAL = 5000;
 const MIN_FIT_POINTS = 4;   // 参与拟合的勾选测光点下限
@@ -22,20 +23,9 @@ let _hfConfig = null;       // GET /hostfit/config 缓存
 let _jobs = [];
 let _pollTimer = null;
 let _selectedId = null;     // 当前展开结果的任务 id
+let _resultReqId = 0;       // 结果加载请求令牌（竞态防护）
 
 // ─── 工具 ───
-function esc(s) {
-  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function sci3(v) {
-  if (v == null || !isFinite(v)) return '-';
-  if (v === 0) return '0';
-  const a = Math.abs(v);
-  if (a >= 0.01 && a < 10000) return String(parseFloat(Number(v).toPrecision(3)));
-  return Number(v).toExponential(2);
-}
 
 function fmtTime(iso) {
   if (!iso) return '-';
@@ -205,9 +195,9 @@ function renderHostCard() {
     ${!_host ? `<div class="text-secondary small mb-2">暂无宿主记录，填写并保存即创建。</div>` : ''}
     <div class="row g-2 small">
       <div class="col-6"><label class="form-label small mb-1">RA</label>
-        <input type="text" class="form-control form-control-sm" id="hfRa" value="${h.ra ?? ''}" placeholder="度 或 08h08m27.4s"></div>
+        <input type="text" class="form-control form-control-sm" id="hfRa" value="${escAttr(h.ra ?? '')}" placeholder="度 或 08h08m27.4s"></div>
       <div class="col-6"><label class="form-label small mb-1">Dec</label>
-        <input type="text" class="form-control form-control-sm" id="hfDec" value="${h.dec ?? ''}" placeholder="度 或 +40d36m44.8s"></div>
+        <input type="text" class="form-control form-control-sm" id="hfDec" value="${escAttr(h.dec ?? '')}" placeholder="度 或 +40d36m44.8s"></div>
       <div class="col-4"><label class="form-label small mb-1">红移</label>
         <input type="number" class="form-control form-control-sm" id="hfZ" step="any" value="${h.redshift ?? ''}"></div>
       <div class="col-4"><label class="form-label small mb-1">红移误差</label>
@@ -222,8 +212,8 @@ function renderHostCard() {
         <input type="text" class="form-control form-control-sm" id="hfComment" value="${esc(h.comment || '')}"></div>
     </div>
     ${derivedBits.length ? `<div class="small mt-2">
-      <span class="text-secondary">拟合导出量：</span>${derivedBits.map(b => `<span class="badge-tag badge-neutral">${b}</span>`).join(' ')}
-      ${d.fit_at ? `<span class="text-secondary" style="font-size:0.72rem">（任务 #${d.job_id ?? '?'}，${fmtTime(d.fit_at)}）</span>` : ''}
+      <span class="text-secondary">拟合导出量：</span>${derivedBits.map(b => `<span class="badge-tag badge-neutral">${esc(b)}</span>`).join(' ')}
+      ${d.fit_at ? `<span class="text-secondary" style="font-size:0.72rem">（任务 #${esc(d.job_id ?? '?')}，${esc(fmtTime(d.fit_at))}）</span>` : ''}
     </div>` : ''}
     <div class="d-flex justify-content-between align-items-center mt-3 mb-1">
       <label class="form-label small mb-0"><i class="bi bi-camera"></i> 宿主测光（勾选行参与拟合；上限行不参与拟合）</label>
@@ -278,8 +268,8 @@ function renderPhotRows() {
       <td><input class="form-check-input hf-phot-use" type="checkbox" data-i="${i}" ${p.use ? 'checked' : ''} title="参与拟合"></td>
       <td><input type="text" class="form-control form-control-sm hf-phot" list="hfBandList" data-i="${i}" data-f="band" value="${esc(p.band)}" style="width:84px">
         <div class="hf-band-warn text-danger" style="font-size:0.68rem;${bandUnknown ? '' : 'display:none'}">波段不在滤光片库中</div></td>
-      <td><input type="number" class="form-control form-control-sm hf-phot" data-i="${i}" data-f="mag" value="${p.mag ?? ''}" step="any" style="width:80px"></td>
-      <td><input type="number" class="form-control form-control-sm hf-phot" data-i="${i}" data-f="mag_err" value="${p.mag_err ?? ''}" step="any" style="width:76px"
+      <td><input type="number" class="form-control form-control-sm hf-phot" data-i="${i}" data-f="mag" value="${escAttr(p.mag ?? '')}" step="any" style="width:80px"></td>
+      <td><input type="number" class="form-control form-control-sm hf-phot" data-i="${i}" data-f="mag_err" value="${escAttr(p.mag_err ?? '')}" step="any" style="width:76px"
             placeholder="${p.upperlimit ? '' : `空=${DEFAULT_MAG_ERR}`}" ${p.upperlimit ? 'disabled' : ''}></td>
       <td><input class="form-check-input hf-phot-ul" type="checkbox" data-i="${i}" ${p.upperlimit ? 'checked' : ''} title="上限（非探测）"></td>
       <td><select class="form-select form-select-sm hf-phot" data-i="${i}" data-f="mag_sys" style="width:76px">
@@ -431,7 +421,7 @@ function renderConfigCard() {
       <div class="form-check">
         <input class="form-check-input" type="radio" name="hfMode" id="hfModeFixed" value="fixed" checked>
         <label class="form-check-label" for="hfModeFixed">固定红移</label>
-        <input type="text" class="form-control form-control-sm d-inline-block ms-2" id="hfFixedZ" value="${fixedZ}"
+        <input type="text" class="form-control form-control-sm d-inline-block ms-2" id="hfFixedZ" value="${escAttr(fixedZ)}"
                readonly style="width:110px" title="取当前宿主红移；保存宿主信息后刷新">
         ${fixedZ === '' ? '<span class="text-secondary" style="font-size:0.72rem">（宿主红移未设置，提交前需先保存）</span>' : ''}
       </div>
@@ -708,6 +698,7 @@ function renderJobs() {
 async function loadResult(jobId) {
   const area = document.getElementById('hfResultArea');
   if (!area) return;
+  const req = ++_resultReqId;
   _selectedId = jobId;
   renderJobs();  // 高亮选中行
   area.innerHTML = `<div class="card"><div class="card-body text-secondary small">
@@ -717,9 +708,11 @@ async function loadResult(jobId) {
   try {
     detail = await getHostfitJob(jobId);
   } catch (e) {
+    if (req !== _resultReqId) return;
     area.innerHTML = `<div class="card"><div class="card-body text-danger small">结果加载失败: ${esc(e.message)}</div></div>`;
     return;
   }
+  if (req !== _resultReqId) return;  // 已切换到其他任务，丢弃过期结果
 
   const best = flattenParams(detail.parameters && detail.parameters.best);
   const bayes = flattenParams(detail.parameters && detail.parameters.bayes);

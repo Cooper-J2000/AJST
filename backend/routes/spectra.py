@@ -18,6 +18,8 @@ spectra_bp = Blueprint('spectra', __name__)
 # 项目根目录（backend 的上一级）
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SPECTRA_DIR = os.path.join(PROJECT_ROOT, 'catadata', 'spectra')
+# 防路径穿越判据前缀：带分隔符，避免 catadata/spectra-evil 等同前缀目录通过
+SPECTRA_DIR_PREFIX = SPECTRA_DIR + os.sep
 MJD_EPOCH = datetime(1858, 11, 17)
 
 MIN_POINTS = 10
@@ -47,7 +49,7 @@ def get_spectrum(spec_id):
             return {'error': 'Not found'}, 404
         path = os.path.normpath(os.path.join(PROJECT_ROOT, r.file_path))
         # 防路径穿越：只允许 catadata/spectra 下
-        if not path.startswith(SPECTRA_DIR):
+        if not path.startswith(SPECTRA_DIR_PREFIX):
             return {'error': 'invalid path'}, 400
         if not os.path.exists(path):
             return {'error': 'spectrum file missing', 'file_path': r.file_path}, 404
@@ -262,7 +264,14 @@ def upload_spectrum():
                         'source': 'user_upload', 'n_points': len(sp['data'])},
         )
         sess.add(rec)
-        sess.commit()
+        try:
+            sess.commit()
+        except Exception:
+            sess.rollback()
+            # DB 未入库，删除已写出的文件，避免遗留孤儿 JSON
+            if os.path.exists(store_abs):
+                os.unlink(store_abs)
+            raise
         return jsonify({'ok': True, 'id': rec.id, 'filename': filename,
                         'n_points': len(sp['data'])}), 201
     except Exception as e:
@@ -286,7 +295,7 @@ def update_spectrum(spec_id):
         if not r:
             return {'error': 'Not found'}, 404
         path = os.path.normpath(os.path.join(PROJECT_ROOT, r.file_path))
-        if not path.startswith(SPECTRA_DIR):
+        if not path.startswith(SPECTRA_DIR_PREFIX):
             return {'error': 'invalid path'}, 400
         r.spec_type = spec_type
         sess.commit()
@@ -320,7 +329,7 @@ def delete_spectrum(spec_id):
         path = os.path.normpath(os.path.join(PROJECT_ROOT, r.file_path))
         sess.delete(r)
         sess.commit()
-        if path.startswith(SPECTRA_DIR) and os.path.exists(path):
+        if path.startswith(SPECTRA_DIR_PREFIX) and os.path.exists(path):
             os.remove(path)
         return {'status': 'deleted', 'id': spec_id}
     except Exception as e:

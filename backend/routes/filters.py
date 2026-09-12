@@ -95,7 +95,8 @@ def update_filter(fid):
             if field in body:
                 setattr(f, field, str(body[field]) if body[field] is not None else None)
         if 'extra_data' in body and isinstance(body['extra_data'], dict):
-            merged = f.extra_data or {}
+            # 浅合并；必须构造新 dict，否则 JSONB 原地修改不被 SQLAlchemy 追踪、不会落库
+            merged = dict(f.extra_data or {})
             merged.update(body['extra_data'])
             f.extra_data = merged
         # 波长/Vega2AB 变动 → 该波段所有已银消改正的数据点自动重算
@@ -161,7 +162,8 @@ def add_filter_curve(fid):
         except Exception as e:
             sess.rollback()
             return {'error': 'curve fetch failed', 'message': str(e)}, 502
-        merged = f.extra_data or {}
+        # 必须构造新 dict，否则 JSONB 原地修改不被 SQLAlchemy 追踪、不会落库
+        merged = dict(f.extra_data or {})
         merged.update(curve_ed)
         f.extra_data = merged
         sess.commit()

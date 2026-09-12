@@ -11,7 +11,7 @@ import os
 
 from flask import Blueprint, jsonify, request, abort, send_file
 
-from app import get_session, require_auth, require_admin
+from app import get_session, require_auth, require_admin, current_username
 from models import Transient, FittingResult
 from fitting.engines import get_engine, list_engines
 from fitting import jobs as fitting_jobs
@@ -106,7 +106,7 @@ def submit_job():
 
     job_id = fitting_jobs.create_job(
         transient_id, engine_name, config,
-        warnings=data['warnings'], created_by='local')
+        warnings=data['warnings'], created_by=current_username())
     return jsonify({'id': job_id})
 
 

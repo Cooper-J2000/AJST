@@ -34,6 +34,19 @@ function _parse(str, isRA) {
 export function parseRA(str) { return _parse(str, true); }
 export function parseDec(str) { return _parse(str, false); }
 
+// {deg}/{err} 契约的包装（GCN 工具等需要错误文案的场景）：
+// 空串 → { deg: null }；无法解析或超范围 → { err }；合法 → { deg }（RA 归一化到 [0,360)）
+export function parseCoord(str, isRA) {
+  const s0 = String(str ?? '').trim();
+  if (!s0) return { deg: null };
+  const v = _parse(s0, isRA);
+  if (v == null) return { deg: null };
+  if (Number.isNaN(v)) {
+    return { err: `无法解析坐标 '${s0}'（支持十进制度或 hh:mm:ss / dd:mm:ss；分/秒须小于 60，Dec 须在 ±90° 内）` };
+  }
+  return { deg: v };
+}
+
 // 在坐标输入框后挂一个即时解析提示（→ 度；非法时红字）
 export function attachCoordHint(input, isRA) {
   if (!input) return;

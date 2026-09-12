@@ -15,7 +15,7 @@ export async function render() {
         <div class="card">
           <div class="card-header">基本信息 <small class="text-secondary">* 为必填</small></div>
           <div class="card-body">
-            <form id="newTransientForm" onsubmit="return submitNewTransient()">
+            <form id="newTransientForm">
               <div class="row g-3">
                 <div class="col-md-6">
                   <label class="form-label">事件 ID *</label>
@@ -204,6 +204,11 @@ export async function render() {
     }
     return false;
   };
+
+  document.getElementById('newTransientForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    window.submitNewTransient();
+  });
 }
 
 function parseFloatOrNull(val) {

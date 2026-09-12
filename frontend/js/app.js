@@ -1,8 +1,11 @@
 // === App Shell + Hash Router ===
-import { api, getOverview, checkAuth, login, logout, showToast } from './api.js';
+import { api, getOverview, checkAuth, login, logout, showToast, exportTransients, exportLightcurves } from './api.js';
 import { getTheme, toggleTheme } from './theme.js';
 
 const app = document.getElementById('app');
+
+// 导出按钮全局入口（列表页/详情页共用，避免各页重复赋值互相覆盖）
+window.APIImport = { exportTransients, exportLC: exportLightcurves };
 
 // ─── 主题切换按钮（图标随当前主题：深色显示太阳、浅色显示月亮） ───
 const themeBtn = document.getElementById('themeToggle');
@@ -37,7 +40,11 @@ function getRoute() {
   return { page: 'static', handler: routes['/'] };
 }
 
+// 全局导航计数：每次路由切换 +1，异步页面 await 后比对（layout.js navSeq/navStale），丢弃过期渲染
+let _navSeq = 0;
+
 async function navigate() {
+  window._ajstNavSeq = ++_navSeq;
   const route = getRoute();
   try {
     if (route.page === 'detail') {
@@ -48,7 +55,11 @@ async function navigate() {
     }
   } catch (err) {
     console.error('Route error:', err);
-    app.innerHTML = `<div class="alert alert-danger m-3">加载页面出错: ${err.message}</div>`;
+    app.innerHTML = '';
+    const div = document.createElement('div');
+    div.className = 'alert alert-danger m-3';
+    div.textContent = `加载页面出错: ${err.message}`;
+    app.appendChild(div);
   }
   // Update active nav link
   document.querySelectorAll('#navLinks .nav-link').forEach(a => {
@@ -124,3 +135,15 @@ async function checkAuthStatus() {
     document.getElementById('logoutBtn').style.display = authed ? 'inline-block' : 'none';
   } catch {}
 }
+
+// 任意 API 请求返回 401 且此前处于登录态时（会话过期）：同步顶栏登录状态并提示重新登录
+// （api.js 仅在 _authed 翻转时派发一次；toast 再做短时间去重兜底）
+let _authExpiredToastAt = 0;
+document.addEventListener('ajst:auth-expired', () => {
+  const now = Date.now();
+  if (now - _authExpiredToastAt > 3000) {
+    _authExpiredToastAt = now;
+    showToast('登录已过期，请重新登录', 'warning');
+  }
+  checkAuthStatus();
+});

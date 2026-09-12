@@ -43,14 +43,18 @@ export function attachDragZoom(holder, canvas, onZoom, opts = {}) {
       e.preventDefault();
     }
   });
-  canvas.ownerDocument.addEventListener('mousemove', (e) => {
+  const doc = canvas.ownerDocument;
+  // canvas 被 SPA 路由重建移除后，惰性自清理 document 级监听器（防泄漏）
+  const onMove = (e) => {
+    if (!canvas.isConnected) { doc.removeEventListener('mousemove', onMove); return; }
     const chart = holder.chart;
     if (!start || !chart) return;
     const p = rel(e);
     chart._dzRect = { x0: start.x, y0: start.y, x1: p.x, y1: p.y };
     chart.draw();
-  });
-  canvas.ownerDocument.addEventListener('mouseup', () => {
+  };
+  const onUp = () => {
+    if (!canvas.isConnected) { doc.removeEventListener('mouseup', onUp); return; }
     const chart = holder.chart;
     if (!start || !chart) return;
     start = null;
@@ -68,5 +72,7 @@ export function attachDragZoom(holder, canvas, onZoom, opts = {}) {
     if (![range.xmin, range.xmax, range.ymin, range.ymax].every(v => isFinite(v))) return;
     if (!opts.allowNonPositive && ![range.xmin, range.xmax, range.ymin, range.ymax].every(v => v > 0)) return;
     onZoom(range);
-  });
+  };
+  doc.addEventListener('mousemove', onMove);
+  doc.addEventListener('mouseup', onUp);
 }

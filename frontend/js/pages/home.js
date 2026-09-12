@@ -1,12 +1,13 @@
 // === Home Page (Swiss International Typographic Style) ===
-import { app, showLoading, showError } from './layout.js';
+import { app, showLoading, showError, navSeq, navStale } from './layout.js';
 import { api, getOverview, getFittingEngines } from '../api.js';
+import { esc } from '../utils.js';
 
 // 各标签页入口（编号列表式导航）
 const ENTRIES = [
   { no: '01', href: '#/list',            title: '事件列表',   desc: '浏览、筛选与编辑暂现源及其多波段光变数据' },
   { no: '02', href: '#/stats',           title: '全局统计',   desc: '全天分布、红移直方图与波段覆盖情况' },
-  { no: '03', href: '#/stats/relations', title: '统计关系',   desc: 'Amati 等 6 个 GRB 瞬时辐射关系与分组拟合' },
+  { no: '03', href: '#/stats/relations', title: '统计关系',   desc: 'Amati 等 GRB 瞬时辐射关系与分组拟合' },
   { no: '04', href: '#/compare',         title: '多源对比',   desc: '多事件光变叠绘、静止系时间与波段筛选' },
   { no: '05', href: '#/filters',         title: '光学滤光片', desc: '滤光片波长参数与 Vega → AB 星等换算' },
   { no: '06', href: '#/new',             title: '新建事件',   desc: '录入新的暂现源事件' },
@@ -24,16 +25,21 @@ function statBlock(value, label, en) {
 
 export async function render() {
   showLoading();
-  let s, tagStats = null;
+  const seq = navSeq();  // 导航序号：请求期间切到其它路由则丢弃本次渲染
+  let s, tagStats = null, relCount = null;
   try {
-    [s, tagStats] = await Promise.all([
+    let relData = null;
+    [s, tagStats, relData] = await Promise.all([
       getOverview(),
       api('GET', '/stats/tags').catch(() => null),  // 标签统计失败不阻塞主页
+      api('GET', '/relations').catch(() => null),   // 关系统计数失败回退静态文案
     ]);
+    if (relData && Array.isArray(relData.relations)) relCount = relData.relations.length;
   } catch (err) {
-    showError(`加载统计数据失败: ${err.message}`);
+    if (!navStale(seq)) showError(`加载统计数据失败: ${err.message}`);
     return;
   }
+  if (navStale(seq)) return;  // 请求期间已切换路由
 
   // 拟合引擎版本（接口失败时静默不显示）
   let engineVer = null;
@@ -42,6 +48,7 @@ export async function render() {
     const v = engines && engines[0] && engines[0].version;
     if (v) engineVer = String(v).replace(/[<>&"']/g, '');
   } catch {}
+  if (navStale(seq)) return;  // 请求期间已切换路由
   // 版本号跟在包名后（小字号、次要色）；接口失败只显示包名
   const fittingValue = engineVer
     ? `VegasAfterglow <span class="text-secondary" style="font-size:0.7rem;font-weight:400;text-transform:none">v${engineVer}</span>`
@@ -71,14 +78,14 @@ export async function render() {
           return `
         <div class="swiss-tag-item">
           <div class="swiss-tag-row" onclick="this.parentElement.classList.toggle('open')">
-            <span class="swiss-tag-name">${t.tag}</span>
+            <span class="swiss-tag-name">${esc(t.tag)}</span>
             <span></span>
             <span class="swiss-tag-count">${fmt(t.count)}</span>
             <span class="swiss-tag-toggle">+</span>
           </div>
           <div class="swiss-tag-subs">
             ${rows.length ? rows.map(r => `
-            <div class="swiss-tag-subrow"><span>${r.name}</span><span>${fmt(r.count)}</span></div>`).join('')
+            <div class="swiss-tag-subrow"><span>${esc(r.name)}</span><span>${fmt(r.count)}</span></div>`).join('')
             : '<div class="swiss-tag-subrow text-secondary"><span>（无子标签）</span><span></span></div>'}
           </div>
         </div>`;
@@ -111,12 +118,13 @@ export async function render() {
 
     <!-- 三个静态事实 -->
     <section class="row swiss-facts">
+      <!-- 三个静态事实（外部目录数暂无 API 统计，保持手工维护；统计关系数取自 /api/relations） -->
       <div class="col-md-4 swiss-fact">
         <div class="swiss-fact-value">14</div>
         <div class="swiss-stat-label">外部文献目录<span class="swiss-stat-en">External Catalogs</span></div>
       </div>
       <div class="col-md-4 swiss-fact">
-        <div class="swiss-fact-value">6</div>
+        <div class="swiss-fact-value">${relCount != null ? relCount : '6'}</div>
         <div class="swiss-stat-label">统计关系<span class="swiss-stat-en">Correlations</span></div>
       </div>
       <div class="col-md-4 swiss-fact">

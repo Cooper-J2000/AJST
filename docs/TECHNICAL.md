@@ -463,15 +463,24 @@ frontend/
 ├── vendor/                   # 本地化的前端库（v2.12 起不再依赖 CDN：bootstrap/bootstrap-icons/chart.js/aladin.js + 图标字体）
 └── js/
     ├── app.js                # 路由 + 鉴权 UI + 全局函数
-    ├── api.js                # API 客户端 + 鉴权状态
+    ├── api.js                # API 客户端 + 鉴权状态（唯一实现，filters/admin 均复用；401 时派发 ajst:auth-expired 事件刷新导航）
+    ├── utils.js              # 共享工具：esc/escAttr/fmtNum/safeUrl/minOf/maxOf/sci3 等（2026-09-12 起各页面统一引用）
+    ├── chart_plugins.js      # Chart.js 误差棒插件统一实现（各图表页共用，2026-09-12 起）
     ├── layout.js             # 页面容器组件
     ├── spec_lines.js         # TNS 风格谱线标记：谱线组数据 + Chart.js 标记插件 + 面板 HTML（v2.7）
-    ├── coords.js             # 坐标解析（度 ⇄ 时分秒）+ 输入即时提示（v2.14，见 §8.22）
-    ├── bands.js              # 波段工具：频率排序/光谱色阶/AB↔mJy/滤波器缓存（v2.14 起各图表共用）
+    ├── coords.js             # 坐标解析（度 ⇄ 时分秒，含单值 sexagesimal）+ 输入即时提示（v2.14，见 §8.22；GCN 工具共用）
+    ├── bands.js              # 波段工具：频率排序/光谱色阶/AB↔mJy/滤波器缓存（v2.14 起各图表共用）；toMJy/pointToMJy 为流量单位换算唯一实现（2026-09-12 收敛；未知单位返回 null 弃点 + console.warn，y≤0 在 log 轴截断至 1e-13 并在 tooltip 标注，绝对星等模式不绘制截断点）
     ├── digitizer_core.js     # 抠图取数核心算法（标定变换/Lab 颜色/掩膜/描线/连通域，v2.11）
     └── pages/
         ├── list.js           # 事件列表（筛选/排序/分页/删除）
-        ├── detail.js         # 单源详情（概览/光变/数据表/编辑/添加/批量删除）
+        ├── detail.js         # 单源详情编排层（fetch → 注入子模块 → tab 切换；2026-09-12 拆分后约 500 行）
+        ├── detail_overview.js    # 详情页概览卡/文章管理/基本信息编辑/全源银消改正
+        ├── detail_lctable.js     # 详情页数据表（行渲染/排序/行内编辑/批量删/CSV 上传；单点编辑局部行替换）
+        ├── detail_lcchart.js     # 详情页光变图（状态/构建/缩放/拟合叠加/轴范围）
+        ├── detail_spectra.js     # 详情页光谱标签页
+        ├── detail_derived.js     # 详情页 derived 参数卡
+        ├── detail_catalog.js     # 详情页外部目录数据卡
+        ├── detail_aladin.js      # 详情页 Aladin 实例管理
         ├── lc_upload.js      # 数据表 CSV 上传（列映射预览导入，v2.9）
         ├── gcn_tool.js       # GCN 阅读工具（工具箱，v2.10，见 §8.17）
         ├── digitizer.js      # 抠图取数（工具箱，v2.11，见 §8.18）
@@ -548,6 +557,15 @@ drupal-settings `objectFlot.*.params.markings`），全部在前端实现，无�
 | `AJST_PYTHON` | `backend/start.sh` 使用的 Python 解释器 | `python3` |
 | `PORT` | `backend/start.sh` 监听端口 | `5000` |
 | `FLASK_ENV` | 运行环境 | `production` |
+| `AJST_SECRET_KEY` | Flask 会话签名密钥 | 未设置时每次启动随机生成（重启即全体登出），生产建议显式设置 |
+| `AJST_CORS_ORIGINS` | CORS 允许来源白名单（逗号分隔；会话基于 cookie，不支持通配） | `localhost/127.0.0.1` 的 5000/8000/8080 端口；显式设为 `'*'` 恢复旧通配行为（不推荐） |
+| `AJST_PCIGALE_BIN` | hostfit 使用的 pcigale 可执行文件路径 | 未设置时按 `shutil.which('pcigale')` → 内置回退路径查找；实际选用路径记录在任务 run.log |
+| `AJST_PCIGALE_FILTER_DIR` | pcigale 滤光片库目录覆盖项（网页端滤光片曲线注册与 `scripts/fetch_svo_filters.py` 共用） | 未设置时按已安装 pcigale 包路径 → which('pcigale') 推导 |
+
+安全相关默认行为（2026-09-12 起）：登录接口对同一 IP+账户 15 分钟内失败 5 次锁定（429）；
+`SESSION_COOKIE_SAMESITE='Lax'`；请求体上限 `MAX_CONTENT_LENGTH=32MB`（超限 413）；
+`POST /api/lightcurves/fit_model` 与统计关系页的服务端拟合端点需登录（匿名访问返回 401，
+关系统计页会自动回退浏览器本地 OLS 拟合）。
 
 ### 7.2 启动/重启
 

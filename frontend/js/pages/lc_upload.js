@@ -2,6 +2,7 @@
 // 流程：选文件解析 → 指定「上传表列 → 数据库列」映射（或用固定值填充）→ 预览校验 → 批量导入
 // 约定与「添加记录」一致：时间统一换算为秒入库；流量保留原始单位；空字符串 = null
 import { createLightcurves, showToast } from '../api.js';
+import { esc } from '../utils.js';
 
 // ─── 可映射的数据库列（与 detail.js「添加记录」字段集一致，另加 time_unit） ───
 const DB_FIELDS = [
@@ -71,12 +72,6 @@ let _rawText = '';
 let _columns = [];         // 上传表列名
 let _rows = [];            // 数据行（字符串二维数组）
 let _modalEl = null;
-
-// ─── HTML 转义（预览表格用） ───
-function esc(s) {
-  if (s == null) return '';
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
 
 function normHeader(h) {
   return String(h || '').toLowerCase().replace(/[\s_\-()[\]{}./]/g, '');
