@@ -4,11 +4,13 @@
   name / label            — 标识与展示名
   config_schema()         — 返回给前端的模型选项 + 先验模板 + 采样参数默认值（JSON 可序列化）
   validate_config(config) — 校验配置合法性，返回错误信息列表（空列表 = 合法）
-  run(config, data, workdir, log) -> dict
+  run(config, data, workdir, log, cancel_event=None) -> dict
       config  : 用户提交的拟合配置
       data    : prepare_data() 的输出（红移 + 各波段 CGS 前 mJy 数据）
       workdir : 本任务的工作目录（产物文件均落在此）
       log     : 日志回调，log(msg) 追加一行到 run.log
+      cancel_event : 可选 threading.Event，用户中断标志；置位时引擎应尽快
+                抛 McmcInterrupted（详见 vegas_unified 实现）
       返回    : {params: {名: {v, err}}, chi2, dof, bic, aic, n_steps, runtime_s}
 """
 
@@ -30,7 +32,7 @@ class BaseEngine:
         """返回完整的 fitting_results.model_name；None = 用默认的 jet-medium 命名"""
         return None
 
-    def run(self, config, data, workdir, log):
+    def run(self, config, data, workdir, log=None, cancel_event=None):
         raise NotImplementedError
 
 

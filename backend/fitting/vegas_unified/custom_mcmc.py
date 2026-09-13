@@ -7,7 +7,10 @@
 - 去掉了对 ``vegas_dataloader`` 的依赖（数据由 AJST 后端 prepare_data() 从数据库
   直接供给，引擎层组装成本模块约定的 DataFrame）；
 - ``run_mcmc`` 新增 ``n_workers`` 形参（显式指定线程数，优先于 VEGAS_MCMC_WORKERS
-  环境变量与 80% 核数自动值），便于网页端按任务限流。
+  环境变量与 80% 核数自动值），便于网页端按任务限流；
+- ``run_mcmc`` 新增 ``cancel_event`` 形参（threading.Event，2026-09-13）：非 None
+  时改用生成器分步采样，每步检查一次，置位即抛 ``McmcInterrupted``（协程式中断，
+  不写 chain_record.h5）；为 None 时行为与原版完全一致。
 
 内置 ``Fitter`` 无法处理的模型组合（例如正反激波 + 独立正向激波共用环境密度 n_ism
 的组合模型、带联合先验约束的双成分喷流），由本模块直接调用 ``VegasAfterglow.Model``
@@ -65,7 +68,11 @@ __all__ = ["clean_dataframe", "load_chain_h5", "run_mcmc", "compute_metrics",
            "save_products", "plot_corner", "plot_lightcurve",
            "plot_lightcurve_with_ratio", "make_flux_functions",
            "required_params", "CONSTRAINTS", "JET_TYPES", "MEDIUM_TYPES",
-           "EXTINCTION_LAWS"]
+           "EXTINCTION_LAWS", "McmcInterrupted"]
+
+
+class McmcInterrupted(Exception):
+    """用户手动中断 MCMC 采样（cancel_event 置位时由 run_mcmc 抛出）"""
 
 
 # ==================== 模型构建（脚本与 notebook 共用的唯一实现） ====================
@@ -339,7 +346,7 @@ def _to_physical(theta, defs):
 
 def run_mcmc(model_flux_fn, defs, data, outdir, nsteps=20000, nburn=6000,
              nwalkers=None, seed=42, config=None, constraint=None,
-             n_workers=None):
+             n_workers=None, cancel_event=None):
     """
     用 emcee 跑 MCMC。
 
@@ -352,6 +359,9 @@ def run_mcmc(model_flux_fn, defs, data, outdir, nsteps=20000, nburn=6000,
                     初始 walker 位置也会重采至满足约束。
     n_workers     : 可选，似然并行线程数；缺省读 VEGAS_MCMC_WORKERS 环境变量，
                     再缺省取可用核数的 80%。
+    cancel_event  : 可选，threading.Event；非 None 时改用生成器分步采样，
+                    每步检查一次，置位即抛 McmcInterrupted（不写 chain_record.h5，
+                    任务放弃）。为 None 时行为与原版完全一致。
     """
     os.makedirs(outdir, exist_ok=True)
     names = [d.name for d in defs]
@@ -443,7 +453,14 @@ def run_mcmc(model_flux_fn, defs, data, outdir, nsteps=20000, nburn=6000,
         )
         print(f"[{datetime.now():%H:%M:%S}] emcee 开始: ndim={ndim}, nwalkers={nwalkers}, "
               f"nsteps={nsteps}, nburn={nburn}")
-        sampler.run_mcmc(pos0, nsteps, progress=True)
+        if cancel_event is None:
+            sampler.run_mcmc(pos0, nsteps, progress=True)
+        else:
+            # 协程式中断：生成器分步推进，每步检查一次取消标志；
+            # 置位即抛 McmcInterrupted，不写 chain_record.h5（任务放弃）
+            for _ in sampler.sample(pos0, iterations=nsteps, progress=True):
+                if cancel_event.is_set():
+                    raise McmcInterrupted('用户手动中断')
     finally:
         pool.shutdown(wait=True)
 

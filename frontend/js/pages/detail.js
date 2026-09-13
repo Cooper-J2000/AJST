@@ -10,6 +10,7 @@ import {
 } from '../api.js';
 import { initFittingTab, destroyFittingTab } from './fitting_tab.js';
 import { initHostfitTab, destroyHostfitTab } from './hostfit_tab.js';
+import { initSedTab, destroySedTab } from './sed_tab.js';
 import { ensureFilterCache, buildSpectralColors } from '../bands.js';
 import { esc, escAttr } from '../utils.js';
 import { initOverview, articlesHTML, fillHostSummary, attachEditCoordHints } from './detail_overview.js';
@@ -32,6 +33,7 @@ export async function render(tid) {
   resetSpectra();
   destroyFittingTab(); // 停止拟合标签页轮询/图表（DOM 即将重建）
   destroyHostfitTab(); // 停止宿主星系标签页轮询（DOM 即将重建）
+  destroySedTab(); // 停止 SED 分析标签页轮询/图表（DOM 即将重建）
   resetDerived();
   resetAladin();  // Aladin 容器随 DOM 重建销毁，旧实例引用必须清空（否则切源后全天图空白）
   showLoading();
@@ -106,7 +108,7 @@ export async function render(tid) {
         <li class="nav-item"><a class="nav-link" href="#" data-tab="fitting">余辉拟合</a></li>
         <li class="nav-item"><a class="nav-link" href="#" data-tab="host">宿主星系</a></li>
         <li class="nav-item"><a class="nav-link" href="#" data-tab="spectra">光谱数据</a></li>
-        <li class="nav-item"><a class="nav-link" href="#" data-tab="sed">余辉SED分析 <small class="text-secondary">(开发中)</small></a></li>
+        <li class="nav-item"><a class="nav-link" href="#" data-tab="sed">SED 分析</a></li>
       </ul>
 
       <div id="tabContent">
@@ -393,15 +395,8 @@ export async function render(tid) {
             </div>
           </div>
         </div>
-        <!-- ─── 余辉SED分析（预留） ─── -->
-        <div id="tab-sed" class="tab-pane" style="display:none">
-          <div class="card">
-            <div class="card-body text-center text-secondary py-5">
-              <i class="bi bi-graph-up-arrow" style="font-size:2rem"></i>
-              <p class="mt-2 mb-0">余辉 SED 分析功能开发中，敬请期待</p>
-            </div>
-          </div>
-        </div>
+        <!-- ─── SED 分析（由 sed_tab.js 惰性初始化填充） ─── -->
+        <div id="tab-sed" class="tab-pane" style="display:none"></div>
       </div>
 
       <!-- 上传光谱弹窗 -->
@@ -483,6 +478,12 @@ export async function render(tid) {
           initHostfitTab(pane, tid);
         } else {
           destroyHostfitTab();
+        }
+        // SED 分析：进入时初始化，切走时停止轮询
+        if (link.dataset.tab === 'sed') {
+          initSedTab(pane, tid);
+        } else {
+          destroySedTab();
         }
         // 光谱数据：进入时加载光谱
         if (link.dataset.tab === 'spectra') {

@@ -43,7 +43,7 @@ from ..vegas_unified import (CONSTRAINTS, EXTINCTION_LAWS, JET_TYPES,
                              MEDIUM_TYPES, clean_dataframe, compute_metrics,
                              make_flux_functions, plot_corner, required_params,
                              run_mcmc, save_products)
-from ..vegas_unified.custom_mcmc import _to_physical
+from ..vegas_unified.custom_mcmc import _to_physical, McmcInterrupted
 
 MJY_TO_CGS = 1e-26   # mJy → erg/cm^2/s/Hz
 CGS_TO_MJY = 1e26
@@ -411,7 +411,12 @@ class VegasUnifiedEngine(BaseEngine):
         return errors
 
     # ── 执行拟合 ──
-    def run(self, config, data, workdir, log=None):
+    def run(self, config, data, workdir, log=None, cancel_event=None):
+        """cancel_event（可选 threading.Event）：用户中断标志。
+
+        自定义 MCMC 路径逐步检查（真中断，采样立即停止）；内置 Fitter 路径
+        无法外部中断，只在 fit 前/后检查——中断后任务状态即时翻转，但本次
+        采样会算到当前段落结束才停（算力浪费不可避免，见 AGENTS.md §7）。"""
         os.makedirs(workdir, exist_ok=True)
         log_path = os.path.join(workdir, 'run.log')
         t_start = time.time()
@@ -423,9 +428,10 @@ class VegasUnifiedEngine(BaseEngine):
                 if log:
                     log(msg)
             with _redirect_stdio(lf):
-                return self._run_inner(config, data, workdir, _log, t_start)
+                return self._run_inner(config, data, workdir, _log, t_start,
+                                       cancel_event=cancel_event)
 
-    def _run_inner(self, config, data, workdir, log, t_start):
+    def _run_inner(self, config, data, workdir, log, t_start, cancel_event=None):
         from astropy.cosmology import Planck18
         import astropy.units as u
         from VegasAfterglow import Scale
@@ -491,6 +497,9 @@ class VegasUnifiedEngine(BaseEngine):
         if engine_kind == 'fitter':
             from VegasAfterglow import Fitter
 
+            # 内置 Fitter 无法外部中断：fit 前先查一次取消标志，已置位则不启动采样
+            if cancel_event is not None and cancel_event.is_set():
+                raise McmcInterrupted('用户手动中断')
             # 内置 Fitter 用全局 np.random 定初始 walker 位置且不接受 RNG
             # 注入（上游 2.0.6 限制）；种子污染无法根除，保存/恢复全局状态
             # 把影响限制在本任务运行期间
@@ -510,6 +519,9 @@ class VegasUnifiedEngine(BaseEngine):
                                     npool=npool)
             finally:
                 np.random.set_state(rng_state)
+            # fit 返回后再查：中断则放弃结果（不存 h5、不跑 save_products）
+            if cancel_event is not None and cancel_event.is_set():
+                raise McmcInterrupted('用户手动中断')
             log(str(result))
             fitter.save(os.path.join(workdir, 'chain_record.h5'))
             flat = result.samples.reshape(-1, len(free_defs))
@@ -524,7 +536,8 @@ class VegasUnifiedEngine(BaseEngine):
                             constraint=constraint_desc,
                             z=z, lumi_dist=lumi_dist, xi_e=1.0,
                             host_extinction=extinction),
-                n_workers=npool)
+                n_workers=npool,
+                cancel_event=cancel_event)
             accept = float(np.mean(sampler.acceptance_fraction))
             if accept < 0.1 or accept > 0.9:
                 warnings.append(

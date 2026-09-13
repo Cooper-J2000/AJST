@@ -376,6 +376,18 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | GET | `/api/hostfit/jobs/<id>` | 任务详情（含 best/bayes 参数） | 否 |
 | GET | `/api/hostfit/jobs/<id>/files/<kind>` | 产物：`results`/`sed_png`/`best_model`/`log` | 否 |
 | DELETE | `/api/hostfit/jobs/<id>` | 删除任务及产物 | 管理员 |
+| GET | `/api/sed/models` | SED 模型清单与参数 schema（动态渲染拟合表单用） | 否 |
+| GET | `/api/sed/epochs` | 可用历元建议（`?transient_id=&min_bands=&dt_frac=`） | 否 |
+| POST | `/api/sed/build` | 构建单历元 SED `{transient_id, t_sel, dt?, mode?, bands?, ...}`（同步） | 否 |
+| POST | `/api/sed/jobs` | 提交 SED 拟合 `{transient_id, config:{model, t_sel|epochs, law?, ...}}` | 登录 |
+| GET | `/api/sed/jobs` | 任务列表（`?transient_id=`） | 否 |
+| GET | `/api/sed/jobs/<id>` | 任务详情（参数/χ²/BIC/derived/可信度元数据） | 否 |
+| GET | `/api/sed/jobs/<id>/files/<kind>` | 产物：`sed_png`/`corner`/`result`/`sed_csv`/`series_csv`/`trl_png`/`series_png`/`h5`/`log` | 否 |
+| DELETE | `/api/sed/jobs/<id>` | 删除任务及产物 | 管理员 |
+| POST | `/api/sed/closure` | 闭包关系 α–β 诊断 `{alpha, alpha_err, beta, beta_err, q?}`（同步；q 为可选能量注入指数 0≤q<1） | 否 |
+| POST | `/api/sed/closure_plot` | α–β 诊断图（PNG） | 否 |
+| GET | `/api/sed/closure_relations` | 闭包关系系数表（Gao+2013 框架） | 否 |
+| POST | `/api/sed/bolometric` | 伪玻尔兹曼光变 `{transient_id, epochs?, ...}`（同步，max_epochs=30） | 否 |
 
 ### 列表查询参数
 
@@ -488,6 +500,7 @@ frontend/
         ├── stats.js          # 全局统计（全天图/红移柱状图/波段覆盖）
         ├── relations.js      # 统计关系（6 关系平铺卡片/来源切换/分组 OLS 拟合/导出 CSV）
         ├── hostfit_tab.js    # 详情页「宿主星系」标签页（宿主信息/测光表/pcigale 拟合，见 §8.20、§8.22）
+        ├── sed_tab.js        # 详情页「SED 分析」标签页（SED 构建/拟合/结果/时间序列诊断，见 §8.27）
         ├── stats_hosts.js    # 宿主星系统计子页（覆盖率/M*/SFR/绝对星等—红移图，见 §8.22）
         ├── create.js         # 新建事件
         ├── compare.js        # 多源对比
@@ -1376,6 +1389,66 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
 
 ---
 
+### 8.27 暂现源 SED 分析（2026-09-13 新增，v2.17）
+
+详情页「SED 分析」标签页（`backend/sedfit/` + `backend/routes/sedfit.py` +
+`frontend/js/pages/sed_tab.js`），面向暂现源本体的频谱能量分布构建与拟合，
+与宿主 pcigale SED（§8.20）互补。四个区块：SED 构建器、模型拟合、任务与结果、
+时间序列诊断。
+
+- **SED 构建器（M1）**：`sedfit/builder.py`，同步纯计算。历元选择两种模式：
+  时段取值（t_sel±Δt 内各波段直接取点，不插值）与 GP 内插（scipy 手写 RBF 核
+  高斯过程回归，log t 空间拟合 log F；只在数据覆盖范围内插值，禁止外推，
+  波段点数不足时退化为最近点并标记）。流量优先取银消改正列
+  `flux_density_gextcor`（mJy），否则按 AB 零点 16.4 + vega2ab 现场换算；
+  频率解析复用 fitting 的 filters 表有效波长 + 波段名（GHz/keV）解析。
+  输出含可信度元数据（λ 覆盖、UV/IR 覆盖、z 来源、插值标记）；可选幂律近似
+  k 改正。`GET /api/sed/epochs` 按 (最少波段数, Δt 容差) 建议可用历元。
+- **模型拟合（M2/M4）**：模型库——幂律+宿主消光 `powerlaw_dust`（smc/lmc/mw/
+  mw_f99/mw_ccm 消光律，dust_extinction 实现；smc/lmc 为 G03 平均曲线，mw 为
+  P92；R_V 可解锁为自由参数）、两段平滑幂律+宿主消光 `powerlaw_2seg`（单断折，
+  硬约束 β1≤β2，平滑度 s 为高级选项默认 3.0）、三段平滑幂律 `powerlaw_3seg`
+  （ν_m/ν_c 双断折，硬约束 nu_b1<nu_b2 且 β1≤β2≤β3）、光学+X 双幂律
+  `powerlaw_xray`（输出 β_ox 与
+  β_ox < β_X−0.5 暗暴判据、ν_c 位置判定）、稀释黑体 `blackbody` /
+  `2blackbody`（热成分先验 T>2e4 K 防互换）/ `bb_powerlaw`。MCMC 复用
+  vegas_unified 的 custom_mcmc.py（emcee，worker 内惰性 import，同 fitting 的
+  可选依赖约定）；上限点单侧罚。无 z 时黑体退化为 T+R/D 拟合（R/L 不可算并注明）。
+  拟合后自动物理检查（β 域/T 域/超光速膨胀等警告）。
+- **多历元批量（series）**：`blackbody_series` 按对数均匀历元（或手动勾选）
+  逐历元构建+单黑体拟合，产出 T_BB/R_BB/L_BB(t) 序列、三联图与全历元 SED 叠图。
+- **闭包关系诊断（M3）**：`sedfit/closure.py` + `closure_relations.json`
+  （Gao+2013 框架：ISM/Wind × 慢冷/快冷各谱段 + 拐折后两段；2026-09-13 对照
+  Racusin+2009 (ApJ 698:43) Table 1 原文复核修正了无注入系数，并补录能量注入
+  关系 8 条（Table 1 列 c，L∝t^q 参数化，alpha 以 {a0,qa,b0,qb} 表示））。
+  同步端点输出各关系 α_pred 与偏差 σ 数排名、p 候选值与 α–β 诊断图（PNG）；
+  `/api/sed/closure` 与 `/closure_plot` 接受可选 q（能量注入指数，0≤q<1）——
+  提供时注入条目代入求值参与排名（图中虚线区分），缺省不参与。
+- **伪玻尔兹曼光变（M5）**：`sedfit/bolometric.py`。L_obs 为观测系
+  3000–24000 Å（≈U–K）窗口内 F_λ 梯形积分（避免跨射电—光学空隙虚高）；
+  L_bb 由逐历元黑体拟合解析积分；L_bc 用 Lyman+2014 颜色→BC 经验关系
+  （系数取自 arXiv:1311.1946 源文件 Tables 2–4，含全样本/SE SNe/SNe II/
+  SBO 冷却四组）。无 z 源 L_* 全为 null 并注明。
+- **任务框架**：克隆 fitting/hostfit 的单 worker 队列模式，复用
+  `fitting_results` 表（model_name='sed_*'，无冒号，不串 fitting/hostfit
+  列表），产物在 `backend/fitting_store/<tid>/sed_<jobid>/`（sed.png/
+  corner.png/result.json/chain_record.h5/sed.csv；series 另有 series.csv/
+  trl.png/series.png）。提交需登录、删除需管理员、读取公开；提交校验含
+  ≥3 有效波段、拒绝全上限历元、自由度预检（探测点数须多于自由参数数）、
+  采样参数上限（nsteps/series_nsteps ≤ 200000、n_workers ≤ 8、nburn < nsteps
+  且 ≥100，series 短链 nburn 下限 50）与 bands=[] 拒绝（至少选一个波段）。
+  fitting 侧的列表/stop/delete 按 model_name 含冒号过滤与防护，两子系统
+  任务操作互不越界。
+- **同步端点公开策略**：build/epochs/models/closure(+closure_plot)/bolometric
+  等同步端点公开是有意豁免——均为毫秒级纯计算且有算力上限保护（GP 内插
+  每波段最多取 60 点、bolometric max_epochs ≤ 30 硬截断、闭包诊断为 O(条数)
+  查表）；重负载的 MCMC 拟合一律走需登录的异步任务。
+- **前端**：`sed_tab.js` 照 fitting/hostfit tab 模式（惰性初始化、setTimeout
+  自递归轮询、竞态防护令牌）；SED log-log 图用共享误差棒插件与框选缩放，
+  上限点倒三角标记；闭包诊断可从幂律拟合结果一键填入 β。
+
+---
+
 ## 九、关键技术依赖
 
 | 组件 | 版本 | 用途 |
@@ -1419,6 +1492,15 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 ---
 
 ## 十一、版本历史
+
+### v2.17（2026-09-13）— 暂现源 SED 分析
+
+- 详情页新增「SED 分析」标签页：SED 构建器（时段取值 / GP 内插两种同时化模式）、
+  模型拟合（幂律+宿主消光、光学+X 双幂律与 β_ox 暗暴判据、单/双黑体、黑体+幂律，
+  MCMC 复用 custom_mcmc）、多历元黑体序列（T/R/L(t) 三联图）、闭包关系 α–β 诊断、
+  伪玻尔兹曼光变（L_obs/L_bb/L_bc 交叉检验），详见 §8.27
+- 后端新增 `backend/sedfit/` 包与 `/api/sed/*` 路由；任务复用 `fitting_results` 表
+  （model_name='sed_*'），产物存 `fitting_store/<tid>/sed_<jobid>/`
 
 ### v2.16（2026-09-04）— 宿主星系统计子页增强
 

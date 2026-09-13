@@ -4,7 +4,7 @@
 import {
   isAuthed, isAdmin, showToast, getLightcurves,
   getFittingEngines, submitFittingJob, getFittingJobs, getFittingJob,
-  getFittingJobFile, deleteFittingJob,
+  getFittingJobFile, deleteFittingJob, stopFittingJob,
 } from '../api.js';
 import { chartColors, academicFonts } from '../theme.js';
 // 光变数据 → mJy 换算统一用 bands.js 实现（口径唯一来源；Vega/ST 星等、erg/cm2/s/keV 均已处理）
@@ -737,7 +737,7 @@ const STATUS_BADGE = {
   running: '<span class="badge bg-primary"><span class="spinner-border spinner-border-sm" style="width:0.7rem;height:0.7rem"></span> running</span>',
   done: '<span class="badge bg-success">done</span>',
   failed: '<span class="badge bg-danger">failed</span>',
-  interrupted: '<span class="badge bg-secondary">interrupted</span>',
+  interrupted: '<span class="badge bg-warning text-dark">interrupted</span>',
 };
 
 async function refreshJobs() {
@@ -791,11 +791,13 @@ function renderJobs() {
               <td class="text-nowrap small">${fmtTime(j.created_at)}</td>
               <td class="text-nowrap">
                 ${j.status === 'done' ? `<button class="btn btn-sm btn-outline-primary py-0 px-1 fit-view" data-jobid="${j.id}">查看结果</button>` : ''}
+                ${isAuthed() && ['pending', 'running'].includes(j.status)
+                  ? `<button class="btn btn-sm btn-outline-warning py-0 px-1 fit-stop" data-jobid="${j.id}">中断</button>` : ''}
                 ${isAdmin() && ['done', 'failed', 'interrupted'].includes(j.status)
                   ? `<button class="btn btn-sm btn-outline-danger py-0 px-1 fit-del" data-jobid="${j.id}" title="删除"><i class="bi bi-trash"></i></button>` : ''}
               </td>
             </tr>
-            ${j.status === 'failed' ? `<tr class="fit-err-row" data-jobid="${j.id}" style="display:none"><td colspan="7" class="small text-danger" id="fitErr_${j.id}">加载错误信息...</td></tr>` : ''}
+            ${['failed', 'interrupted'].includes(j.status) ? `<tr class="fit-err-row" data-jobid="${j.id}" style="display:none"><td colspan="7" class="small text-danger" id="fitErr_${j.id}">加载错误信息...</td></tr>` : ''}
           `).join('')}
         </tbody>
       </table>
@@ -805,6 +807,20 @@ function renderJobs() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       loadResult(parseInt(btn.dataset.jobid, 10));
+    });
+  });
+  body.querySelectorAll('.fit-stop').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.jobid, 10);
+      if (!confirm(`确定中断任务 #${id}？已计算的结果将被放弃`)) return;
+      try {
+        await stopFittingJob(id);
+        showToast(`任务 #${id} 已中断`, 'success');
+        await refreshJobs();
+      } catch (err) {
+        showToast(`中断失败: ${err.message}`, 'danger');
+      }
     });
   });
   body.querySelectorAll('.fit-del').forEach(btn => {
@@ -826,14 +842,14 @@ function renderJobs() {
       }
     });
   });
-  // 行点击：done → 查看结果；failed → 展开错误
+  // 行点击：done → 查看结果；failed/interrupted → 展开错误
   body.querySelectorAll('tr[data-jobid]:not(.fit-err-row)').forEach(row => {
     row.addEventListener('click', async () => {
       const id = parseInt(row.dataset.jobid, 10);
       const job = _jobs.find(j => j.id === id);
       if (!job) return;
       if (job.status === 'done') loadResult(id);
-      else if (job.status === 'failed') {
+      else if (['failed', 'interrupted'].includes(job.status)) {
         const errRow = body.querySelector(`.fit-err-row[data-jobid="${id}"]`);
         if (!errRow) return;
         const show = errRow.style.display === 'none';

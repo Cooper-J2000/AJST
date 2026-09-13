@@ -1,0 +1,356 @@
+{
+  "_meta": {
+    "version": "1.1",
+    "description": "GRB 余辉闭包关系系数表：α_pred = a·β + b（约定 Fν ∝ t^(−α) ν^(−β)，喷流前演化）。组织框架依 Gao, Lei, Zou, Wu & Zhang 2013 (New Astron. Rev. 57, 141)；慢冷/快冷标准系数由 Sari, Piran & Narayan 1998 (ApJL 497, L17) 与 Granot & Sari 2002 (ApJ 568, 820, Table 1) 的标准形式导出；喷流拐折后（侧向膨胀）关系取自 Sari, Piran & Halpern 1999 (ApJ 519, L17)；恒定/演化能量注入关系（L ∝ t^q 参数化）取自 Racusin et al. 2009 (ApJ 698, 43) Table 1 列 c。",
+    "reviewed": "2026-09-13 对照 Racusin+2009 Table 1 原文复核修正",
+    "notes": [
+      "能量注入情形（L ∝ t^q 参数化，q=0 即恒定能量注入）已收录：injection=true 条目的 alpha 用 q 参数化 {a0, qa, b0, qb} 表示 a=a0+qa·q、b=b0+qb·q，调用 diagnose/closure_plot 时须显式提供 q（0≤q<1），否则注入条目不参与排名。系数取自 Racusin+2009 (ApJ 698, 43) Table 1 列 c 原文。",
+      "ISM 慢冷两段并非同一直线：ν_m<ν<ν_c 段 α=3β/2（截距 0），ν>ν_c 段 α=(3β−1)/2（截距 −1/2）；wind 两段同理（截距分别为 +1/2 与 −1/2）。两段区分还靠 p 映射（p=2β+1 vs 2β）与介质诊断。",
+      "快冷 ν_c<ν<ν_m 段 α、β 均与 p 无关（β 固定 1/2），以 beta.fixed 标记；排名时另报 beta_dev 供参考。其 α=β/2（ISM）与 α=(1−β)/2（wind）在 β=1/2 处均退化为固定点 α=1/4，但斜率项保留使 σ 合成（a·σ_β 项）更准。",
+      "每条关系的 p 字段给出该谱段下由 β 反解电子能谱指数 p 的标准映射；diagnose 汇总输出的 p_candidates 另按设计方案 §3-M2/M3 约定给出 {below_nuc: 2β+1, slow_above_nuc: 2β+2} 两候选（注：标准理论中 ν>ν_c 对应 p=2β，见各关系 p 字段；2β+2 为设计方案保留的备选映射，与 models.py 的 p_alt_2beta_plus_2 对齐）。"
+    ],
+    "convention": "Fν ∝ t^(−α) ν^(−β)；medium ∈ {ism, wind, any}；regime ∈ {slow, fast, jetbreak}；injection ∈ {none, true}（true 为 L∝t^q 注入，alpha 以 {a0,qa,b0,qb} 参数化）"
+  },
+  "relations": [
+    {
+      "id": "ism_sc_mc",
+      "medium": "ism",
+      "regime": "slow",
+      "injection": "none",
+      "segment": "nu_m_lt_nu_lt_nu_c",
+      "label": "ISM, slow cooling, ν_m < ν < ν_c",
+      "alpha": {
+        "a": 1.5,
+        "b": 0.0
+      },
+      "beta": {
+        "expr": "(p-1)/2",
+        "fixed": null
+      },
+      "p": "2*beta+1",
+      "ref": "Sari, Piran & Narayan 1998, ApJL 497, L17; Granot & Sari 2002, ApJ 568, 820 (Table 1)"
+    },
+    {
+      "id": "ism_sc_above_c",
+      "medium": "ism",
+      "regime": "slow",
+      "injection": "none",
+      "segment": "nu_gt_nu_c",
+      "label": "ISM, slow cooling, ν > ν_c",
+      "alpha": {
+        "a": 1.5,
+        "b": -0.5
+      },
+      "beta": {
+        "expr": "p/2",
+        "fixed": null
+      },
+      "p": "2*beta",
+      "ref": "Sari, Piran & Narayan 1998, ApJL 497, L17; Granot & Sari 2002, ApJ 568, 820 (Table 1)（α=(3β−1)/2）"
+    },
+    {
+      "id": "ism_fc_above_m",
+      "medium": "ism",
+      "regime": "fast",
+      "injection": "none",
+      "segment": "nu_gt_nu_m",
+      "label": "ISM, fast cooling, ν > ν_m",
+      "alpha": {
+        "a": 1.5,
+        "b": -0.5
+      },
+      "beta": {
+        "expr": "p/2",
+        "fixed": null
+      },
+      "p": "2*beta",
+      "ref": "Sari, Piran & Narayan 1998, ApJL 497, L17（快冷高频尾与慢冷 ν>ν_c 同形式，α=(3β−1)/2）"
+    },
+    {
+      "id": "ism_fc_cm",
+      "medium": "ism",
+      "regime": "fast",
+      "injection": "none",
+      "segment": "nu_c_lt_nu_lt_nu_m",
+      "label": "ISM, fast cooling, ν_c < ν < ν_m",
+      "alpha": {
+        "a": 0.5,
+        "b": 0.0
+      },
+      "beta": {
+        "expr": null,
+        "fixed": 0.5
+      },
+      "p": null,
+      "ref": "Sari, Piran & Narayan 1998, ApJL 497, L17（α=β/2，β=1/2 时 Fν ∝ t^(−1/4) ν^(−1/2)，与 p 无关）"
+    },
+    {
+      "id": "wind_sc_mc",
+      "medium": "wind",
+      "regime": "slow",
+      "injection": "none",
+      "segment": "nu_m_lt_nu_lt_nu_c",
+      "label": "Wind, slow cooling, ν_m < ν < ν_c",
+      "alpha": {
+        "a": 1.5,
+        "b": 0.5
+      },
+      "beta": {
+        "expr": "(p-1)/2",
+        "fixed": null
+      },
+      "p": "2*beta+1",
+      "ref": "Chevalier & Li 2000, ApJ 536, 195; Granot & Sari 2002, ApJ 568, 820 (Table 1)"
+    },
+    {
+      "id": "wind_sc_above_c",
+      "medium": "wind",
+      "regime": "slow",
+      "injection": "none",
+      "segment": "nu_gt_nu_c",
+      "label": "Wind, slow cooling, ν > ν_c",
+      "alpha": {
+        "a": 1.5,
+        "b": -0.5
+      },
+      "beta": {
+        "expr": "p/2",
+        "fixed": null
+      },
+      "p": "2*beta",
+      "ref": "Chevalier & Li 2000, ApJ 536, 195; Granot & Sari 2002, ApJ 568, 820 (Table 1)"
+    },
+    {
+      "id": "wind_fc_above_m",
+      "medium": "wind",
+      "regime": "fast",
+      "injection": "none",
+      "segment": "nu_gt_nu_m",
+      "label": "Wind, fast cooling, ν > ν_m",
+      "alpha": {
+        "a": 1.5,
+        "b": -0.5
+      },
+      "beta": {
+        "expr": "p/2",
+        "fixed": null
+      },
+      "p": "2*beta",
+      "ref": "Granot & Sari 2002, ApJ 568, 820 (Table 1)（快冷高频尾与慢冷 ν>ν_c 同形式）"
+    },
+    {
+      "id": "wind_fc_cm",
+      "medium": "wind",
+      "regime": "fast",
+      "injection": "none",
+      "segment": "nu_c_lt_nu_lt_nu_m",
+      "label": "Wind, fast cooling, ν_c < ν < ν_m",
+      "alpha": {
+        "a": -0.5,
+        "b": 0.5
+      },
+      "beta": {
+        "expr": null,
+        "fixed": 0.5
+      },
+      "p": null,
+      "ref": "Granot & Sari 2002, ApJ 568, 820 (Table 1)（α=(1−β)/2，β=1/2 时 α=+1/4，Fν ∝ t^(−1/4) ν^(−1/2) 衰减，与 p 无关）"
+    },
+    {
+      "id": "jetbreak_above_c",
+      "medium": "any",
+      "regime": "jetbreak",
+      "injection": "none",
+      "segment": "nu_gt_nu_c",
+      "label": "Post jet-break (sideways expansion), ν > ν_c",
+      "alpha": {
+        "a": 2.0,
+        "b": 0.0
+      },
+      "beta": {
+        "expr": "p/2",
+        "fixed": null
+      },
+      "p": "2*beta",
+      "ref": "Sari, Piran & Halpern 1999, ApJ 519, L17（喷流拐折后 α=p）"
+    },
+    {
+      "id": "jetbreak_mc",
+      "medium": "any",
+      "regime": "jetbreak",
+      "injection": "none",
+      "segment": "nu_m_lt_nu_lt_nu_c",
+      "label": "Post jet-break (sideways expansion), ν_m < ν < ν_c",
+      "alpha": {
+        "a": 2.0,
+        "b": 1.0
+      },
+      "beta": {
+        "expr": "(p-1)/2",
+        "fixed": null
+      },
+      "p": "2*beta+1",
+      "ref": "Sari, Piran & Halpern 1999, ApJ 519, L17（喷流拐折后 α=p）"
+    },
+    {
+      "id": "ism_sc_mc_inject",
+      "medium": "ism",
+      "regime": "slow",
+      "injection": true,
+      "segment": "nu_m_lt_nu_lt_nu_c",
+      "label": "ISM, slow cooling, ν_m < ν < ν_c (energy injection, L∝t^q)",
+      "alpha": {
+        "a0": 1.0,
+        "qa": 0.5,
+        "b0": -1.0,
+        "qb": 1.0
+      },
+      "beta": {
+        "expr": "(p-1)/2",
+        "fixed": null
+      },
+      "p": "2*beta+1",
+      "ref": "Racusin+2009 (ApJ 698:43) Table 1 列 c（α=(q−1)+(2+q)β/2）"
+    },
+    {
+      "id": "ism_sc_above_c_inject",
+      "medium": "ism",
+      "regime": "slow",
+      "injection": true,
+      "segment": "nu_gt_nu_c",
+      "label": "ISM, slow cooling, ν > ν_c (energy injection, L∝t^q)",
+      "alpha": {
+        "a0": 1.0,
+        "qa": 0.5,
+        "b0": -1.0,
+        "qb": 0.5
+      },
+      "beta": {
+        "expr": "p/2",
+        "fixed": null
+      },
+      "p": "2*beta",
+      "ref": "Racusin+2009 (ApJ 698:43) Table 1 列 c（α=(q−2)/2+(2+q)β/2）"
+    },
+    {
+      "id": "ism_fc_cm_inject",
+      "medium": "ism",
+      "regime": "fast",
+      "injection": true,
+      "segment": "nu_c_lt_nu_lt_nu_m",
+      "label": "ISM, fast cooling, ν_c < ν < ν_m (energy injection, L∝t^q)",
+      "alpha": {
+        "a0": 1.0,
+        "qa": -0.5,
+        "b0": -1.0,
+        "qb": 1.0
+      },
+      "beta": {
+        "expr": null,
+        "fixed": 0.5
+      },
+      "p": null,
+      "ref": "Racusin+2009 (ApJ 698:43) Table 1 列 c（α=(q−1)+(2−q)β/2）"
+    },
+    {
+      "id": "ism_fc_above_m_inject",
+      "medium": "ism",
+      "regime": "fast",
+      "injection": true,
+      "segment": "nu_gt_nu_m",
+      "label": "ISM, fast cooling, ν > ν_m (energy injection, L∝t^q)",
+      "alpha": {
+        "a0": 1.0,
+        "qa": 0.5,
+        "b0": -1.0,
+        "qb": 0.5
+      },
+      "beta": {
+        "expr": "p/2",
+        "fixed": null
+      },
+      "p": "2*beta",
+      "ref": "Racusin+2009 (ApJ 698:43) Table 1 列 c（α=(q−2)/2+(2+q)β/2）"
+    },
+    {
+      "id": "wind_sc_mc_inject",
+      "medium": "wind",
+      "regime": "slow",
+      "injection": true,
+      "segment": "nu_m_lt_nu_lt_nu_c",
+      "label": "Wind, slow cooling, ν_m < ν < ν_c (energy injection, L∝t^q)",
+      "alpha": {
+        "a0": 1.0,
+        "qa": 0.5,
+        "b0": 0.0,
+        "qb": 0.5
+      },
+      "beta": {
+        "expr": "(p-1)/2",
+        "fixed": null
+      },
+      "p": "2*beta+1",
+      "ref": "Racusin+2009 (ApJ 698:43) Table 1 列 c（α=q/2+(2+q)β/2）"
+    },
+    {
+      "id": "wind_sc_above_c_inject",
+      "medium": "wind",
+      "regime": "slow",
+      "injection": true,
+      "segment": "nu_gt_nu_c",
+      "label": "Wind, slow cooling, ν > ν_c (energy injection, L∝t^q)",
+      "alpha": {
+        "a0": 1.0,
+        "qa": 0.5,
+        "b0": -1.0,
+        "qb": 0.5
+      },
+      "beta": {
+        "expr": "p/2",
+        "fixed": null
+      },
+      "p": "2*beta",
+      "ref": "Racusin+2009 (ApJ 698:43) Table 1 列 c（α=(q−2)/2+(2+q)β/2）"
+    },
+    {
+      "id": "wind_fc_cm_inject",
+      "medium": "wind",
+      "regime": "fast",
+      "injection": true,
+      "segment": "nu_c_lt_nu_lt_nu_m",
+      "label": "Wind, fast cooling, ν_c < ν < ν_m (energy injection, L∝t^q)",
+      "alpha": {
+        "a0": -1.0,
+        "qa": 0.5,
+        "b0": 0.0,
+        "qb": 0.5
+      },
+      "beta": {
+        "expr": null,
+        "fixed": 0.5
+      },
+      "p": null,
+      "ref": "Racusin+2009 (ApJ 698:43) Table 1 列 c（α=q/2−(2−q)β/2）"
+    },
+    {
+      "id": "wind_fc_above_m_inject",
+      "medium": "wind",
+      "regime": "fast",
+      "injection": true,
+      "segment": "nu_gt_nu_m",
+      "label": "Wind, fast cooling, ν > ν_m (energy injection, L∝t^q)",
+      "alpha": {
+        "a0": 1.0,
+        "qa": 0.5,
+        "b0": -1.0,
+        "qb": 0.5
+      },
+      "beta": {
+        "expr": "p/2",
+        "fixed": null
+      },
+      "p": "2*beta",
+      "ref": "Racusin+2009 (ApJ 698:43) Table 1 列 c（α=(q−2)/2+(2+q)β/2）"
+    }
+  ]
+}

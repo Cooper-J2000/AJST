@@ -5,6 +5,7 @@ GET    /api/fitting/jobs?transient_id=       — 任务列表
 GET    /api/fitting/jobs/<id>                — 任务详情（config/参数/warnings/文件链接）
 GET    /api/fitting/jobs/<id>/files/<kind>   — 产物文件（kind = h5 | corner | lc_model |
                                                 lc_plot | lc_ratio | metrics）
+POST   /api/fitting/jobs/<id>/stop           — 中断任务（需登录，仅 pending/running）
 DELETE /api/fitting/jobs/<id>                — 删除任务（需登录，仅 done/failed/interrupted）
 """
 import os
@@ -117,11 +118,11 @@ def list_jobs():
     sess = get_session()
     try:
         q = sess.query(FittingResult)
+        # 只给拟合任务（model_name 形如 engine:...）；sed_*/pcigale_host 等
+        # 无冒号任务各有自己的 tab，带不带 transient_id 都一律过滤
+        q = q.filter(FittingResult.model_name.like('%:%'))
         if transient_id:
             q = q.filter_by(transient_id=transient_id)
-        else:
-            # 全量列表只给拟合任务（model_name 形如 engine:...）
-            q = q.filter(FittingResult.model_name.like('%:%'))
         rows = q.order_by(FittingResult.id.desc()).all()
         return jsonify([_job_brief(r) for r in rows
                         if (r.extra_data or {}).get('status')])
@@ -163,6 +164,26 @@ def job_file(job_id, kind):
         abort(404, description='文件已丢失')
     return send_file(path, mimetype=mimetype,
                      as_attachment=(kind == 'h5'), download_name=fname)
+
+
+@fitting_bp.route('/jobs/<int:job_id>/stop', methods=['POST'])
+@require_auth
+def stop_job(job_id):
+    """中断进行中（pending/running）的任务：即时翻转状态为 interrupted，
+    采样协程式退出，不续算、产物文件保留。model_name 不含冒号的任务
+    （sed_*/pcigale_host 等）不属于本接口，404 走各自的子系统。"""
+    sess = get_session()
+    try:
+        row = sess.get(FittingResult, job_id)
+        if row is None or not (row.extra_data or {}).get('status'):
+            abort(404, description='任务不存在')
+        if ':' not in (row.model_name or ''):
+            abort(404, description='任务不存在')
+    finally:
+        sess.close()
+    if not fitting_jobs.stop_job(job_id):
+        return jsonify({'error': '任务已结束，无法中断'}), 409
+    return jsonify({'status': 'ok', 'id': job_id})
 
 
 @fitting_bp.route('/jobs/<int:job_id>', methods=['DELETE'])

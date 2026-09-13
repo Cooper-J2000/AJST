@@ -206,6 +206,8 @@ def create_app():
     # Phase 2: 宿主星系数据 + pcigale 宿主拟合
     from routes.hosts import hosts_bp
     from routes.hostfit import hostfit_bp
+    # Phase 3: 暂现源 SED 分析
+    from routes.sedfit import sedfit_bp
 
     app.register_blueprint(transients_bp, url_prefix='/api/transients')
     app.register_blueprint(lightcurves_bp, url_prefix='/api/lightcurves')
@@ -224,6 +226,8 @@ def create_app():
     # Phase 2: 宿主星系数据 + pcigale 宿主拟合
     app.register_blueprint(hosts_bp, url_prefix='/api/hosts')
     app.register_blueprint(hostfit_bp, url_prefix='/api/hostfit')
+    # Phase 3: 暂现源 SED 分析
+    app.register_blueprint(sedfit_bp, url_prefix='/api/sed')
 
     # 上次运行残留的 pending/running 拟合任务标记为 interrupted
     from fitting.jobs import mark_interrupted
@@ -231,6 +235,9 @@ def create_app():
     # Phase 2: hostfit（pcigale 宿主拟合）任务同样处理
     from hostfit.jobs import mark_interrupted as hostfit_mark_interrupted
     hostfit_mark_interrupted()
+    # Phase 3: sedfit（SED 拟合）任务同样处理
+    from sedfit.jobs import mark_interrupted as sedfit_mark_interrupted
+    sedfit_mark_interrupted()
 
     # 根路径 → SPA
     @app.route('/')

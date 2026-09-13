@@ -9,23 +9,33 @@
                    warnings, files: {h5, corner, lc_model}, created_by}
     status ∈ pending | running | done | failed | interrupted
 - 产物文件存 backend/fitting_store/<transient_id>/<job_id>/。
+- 任务中断（2026-09-13）：create_job 时在 _cancel_events 注册 threading.Event；
+  stop_job 置位并立即把状态写为 interrupted（不续算、产物保留）；worker 在
+  开跑前、engine.run 返回后各查一次标志/行状态，中断不写 done；任务终结后
+  弹出注册表条目。
 """
 import math
 import os
 import re
 import shutil
+import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 from app import get_session
 from models import Transient, Lightcurve, FilterDef, FittingResult
 from fitting.engines import get_engine
+from fitting.vegas_unified.custom_mcmc import McmcInterrupted
 
 _STORE_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            'fitting_store')
 
 # 单 worker 串行队列
 _pool = ThreadPoolExecutor(max_workers=1)
+
+# 任务中断注册表：job_id → threading.Event（create_job 注册，任务终结弹出）
+_cancel_events = {}
+_cancel_lock = threading.Lock()
 
 # 流量单位 → mJy 换算因子（与 extinction.py 保持一致）
 _FLUX_UNIT_TO_MJY = {
@@ -276,15 +286,50 @@ def create_job(transient_id, engine_name, config, warnings=None, created_by=None
         job_id = row.id
     finally:
         sess.close()
+    with _cancel_lock:
+        _cancel_events[job_id] = threading.Event()
     _pool.submit(_run_job, job_id)
     return job_id
 
 
-def _update_status(job_id, status, **extra):
-    """用全新 session 更新任务状态（短 session 模式：不在 MCMC 期间持有连接）"""
+def _pop_cancel_event(job_id):
+    """任务终结后弹出中断注册表条目"""
+    with _cancel_lock:
+        _cancel_events.pop(job_id, None)
+
+
+def stop_job(job_id):
+    """用户中断：行存在且状态 pending/running → 置位中断标志并立即把状态写为
+    interrupted（协程式取消：采样循环随后自行退出，不续算、产物文件保留）。
+    返回 True 表示已中断；行不存在或状态非 pending/running 返回 False。
+    model_name 不含冒号的行（sed_*/pcigale_host 等非余辉任务）一律拒绝，
+    避免误中断其他子系统的任务。行读-改-写用 FOR UPDATE 行锁串行化，
+    与 worker 写 done 互斥（先 interrupted 后 done 覆盖不可能）。"""
+    with _cancel_lock:
+        ev = _cancel_events.get(job_id)
     sess = get_session()
     try:
-        row = sess.get(FittingResult, job_id)
+        row = sess.get(FittingResult, job_id, with_for_update=True)
+        if row is None:
+            return False
+        if ':' not in (row.model_name or ''):
+            return False  # 非余辉拟合任务（sed_*/pcigale_host），拒绝
+        if (row.extra_data or {}).get('status') not in ('pending', 'running'):
+            return False
+        if ev is not None:
+            ev.set()
+        _set_status(sess, row, 'interrupted', error='用户手动中断')
+        return True
+    finally:
+        sess.close()
+
+
+def _update_status(job_id, status, **extra):
+    """用全新 session 更新任务状态（短 session 模式：不在 MCMC 期间持有连接）。
+    行锁串行化（与 stop_job 互斥），避免写 done 与写 interrupted 竞态。"""
+    sess = get_session()
+    try:
+        row = sess.get(FittingResult, job_id, with_for_update=True)
         if row is not None:
             _set_status(sess, row, status, **extra)
     finally:
@@ -306,31 +351,42 @@ def _fail_job(job_id, err):
 
 
 def _run_job(job_id):
-    """worker：pending → running → done/failed
+    """worker：pending → running → done/failed/interrupted
 
     短 session 模式：运行前读配置即关 session；MCMC 期间不持有 DB 连接
     （可达数小时，长持有会被 idle 超时/池回收断掉，导致结束时写结果失败、
     任务永久卡 running）；结束后新开 session 写结果，失败回写双层兜底。
+    中断：开跑前查一次 cancel_event（pending 任务可能在队列里已被中断）；
+    engine.run 期间由引擎协程式响应；engine.run 返回后再查一次标志与行状态，
+    已中断则不写 done，只合并已存在的产物文件（保留 interrupted 状态）。
     """
     sess = get_session()
     try:
         row = sess.get(FittingResult, job_id)
         if row is None:
+            _pop_cancel_event(job_id)
             return
         ed = dict(row.extra_data or {})
         transient_id = row.transient_id
     finally:
         sess.close()
+    with _cancel_lock:
+        ev = _cancel_events.get(job_id)
     engine = get_engine(ed.get('engine'))
     workdir = job_dir(transient_id, job_id)
     try:
         if engine is None:
             raise ValueError(f"未知引擎: {ed.get('engine')}")
+        if ev is not None and ev.is_set():
+            # 排队期间已被用户中断（stop_job 已写 interrupted，此处兜底确认）
+            _update_status(job_id, 'interrupted', error='用户手动中断')
+            return
         _update_status(job_id, 'running')
         data = prepare_data(transient_id, (ed.get('config') or {}).get('data_selection'))
         if data['n_points'] == 0:
             raise ValueError('无可用数据点')
-        result = engine.run(ed.get('config') or {}, data, workdir, log=None)
+        result = engine.run(ed.get('config') or {}, data, workdir, log=None,
+                            cancel_event=ev)
         files = {}
         for kind, fname in (('h5', 'chain_record.h5'), ('corner', 'corner.png'),
                             ('lc_model', 'lc_model.json'),
@@ -341,8 +397,21 @@ def _run_job(job_id):
                 files[kind] = fname
         sess = get_session()
         try:
-            row = sess.get(FittingResult, job_id)
+            # 行锁串行化：与 stop_job 的 interrupted 回写互斥，
+            # 使「先 interrupted 后 done 覆盖」不可能
+            row = sess.get(FittingResult, job_id, with_for_update=True)
             if row is None:
+                return
+            # engine.run 返回后再查中断：不写 done，只把已存在的产物文件
+            # 合并进 extra_data.files（保留 interrupted 状态，产物由用户决定删留）
+            if (ev is not None and ev.is_set()) or \
+                    (row.extra_data or {}).get('status') == 'interrupted':
+                ed_now = dict(row.extra_data or {})
+                merged = dict(ed_now.get('files') or {})
+                merged.update(files)
+                ed_now['files'] = merged
+                row.extra_data = ed_now
+                sess.commit()
                 return
             row.parameters = result['params']
             row.chi_squared = result['chi2']
@@ -354,24 +423,33 @@ def _run_job(job_id):
                         files=files, error=None)
         finally:
             sess.close()
+    except McmcInterrupted as e:
+        # 用户中断：不追加失败 traceback，run.log 只记一行
+        os.makedirs(workdir, exist_ok=True)
+        with open(os.path.join(workdir, 'run.log'), 'a', encoding='utf-8') as lf:
+            lf.write('\n===== 任务被用户中断 =====\n')
+        _update_status(job_id, 'interrupted', error=str(e) or '用户手动中断')
     except Exception as e:
         # 失败详情同时落 run.log
         os.makedirs(workdir, exist_ok=True)
         with open(os.path.join(workdir, 'run.log'), 'a', encoding='utf-8') as lf:
             lf.write('\n===== 任务失败 =====\n' + traceback.format_exc())
         _fail_job(job_id, str(e))
+    finally:
+        _pop_cancel_event(job_id)
 
 
 def mark_interrupted():
-    """服务启动时调用：残留的 running/pending 一律标记 interrupted。
+    """服务启动时调用：残留的 running/pending 余辉拟合任务一律标记 interrupted。
 
-    只处理余辉拟合任务；pcigale 宿主任务由 hostfit.jobs.mark_interrupted
-    处理（按 model_name 区分，互不越界）。"""
+    只处理余辉拟合任务（model_name 形如 engine:...，含冒号）；sed_* 任务由
+    sedfit.jobs.mark_interrupted、pcigale 宿主任务由 hostfit.jobs.mark_interrupted
+    各自处理（按 model_name 区分，互不越界）。"""
     sess = get_session()
     try:
         n = 0
         for row in (sess.query(FittingResult)
-                    .filter(FittingResult.model_name != 'pcigale_host').all()):
+                    .filter(FittingResult.model_name.like('%:%')).all()):
             ed = row.extra_data or {}
             if ed.get('status') in ('running', 'pending'):
                 ed = dict(ed)
@@ -387,11 +465,15 @@ def mark_interrupted():
 
 
 def delete_job(job_id):
-    """删除任务（仅 done/failed/interrupted）。返回 (ok, message)。"""
+    """删除任务（仅 done/failed/interrupted 的余辉拟合任务）。
+    model_name 不含冒号的行（sed_*/pcigale_host 等）按「任务不存在」拒绝，
+    避免误删其他子系统任务并留下孤儿产物目录。返回 (ok, message)。"""
     sess = get_session()
     try:
-        row = sess.get(FittingResult, job_id)
+        row = sess.get(FittingResult, job_id, with_for_update=True)
         if row is None:
+            return False, '任务不存在'
+        if ':' not in (row.model_name or ''):
             return False, '任务不存在'
         status = (row.extra_data or {}).get('status')
         if status in ('pending', 'running'):

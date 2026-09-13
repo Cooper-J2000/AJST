@@ -113,6 +113,8 @@ export const getFittingJobs = (tid) =>
 export const getFittingJob = (id) => api('GET', `/fitting/jobs/${id}`);
 export const getFittingJobFile = (id, kind) => api('GET', `/fitting/jobs/${id}/files/${kind}`);
 export const deleteFittingJob = (id) => api('DELETE', `/fitting/jobs/${id}`);
+// 用户中断（仅 pending/running；已结束 409；需登录）
+export const stopFittingJob = (id) => api('POST', `/fitting/jobs/${id}/stop`);
 
 // Hosts (宿主星系)
 export const getHost = (tid) => api('GET', `/hosts/${encodeURIComponent(tid)}`);
@@ -128,6 +130,45 @@ export const getHostfitJob = (id) => api('GET', `/hostfit/jobs/${id}`);
 // 产物文件下载用裸 URL（<a href> / <img src> 直接引用）
 export const hostfitJobFileUrl = (id, kind) => `${API_BASE}/hostfit/jobs/${id}/files/${kind}`;
 export const deleteHostfitJob = (id) => api('DELETE', `/hostfit/jobs/${id}`);
+
+// SedFit (暂现源 SED 分析)
+export const getSedModels = () => api('GET', '/sed/models');
+export const getSedEpochs = (tid, opts = {}) => {
+  const qs = new URLSearchParams({ transient_id: tid, ...opts }).toString();
+  return api('GET', `/sed/epochs?${qs}`);
+};
+export const buildSed = (body) => api('POST', '/sed/build', body);
+export const submitSedJob = (payload) => api('POST', '/sed/jobs', payload);
+export const getSedJobs = (tid) =>
+  api('GET', `/sed/jobs?transient_id=${encodeURIComponent(tid)}`);
+export const getSedJob = (id) => api('GET', `/sed/jobs/${id}`);
+// 产物文件下载用裸 URL（<a href> / <img src> 直接引用）
+export const sedJobFileUrl = (id, kind) => `${API_BASE}/sed/jobs/${id}/files/${kind}`;
+export const deleteSedJob = (id) => api('DELETE', `/sed/jobs/${id}`);
+// 用户中断（仅 pending/running；已结束 409；需登录）
+export const stopSedJob = (id) => api('POST', `/sed/jobs/${id}/stop`);
+export const sedClosure = (body) => api('POST', '/sed/closure', body);
+export const getSedClosureRelations = () => api('GET', '/sed/closure_relations');
+export const sedBolometric = (body) => api('POST', '/sed/bolometric', body);
+// α–β 诊断图为 PNG 二进制，转 blob URL 供 <img> 显示（调用方负责 URL.revokeObjectURL）
+export async function sedClosurePlot(body) {
+  const resp = await fetch(`${API_BASE}/sed/closure_plot`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    let msg = `${resp.status} ${resp.statusText}`;
+    try {
+      const err = await resp.json();
+      if (err.message) msg = err.message;
+      else if (err.error) msg = err.error;
+    } catch {}
+    throw new Error(msg);
+  }
+  return URL.createObjectURL(await resp.blob());
+}
 
 // Stats
 export const getOverview = () => api('GET', '/stats/overview');
