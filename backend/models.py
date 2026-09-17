@@ -334,12 +334,16 @@ class Spectrum(Base):
     file_type      = Column(String(16), default='fits')  # fits / txt / csv / ecsv
     spec_type      = Column(String(16), nullable=False, default='transient',
                             server_default='transient')  # transient / host / mix
+    # 二级产物（如银河系消光改正谱）自引用父原始谱；父行删除时级联删除
+    parent_id      = Column(BigInteger, ForeignKey('spectra.id', ondelete='CASCADE'),
+                            nullable=True, index=True)
     extra_data       = Column(JSONB, default=dict)
     created_at     = Column(DateTime, default=lambda: utcnow())
 
     transient      = relationship('Transient', back_populates='spectra')
 
     def to_dict(self):
+        ex = self.extra_data or {}
         return {
             'id': self.id,
             'transient_id': self.transient_id,
@@ -351,7 +355,10 @@ class Spectrum(Base):
             'file_path': self.file_path,
             'file_type': self.file_type,
             'spec_type': self.spec_type,
-            'extra_data': self.extra_data or {},
+            'parent_id': self.parent_id,
+            'gext_corr': bool(ex.get('gext_corr')),   # 是否银河系消光改正谱
+            'gext_ebv': ex.get('gext_ebv'),
+            'extra_data': ex,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 

@@ -1,17 +1,22 @@
 """
 光谱数据
-GET  /api/spectra?transient_id=X  — 某源的光谱元数据列表
+GET  /api/spectra?transient_id=X  — 某源的光谱元数据列表（含改正子谱 parent_id/gext_corr）
 GET  /api/spectra/<id>            — 单条光谱完整数据（波长-流量数组）
+GET  /api/spectra/<id>/download   — 下载为两/三列文本（# 头元数据）
 POST /api/spectra/upload          — 上传光谱（需登录），支持两种格式：
   1) 两列/三列文本：波长(Å) 流量 [流量误差]，# 注释行可带 key=value 头
   2) OpenSNSpectra 风格 JSON: {"<名称>": {"spectra": {..., "data": [[wl, flux], ...]}}}
+POST /api/spectra/<id>/gext_correct — 生成/覆盖该原始谱的银河系消光改正谱（管理员）
   服务端校验后统一规范化为 JSON 存储（波长 Å，流量 erg/s/cm^2/Å）
+  改正谱为依附原始谱的二级产物（parent_id），原始谱删除时级联删除
 """
 import json, os, re
 from datetime import datetime, timedelta
-from flask import Blueprint, jsonify, request
+from urllib.parse import quote
+from flask import Blueprint, jsonify, request, Response
 from app import get_session, require_auth, require_admin
 from models import Spectrum, Transient
+import extinction
 
 spectra_bp = Blueprint('spectra', __name__)
 
@@ -55,22 +60,80 @@ def get_spectrum(spec_id):
             return {'error': 'spectrum file missing', 'file_path': r.file_path}, 404
         with open(path) as f:
             data = json.load(f)
-        # 部分来源 JSON 的数值是字符串（如 OpenSNSpectra），统一转为数值类型
-        for obj in data.values():
-            sp = obj.get('spectra') if isinstance(obj, dict) else None
-            if not sp or 'data' not in sp:
-                continue
-            coerced = []
-            for d in sp['data']:
-                try:
-                    row = [float(d[0]), float(d[1])]
-                    if len(d) > 2 and d[2] not in (None, ''):
-                        row.append(float(d[2]))
-                    coerced.append(row)
-                except (TypeError, ValueError, IndexError):
-                    continue
-            sp['data'] = coerced
+        _coerce_spec_data(data)
         return jsonify({'meta': r.to_dict(), 'data': data})
+    finally:
+        sess.close()
+
+
+def _coerce_spec_data(data):
+    """部分来源 JSON 的数值是字符串（如 OpenSNSpectra），统一转为数值类型"""
+    for obj in data.values():
+        sp = obj.get('spectra') if isinstance(obj, dict) else None
+        if not sp or 'data' not in sp:
+            continue
+        coerced = []
+        for d in sp['data']:
+            try:
+                row = [float(d[0]), float(d[1])]
+                if len(d) > 2 and d[2] not in (None, ''):
+                    row.append(float(d[2]))
+                coerced.append(row)
+            except (TypeError, ValueError, IndexError):
+                continue
+        sp['data'] = coerced
+
+
+@spectra_bp.route('/<int:spec_id>/download', methods=['GET'])
+def download_spectrum(spec_id):
+    """导出为纯文本：# 注释行元数据 + 两/三列（波长Å 流量 [误差]）"""
+    sess = get_session()
+    try:
+        r = sess.query(Spectrum).filter(Spectrum.id == spec_id).first()
+        if not r:
+            return {'error': 'Not found'}, 404
+        path = os.path.normpath(os.path.join(PROJECT_ROOT, r.file_path))
+        if not path.startswith(SPECTRA_DIR_PREFIX):
+            return {'error': 'invalid path'}, 400
+        if not os.path.exists(path):
+            return {'error': '光谱文件缺失', 'file_path': r.file_path}, 404
+        with open(path) as f:
+            data = json.load(f)
+        _coerce_spec_data(data)
+        obj_name, obj = next(iter(data.items()))
+        sp = obj.get('spectra', obj) if isinstance(obj, dict) else {}
+
+        meta = [
+            ('source', 'AJST Transient Catalog'),
+            ('transient', r.transient_id),
+            ('filename', r.filename),
+            ('instrument', sp.get('instrument') or r.instrument),
+            ('MJD', sp.get('time')),
+            ('observer', sp.get('observer')),
+            ('reducer', sp.get('reducer')),
+            ('u_fluxes', sp.get('u_fluxes')),
+            ('u_wavelengths', sp.get('u_wavelengths') or 'Angstrom'),
+            ('spec_type', r.spec_type),
+        ]
+        if sp.get('gext_corr'):
+            meta.append(('gext_corr',
+                         f"true (parent={sp.get('parent_filename')}, "
+                         f"E(B-V)={sp.get('gext_ebv')}, Rv={sp.get('gext_rv', '3.1')}, "
+                         f"CSFD dust map + Pei1992, at={sp.get('gext_at')})"))
+        lines = [f'# {k}: {v}' for k, v in meta if v not in (None, '')]
+        lines.append('# columns: wavelength(Angstrom) flux [flux_err]')
+        for d in sp.get('data') or []:
+            line = f'{d[0]:.6g} {d[1]:.8e}'
+            if len(d) > 2:
+                line += f' {d[2]:.8e}'
+            lines.append(line)
+
+        dl_name = r.filename + '.txt'
+        resp = Response('\n'.join(lines) + '\n', mimetype='text/plain; charset=utf-8')
+        resp.headers['Content-Disposition'] = (
+            f"attachment; filename=\"{dl_name}\"; "
+            f"filename*=UTF-8''{quote(dl_name)}")
+        return resp
     finally:
         sess.close()
 
@@ -284,7 +347,8 @@ def upload_spectrum():
 @spectra_bp.route('/<int:spec_id>', methods=['PUT'])
 @require_admin
 def update_spectrum(spec_id):
-    """修改光谱元数据（目前仅 spec_type）：DB 记录与库存文件同步写"""
+    """修改光谱元数据（目前仅 spec_type）：DB 记录与库存文件同步写；
+    原始谱的改动会传播到其全部改正子谱"""
     body = request.get_json(force=True)
     spec_type = (body.get('spec_type') or '').strip().lower()
     if spec_type not in ('transient', 'host', 'mix'):
@@ -294,22 +358,55 @@ def update_spectrum(spec_id):
         r = sess.query(Spectrum).filter(Spectrum.id == spec_id).first()
         if not r:
             return {'error': 'Not found'}, 404
-        path = os.path.normpath(os.path.join(PROJECT_ROOT, r.file_path))
-        if not path.startswith(SPECTRA_DIR_PREFIX):
-            return {'error': 'invalid path'}, 400
-        r.spec_type = spec_type
+        rows = [r]
+        if r.parent_id is None:
+            rows += sess.query(Spectrum).filter(Spectrum.parent_id == r.id).all()
+        paths = []
+        for row in rows:
+            path = os.path.normpath(os.path.join(PROJECT_ROOT, row.file_path))
+            if not path.startswith(SPECTRA_DIR_PREFIX):
+                return {'error': 'invalid path'}, 400
+            row.spec_type = spec_type
+            paths.append(path)
         sess.commit()
         # 回写库存文件 JSON，保证全量重建（import_spectra 以文件为准）不丢
-        if os.path.exists(path):
-            with open(path) as f:
-                data = json.load(f)
-            for obj in data.values():
-                sp = obj.get('spectra') if isinstance(obj, dict) else None
-                if sp is not None:
-                    sp['spec_type'] = spec_type
-            with open(path, 'w') as f:
-                json.dump(data, f)
+        for path in paths:
+            if os.path.exists(path):
+                with open(path) as f:
+                    data = json.load(f)
+                for obj in data.values():
+                    sp = obj.get('spectra') if isinstance(obj, dict) else None
+                    if sp is not None:
+                        sp['spec_type'] = spec_type
+                with open(path, 'w') as f:
+                    json.dump(data, f)
         return jsonify(r.to_dict())
+    except Exception as e:
+        sess.rollback()
+        return {'error': str(e)}, 500
+    finally:
+        sess.close()
+
+
+@spectra_bp.route('/<int:spec_id>/gext_correct', methods=['POST'])
+@require_admin
+def gext_correct_spectrum(spec_id):
+    """生成/重新生成（覆盖）该原始光谱的银河系消光改正谱（CSFD + P92 + Rv=3.1）"""
+    sess = get_session()
+    try:
+        r = sess.query(Spectrum).filter(Spectrum.id == spec_id).first()
+        if not r:
+            return {'error': 'Not found'}, 404
+        result = extinction.correct_spectrum(sess, r)
+        sess.commit()
+        return jsonify({'spectrum': result['child_row'].to_dict(),
+                        'ebv': result['ebv'], 'warnings': result['warnings']})
+    except extinction.SpectrumGextError as e:
+        sess.rollback()
+        return {'error': str(e)}, 400
+    except FileNotFoundError as e:
+        sess.rollback()
+        return {'error': str(e)}, 404
     except Exception as e:
         sess.rollback()
         return {'error': str(e)}, 500
@@ -320,18 +417,24 @@ def update_spectrum(spec_id):
 @spectra_bp.route('/<int:spec_id>', methods=['DELETE'])
 @require_admin
 def delete_spectrum(spec_id):
-    """删除光谱：DB 记录 + 文件"""
+    """删除光谱：DB 记录 + 文件；删除原始谱时其改正子谱一并删除
+    （DB 行靠 FK ON DELETE CASCADE，文件逐个删除）"""
     sess = get_session()
     try:
         r = sess.query(Spectrum).filter(Spectrum.id == spec_id).first()
         if not r:
             return {'error': 'Not found'}, 404
-        path = os.path.normpath(os.path.join(PROJECT_ROOT, r.file_path))
+        paths = [os.path.normpath(os.path.join(PROJECT_ROOT, r.file_path))]
+        if r.parent_id is None:
+            for c in sess.query(Spectrum).filter(Spectrum.parent_id == r.id).all():
+                paths.append(os.path.normpath(os.path.join(PROJECT_ROOT, c.file_path)))
         sess.delete(r)
         sess.commit()
-        if path.startswith(SPECTRA_DIR_PREFIX) and os.path.exists(path):
-            os.remove(path)
-        return {'status': 'deleted', 'id': spec_id}
+        for path in paths:
+            if path.startswith(SPECTRA_DIR_PREFIX) and os.path.exists(path):
+                os.remove(path)
+        return {'status': 'deleted', 'id': spec_id,
+                'deleted_children': len(paths) - 1}
     except Exception as e:
         sess.rollback()
         return {'error': str(e)}, 500

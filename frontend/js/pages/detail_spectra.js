@@ -3,7 +3,7 @@
 // 页面重建前调用 resetSpectra() 销毁图表、清加载标记。
 import {
   getSpectra, getSpectrum, uploadSpectrum, updateSpectrum, deleteSpectrumApi,
-  isAuthed, isAdmin, showToast,
+  correctSpectrumGext, isAuthed, isAdmin, showToast,
 } from '../api.js';
 import { SPEC_LINE_GROUPS, createSpecLinesPlugin, buildMarkingsPanelHTML } from '../spec_lines.js';
 import { dragRectPlugin, attachDragZoom } from '../dragzoom.js';
@@ -140,15 +140,29 @@ export async function initSpectraTab(tid, redshift) {
       return;
     }
     const admin = isAdmin();
-    tbody.innerHTML = list.map(s => {
+    // 父子分组渲染：原始谱正常行，其改正子谱缩进紧随（缺失父的孤儿子谱排最后）
+    const childrenByParent = new Map();
+    list.filter(s => s.parent_id).forEach(s => {
+      if (!childrenByParent.has(s.parent_id)) childrenByParent.set(s.parent_id, []);
+      childrenByParent.get(s.parent_id).push(s);
+    });
+    const ordered = [];
+    list.filter(s => !s.parent_id).forEach(p => {
+      ordered.push(p);
+      (childrenByParent.get(p.id) || []).forEach(c => ordered.push(c));
+    });
+    list.filter(s => s.parent_id && !list.some(p => p.id === s.parent_id))
+      .forEach(s => ordered.push(s));
+    tbody.innerHTML = ordered.map(s => {
       const ft = (s.extra_data && s.extra_data.flux_type) || 'absolute';
       const mjd = (s.extra_data && s.extra_data.mjd) || (s.observation_date ? s.observation_date.substring(0, 10) : '-');
       const remarks = (s.extra_data && s.extra_data.remarks) || '';
-      _specListMeta.set(s.id, { flux_type: ft, mjd });
+      const isChild = !!s.parent_id;
+      _specListMeta.set(s.id, { flux_type: ft, mjd, parent_id: s.parent_id || null });
       return `
       <tr class="row-link" id="specRow_${s.id}" onclick="toggleSpectrum(${s.id})">
-        <td><i class="bi bi-check-lg text-primary" id="specChk_${s.id}" style="visibility:hidden"></i> ${esc(mjd)}</td>
-        <td>${esc(s.instrument) || '-'} ${ft === 'normalized' ? '<span class="badge-tag" style="background:rgba(210,153,34,0.15);color:#d29922" title="归一化流量">归一</span>' : ''}</td>
+        <td>${isChild ? '<span class="text-secondary" style="padding-left:2px">└</span> ' : ''}<i class="bi bi-check-lg text-primary" id="specChk_${s.id}" style="visibility:hidden"></i> ${esc(mjd)}</td>
+        <td>${esc(s.instrument) || '-'} ${ft === 'normalized' ? '<span class="badge-tag" style="background:rgba(210,153,34,0.15);color:#d29922" title="归一化流量">归一</span>' : ''}${isChild ? ` <span class="badge-tag" style="background:rgba(86,212,221,0.15);color:#56d4dd" title="银河系消光改正谱：E(B-V)=${s.gext_ebv != null ? Number(s.gext_ebv).toFixed(4) : '?'}，Rv=3.1（CSFD 尘埃图 + Pei1992），源文件 ${escAttr(s.filename)}">银消改正</span>` : ''}</td>
         <td onclick="event.stopPropagation()">${admin
           ? `<select class="form-select form-select-sm spec-type-sel" style="width:auto;font-size:0.8rem;padding:1px 4px" onchange="specTypeChange(${s.id}, this.value)">
               ${['transient','host','mix'].map(v => `<option value="${v}" ${((s.spec_type||'transient')===v)?'selected':''}>${({transient:'Transient',host:'Host',mix:'Mix'})[v]}</option>`).join('')}
@@ -160,6 +174,9 @@ export async function initSpectraTab(tid, redshift) {
           <input type="number" class="form-control form-control-sm d-inline-block spec-offset" data-id="${s.id}"
                  style="width:60px;display:${_specMode === 'relative' ? 'inline-block' : 'none'};font-size:0.75rem;padding:1px 4px"
                  step="0.1" value="${_specOffsets[s.id] || 0}" title="纵向偏移（相对流量模式）" onchange="setSpecOffset(${s.id}, this.value)">
+          <a class="btn btn-sm btn-outline-secondary py-0 px-1" href="/api/spectra/${s.id}/download" download
+             title="下载光谱文本（波长Å 流量 [误差]）" onclick="event.stopPropagation()"><i class="bi bi-download"></i></a>
+          ${admin && !isChild ? `<button class="btn btn-sm btn-outline-warning py-0 px-1" title="生成/重新生成银河系消光改正谱" onclick="gextCorrectSpectrum(${s.id})"><i class="bi bi-stars"></i></button>` : ''}
           ${admin ? `<button class="btn btn-sm btn-outline-danger py-0 px-1" title="删除该光谱" onclick="deleteSpectrum(${s.id})"><i class="bi bi-trash"></i></button>` : ''}
         </td>
       </tr>${remarks ? `
@@ -167,7 +184,8 @@ export async function initSpectraTab(tid, redshift) {
         <td colspan="5" class="small text-secondary" style="white-space:normal"><i class="bi bi-chat-left-text"></i> ${escAttr(remarks)}</td>
       </tr>` : ''}`;
     }).join('');
-    toggleSpectrum(list[0].id);
+    const firstParent = list.find(s => !s.parent_id);
+    if (firstParent) toggleSpectrum(firstParent.id);
   } catch (err) {
     tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">加载失败: ${esc(err.message)}</td></tr>`;
   }
@@ -227,18 +245,39 @@ window.specTypeChange = async (id, val) => {
   }
 };
 
+window.gextCorrectSpectrum = async (id) => {
+  if (!isAdmin()) { showToast('仅管理员可执行消光改正', 'warning'); return; }
+  const hasChild = [..._specListMeta.values()].some(m => m.parent_id === id);
+  if (hasChild && !confirm('已存在银河系消光改正谱，从原始光谱重新生成并覆盖？')) return;
+  try {
+    const resp = await correctSpectrumGext(id);
+    let msg = `银河系消光改正完成：E(B-V)=${resp.ebv != null ? Number(resp.ebv).toFixed(4) : '?'}，改正谱 ${resp.spectrum.filename}`;
+    showToast(resp.warnings && resp.warnings.length ? `${msg}；注意：${resp.warnings.join('；')}` : msg,
+      resp.warnings && resp.warnings.length ? 'warning' : 'success');
+    _spectraLoadedFor = null;   // 重载列表以显示改正子谱
+    initSpectraTab(currentTid, _specZ);
+  } catch (err) {
+    showToast(`改正失败: ${err.message}`, 'danger');
+  }
+};
+
 window.deleteSpectrum = async (id) => {
   if (!isAdmin()) { showToast('仅管理员可删除数据', 'warning'); return; }
   const m = _specCache.get(id);
   const name = m ? `${m.objName} ${m.meta.filename}` : `#${id}`;
-  if (!confirm(`确认删除光谱 ${name}？（数据库记录与文件一并删除）`)) return;
+  const childIds = [..._specListMeta.entries()].filter(([, v]) => v.parent_id === id).map(([k]) => k);
+  const cascadeHint = childIds.length ? '，其银河系消光改正谱将一并删除' : '';
+  if (!confirm(`确认删除光谱 ${name}？（数据库记录与文件一并删除${cascadeHint}）`)) return;
   try {
     await deleteSpectrumApi(id);
     showToast('已删除', 'success');
-    _specSelected.delete(id);
-    _specCache.delete(id);
-    _specListMeta.delete(id);
-    document.getElementById(`specRow_${id}`)?.remove();
+    for (const rid of [id, ...childIds]) {
+      _specSelected.delete(rid);
+      _specCache.delete(rid);
+      _specListMeta.delete(rid);
+      document.getElementById(`specRow_${rid}`)?.remove();
+      document.getElementById(`specRem_${rid}`)?.remove();
+    }
     renderSpectraPlot();
     if (!document.querySelector('#spectraListBody tr.row-link')) {
       _spectraLoadedFor = null;

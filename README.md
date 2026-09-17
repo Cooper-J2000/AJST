@@ -76,6 +76,9 @@ Web UI (all local, no build step):
 - **GCN tool** — browse GCN circulars with per-source info cards and
   photometry entry
 - **Light-curve upload** — batch CSV import with column mapping
+- **Spectra** — upload, overplot and download per-source spectra; optional
+  Galactic-extinction correction (CSFD + P92, Rv = 3.1) is stored as a
+  secondary product linked to the original spectrum
 - **Statistical relations** — Amati / Yonetoku / Ghirlanda / lag–luminosity /
   variability–luminosity / Ep–α
 - **Statistics** — overview, redshift distribution, band coverage,

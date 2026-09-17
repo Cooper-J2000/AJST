@@ -99,6 +99,8 @@ export const getSpectrum = (id) => api('GET', `/spectra/${id}`);
 export const uploadSpectrum = (payload) => api('POST', '/spectra/upload', payload);
 export const updateSpectrum = (id, payload) => api('PUT', `/spectra/${id}`, payload);
 export const deleteSpectrumApi = (id) => api('DELETE', `/spectra/${id}`);
+// 生成/覆盖该原始谱的银河系消光改正谱（管理员；幂等重算）
+export const correctSpectrumGext = (id) => api('POST', `/spectra/${id}/gext_correct`);
 
 // Extinction (银河系消光改正)
 export const getExtinctionStatus = () => api('GET', '/extinction/status');

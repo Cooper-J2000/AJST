@@ -298,11 +298,53 @@ def import_one_lightcurve(sess, tid):
 def import_spectra(sess):
     """全量重建后：扫描 catadata/spectra/ 重建 spectra 表索引。
     光谱文件是权威存储（上传/删除时文件与库记录同步维护），
-    此处只做 文件→库 的索引重建；transient 不存在的目录跳过。"""
+    此处只做 文件→库 的索引重建；transient 不存在的目录跳过。
+    银河系消光改正谱（文件内 gext_corr=true）是依附原始谱的二级产物：
+    两遍扫描，先建父行再按 parent_filename 回挂 parent_id。"""
     if not os.path.isdir(SPECTRA_DIR):
         print('  [SKIP] spectra dir not found')
         return
-    count, errors, skipped = 0, 0, 0
+    count, child_count, errors, skipped, orphan = 0, 0, 0, 0, 0
+
+    def _mk_row(tid, fname, obj_name, sp, parent_id=None):
+        data = sp.get('data') or []
+        wavs = [float(p[0]) for p in data if p]
+        obs_date = None
+        mjd = sp.get('time')
+        if mjd not in (None, ''):
+            try:
+                obs_date = MJD_EPOCH + timedelta(days=float(mjd))
+            except (TypeError, ValueError):
+                obs_date = None
+        extra = {
+            'observer': sp.get('observer'), 'reducer': sp.get('reducer'),
+            'u_fluxes': sp.get('u_fluxes'),
+            'u_wavelengths': sp.get('u_wavelengths'),
+            'mjd': sp.get('time'), 'sn_name': obj_name,
+            'flux_type': sp.get('flux_type', 'absolute'),
+            'has_err': any(len(p) > 2 for p in data),
+            'source': 'file_scan', 'n_points': len(data),
+        }
+        if sp.get('gext_corr'):
+            extra.update({'gext_corr': True, 'gext_ebv': sp.get('gext_ebv'),
+                          'gext_rv': sp.get('gext_rv'),
+                          'parent_filename': sp.get('parent_filename')})
+        return Spectrum(
+            transient_id=tid,
+            filename=sp.get('filename') or fname[:-5],
+            wavelength_min=min(wavs) if wavs else None,
+            wavelength_max=max(wavs) if wavs else None,
+            instrument=sp.get('instrument'),
+            observation_date=obs_date,
+            file_path=f'catadata/spectra/{tid}/{fname}',
+            file_type='json',
+            spec_type=(sp.get('spec_type') or 'transient')
+                      if sp.get('spec_type') in ('transient', 'host', 'mix')
+                      else 'transient',
+            parent_id=parent_id,
+            extra_data=extra,
+        )
+
     for tid in sorted(os.listdir(SPECTRA_DIR)):
         tdir = os.path.join(SPECTRA_DIR, tid)
         if not os.path.isdir(tdir):
@@ -311,6 +353,7 @@ def import_spectra(sess):
             print(f'  [WARN] spectra/{tid}: transient not in DB, skipped')
             skipped += 1
             continue
+        parsed = []
         for fname in sorted(os.listdir(tdir)):
             if not fname.endswith('.json'):
                 continue
@@ -319,45 +362,46 @@ def import_spectra(sess):
                     payload = json.load(f)
                 obj_name, obj = next(iter(payload.items()))
                 sp = obj.get('spectra', obj) if isinstance(obj, dict) else {}
-                data = sp.get('data') or []
-                wavs = [float(p[0]) for p in data if p]
-                obs_date = None
-                mjd = sp.get('time')
-                if mjd not in (None, ''):
-                    try:
-                        obs_date = MJD_EPOCH + timedelta(days=float(mjd))
-                    except (TypeError, ValueError):
-                        obs_date = None
-                sess.add(Spectrum(
-                    transient_id=tid,
-                    filename=sp.get('filename') or fname[:-5],
-                    wavelength_min=min(wavs) if wavs else None,
-                    wavelength_max=max(wavs) if wavs else None,
-                    instrument=sp.get('instrument'),
-                    observation_date=obs_date,
-                    file_path=f'catadata/spectra/{tid}/{fname}',
-                    file_type='json',
-                    spec_type=(sp.get('spec_type') or 'transient')
-                              if sp.get('spec_type') in ('transient', 'host', 'mix')
-                              else 'transient',
-                    extra_data={
-                        'observer': sp.get('observer'), 'reducer': sp.get('reducer'),
-                        'u_fluxes': sp.get('u_fluxes'),
-                        'u_wavelengths': sp.get('u_wavelengths'),
-                        'mjd': sp.get('time'), 'sn_name': obj_name,
-                        'flux_type': sp.get('flux_type', 'absolute'),
-                        'has_err': any(len(p) > 2 for p in data),
-                        'source': 'file_scan', 'n_points': len(data),
-                    },
-                ))
+                parsed.append((fname, obj_name, sp))
+            except Exception as e:
+                errors += 1
+                if errors <= 3:
+                    print(f'  [ERROR] spectra {tid}/{fname}: {e}')
+        # 第一遍：非改正文件建父行
+        id_by_filename = {}
+        for fname, obj_name, sp in parsed:
+            if sp.get('gext_corr'):
+                continue
+            try:
+                row = _mk_row(tid, fname, obj_name, sp)
+                sess.add(row)
+                sess.flush()
+                id_by_filename[row.filename] = row.id
                 count += 1
             except Exception as e:
                 errors += 1
                 if errors <= 3:
                     print(f'  [ERROR] spectra {tid}/{fname}: {e}')
+        # 第二遍：改正文件回读 parent_filename 挂父行
+        for fname, obj_name, sp in parsed:
+            if not sp.get('gext_corr'):
+                continue
+            parent_id = id_by_filename.get(sp.get('parent_filename'))
+            if parent_id is None:
+                print(f'  [WARN] spectra {tid}/{fname}: parent '
+                      f"{sp.get('parent_filename')} not found, skipped")
+                orphan += 1
+                continue
+            try:
+                sess.add(_mk_row(tid, fname, obj_name, sp, parent_id=parent_id))
+                child_count += 1
+            except Exception as e:
+                errors += 1
+                if errors <= 3:
+                    print(f'  [ERROR] spectra {tid}/{fname}: {e}')
     sess.flush()
-    print(f'  [OK] Spectra index rebuilt: {count} files '
-          f'({errors} errors, {skipped} dirs skipped)')
+    print(f'  [OK] Spectra index rebuilt: {count} files + {child_count} corrected'
+          f' ({errors} errors, {orphan} orphans, {skipped} dirs skipped)')
 
 
 def ensure_default_tags(sess):

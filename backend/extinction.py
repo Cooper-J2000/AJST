@@ -374,3 +374,120 @@ def recompute_band(sess, band):
             ebv_cache[lc.transient_id] = get_ebv(t.ra, t.dec)
         correct_point(lc, compute_alambda(ebv_cache[lc.transient_id], filt.wavelength),
                        filt.vega2ab)
+
+
+# ─── 光谱银河系消光改正（二级产物） ───
+
+class SpectrumGextError(ValueError):
+    """光谱银消改正的业务错误（已改正谱 / 无坐标 / 依赖不可用 / 数据不可用）"""
+
+
+def correct_spectrum(sess, spectrum_row):
+    """
+    对一条原始光谱生成银河系消光改正谱（依附父谱的二级产物，幂等可重算覆盖）。
+
+    改正口径与测光点一致：CSFD 尘埃图 E(B-V) + Pei(1992) 曲线 + Rv=3.1，
+    在观测者系波长上逐点改正 f_corr = f_obs × 10^(+0.4·A_λ)
+    （对 f_λ/f_ν/归一化流量同为乘性因子；波长列不变，误差列同乘）。
+
+    子文件 <父文件名>_gextcor.json 复制父文件结构，仅替换 data 并补
+    gext_corr/parent_filename/gext_ebv/gext_rv/gext_at 字段；
+    DB 子行 parent_id 指向父行，幂等覆盖。
+
+    spectrum_row: 父（原始）Spectrum ORM 行；调用方负责 commit。
+    返回 {'child_row', 'warnings', 'ebv'}。
+    业务错误抛 SpectrumGextError，文件缺失抛 FileNotFoundError。
+    """
+    import json, os
+    from datetime import datetime, timezone
+    import astropy.units as u
+    from models import Transient, Spectrum
+
+    if spectrum_row.parent_id is not None:
+        raise SpectrumGextError('该光谱已是银河系消光改正谱，不能对其再次改正（请对其原始谱执行改正）')
+    if not _load():
+        raise SpectrumGextError(f'消光计算依赖不可用: {_import_error}')
+
+    t = sess.query(Transient).filter(Transient.id == spectrum_row.transient_id).first()
+    if t is None or t.ra is None or t.dec is None:
+        raise SpectrumGextError('该暂现源缺少坐标（RA/Dec），无法查询尘埃图')
+    ebv = get_ebv(t.ra, t.dec)
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    parent_abs = os.path.normpath(os.path.join(project_root, spectrum_row.file_path))
+    if not os.path.exists(parent_abs):
+        raise FileNotFoundError(f'光谱文件缺失: {spectrum_row.file_path}')
+    with open(parent_abs) as f:
+        payload = json.load(f)
+    obj_name, obj = next(iter(payload.items()))
+    sp = obj.get('spectra', obj) if isinstance(obj, dict) else None
+    if not isinstance(sp, dict) or 'data' not in sp:
+        raise SpectrumGextError('光谱文件缺少 spectra.data 字段')
+
+    # 存量文件数值可能是字符串，统一 float 化
+    points = []
+    for d in sp['data']:
+        try:
+            row = [float(d[0]), float(d[1])]
+            if len(d) > 2 and d[2] not in (None, ''):
+                row.append(float(d[2]))
+            points.append(row)
+        except (TypeError, ValueError, IndexError):
+            continue
+    if not points:
+        raise SpectrumGextError('光谱无可用数据点')
+
+    wavs = [p[0] for p in points]
+    # P92().extinguish(x, Av) 返回剩余流量比例 10^(-0.4·A_λ)
+    factors = _p92_model.extinguish(u.Quantity(wavs, u.Angstrom), Av=RV * ebv)
+    corrected = []
+    for p, fac in zip(points, factors):
+        row = [p[0], p[1] / fac]
+        if len(p) > 2:
+            row.append(p[2] / fac)
+        corrected.append(row)
+
+    warnings = []
+    uf = (sp.get('u_fluxes') or '').lower()
+    if 'normalized' in uf or 'uncalibrated' in uf:
+        warnings.append('该光谱流量为归一化/未校准，改正仅改变谱形，不代表绝对流量定标')
+
+    parent_fn = spectrum_row.filename
+    child_fn = parent_fn + '_gextcor'
+    child_rel = spectrum_row.file_path.rsplit('/', 1)[0] + '/' + child_fn + '.json'
+    child_abs = os.path.join(os.path.dirname(parent_abs), child_fn + '.json')
+
+    child_payload = json.loads(json.dumps(payload))   # 深拷贝父文件结构
+    cobj = child_payload[obj_name]
+    csp = cobj.get('spectra', cobj) if isinstance(cobj, dict) else cobj
+    csp['data'] = corrected
+    csp['filename'] = child_fn
+    csp['gext_corr'] = True
+    csp['parent_filename'] = parent_fn
+    csp['gext_ebv'] = ebv
+    csp['gext_rv'] = str(RV)
+    csp['gext_at'] = datetime.now(timezone.utc).isoformat()
+
+    extra = dict(spectrum_row.extra_data or {})
+    extra.update({'gext_corr': True, 'gext_ebv': ebv, 'gext_rv': str(RV),
+                  'parent_filename': parent_fn, 'n_points': len(corrected),
+                  'source': 'gext_correction'})
+
+    child = sess.query(Spectrum).filter(Spectrum.parent_id == spectrum_row.id).first()
+    if child is None:
+        child = Spectrum(transient_id=spectrum_row.transient_id,
+                         parent_id=spectrum_row.id, file_type='json')
+        sess.add(child)
+    # 元数据跟随父行（幂等覆盖时一并刷新）
+    child.filename = child_fn
+    child.wavelength_min = min(wavs)
+    child.wavelength_max = max(wavs)
+    child.instrument = spectrum_row.instrument
+    child.observation_date = spectrum_row.observation_date
+    child.file_path = child_rel
+    child.spec_type = spectrum_row.spec_type
+    child.extra_data = extra
+
+    with open(child_abs, 'w') as f:
+        json.dump(child_payload, f)
+    return {'child_row': child, 'warnings': warnings, 'ebv': ebv}

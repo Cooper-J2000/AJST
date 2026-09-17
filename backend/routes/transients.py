@@ -124,7 +124,8 @@ def list_transients():
                 .group_by(Lightcurve.transient_id)).all()}
             sp_counts = {tid: n for tid, n in sess.execute(
                 select(Spectrum.transient_id, func.count())
-                .where(Spectrum.transient_id.in_(ids))
+                # 二级产物（银消改正谱等，parent_id 非空）不计入列表徽章
+                .where(Spectrum.transient_id.in_(ids), Spectrum.parent_id.is_(None))
                 .group_by(Spectrum.transient_id)).all()}
             host_ids = {tid for (tid,) in sess.execute(
                 select(HostGalaxy.transient_id)
