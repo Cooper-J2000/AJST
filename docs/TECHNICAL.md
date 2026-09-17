@@ -1,7 +1,7 @@
 # AJST 暂现源光变目录系统 — 技术文档
 
-> 版本：2.15
-> 更新日期：2026-09-04
+> 版本：2.18
+> 更新日期：2026-09-18
 
 > **说明**：本文档由开发过程中的技术文档整理而来，部分内容（数据规模、批次导入历史、
 > 已删除的脚本与备份路径等）为历史快照；如有与代码不一致之处，**以代码为准**。
@@ -163,7 +163,7 @@ BibTeX 可能很长，前端不整段展示，仅提供「复制到剪贴板」�
 
 ### 2.6 `host_galaxies` — 宿主星系（2026-08-29 新增）
 
-每个源至多一行（transient_id UNIQUE）。详情页「宿主星系」tab 展示与维护；pcigale SED 拟合（见 §8.20）结果经用户确认后写入 `derived`。
+每个源至多一行（transient_id UNIQUE）。详情页「宿主星系」tab 展示与维护；pcigale / prospector SED 拟合（见 §8.20）结果经用户确认后写入 `derived`。
 
 | 列 | 类型 | 说明 |
 |---|---|---|
@@ -173,7 +173,7 @@ BibTeX 可能很长，前端不整段展示，仅提供「复制到剪贴板」�
 | `redshift` / `redshift_err` | FLOAT | 宿主红移；光谱红移 err=0，测光红移有误差 |
 | `redshift_type` | VARCHAR(16) | `spec` / `phot` |
 | `photometry` | JSONB | `[{band, mag, mag_err, mag_sys(AB/Vega/ST), source, upperlimit, gext_corr}]`（v2.14 起支持 `upperlimit`；`mag_err` 可空——非上限且误差为空时后续处理按 σ=0.2 mag 计，0.2 不落库；v2.15 起 `gext_corr` **必填**——该行是否已做银河系消光改正，缺失时 PUT 返回 400，缺键的存量行下游按 false 对待，见 §8.24） |
-| `derived` | JSONB | 采纳的拟合参数 `{m_star, sfr, age_main, Av_ISM, chi2, fit_at, job_id}` |
+| `derived` | JSONB | 采纳的拟合参数 `{m_star, sfr, age_main, Av_ISM, chi2, fit_at, job_id}`（v2.18 起 prospector 引擎结果另带 `engine` 键，见 §8.20） |
 | `comment` / `source` | TEXT / VARCHAR(128) | |
 
 落盘：随 `--dump` 写入 `info/<tid>.json` 的 `host_galaxy` 字段，导入时 upsert（见 §3.1）。
@@ -370,11 +370,11 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | PUT | `/api/hosts/<tid>` | upsert 宿主信息 `{ra?, dec?, redshift?, redshift_err?, redshift_type?, photometry?, derived?, comment?}`（`ra`/`dec` 支持十进制度或时分秒；`photometry` 项可含 `upperlimit`，`mag_err` 可空，见 §8.22；v2.15 起每行必须显式携带 `gext_corr` true/false，缺失返回 400，见 §8.24） | 登录 |
 | DELETE | `/api/hosts/<tid>` | 删除宿主信息 | 管理员 |
 | GET | `/api/export/host_photometry/<tid>` | 导出宿主测光 CSV/JSON（含实时计算的改正后星等 `mag_gextcor` 列，见 §8.24） | 登录 |
-| GET | `/api/hostfit/config` | pcigale 拟合默认网格与可用波段 | 否 |
-| POST | `/api/hostfit/jobs` | 提交宿主 SED 拟合 `{transient_id, mode, redshift?, grid, photometry}` | 登录 |
-| GET | `/api/hostfit/jobs` | 任务列表（`?transient_id=`） | 否 |
-| GET | `/api/hostfit/jobs/<id>` | 任务详情（含 best/bayes 参数） | 否 |
-| GET | `/api/hostfit/jobs/<id>/files/<kind>` | 产物：`results`/`sed_png`/`best_model`/`log` | 否 |
+| GET | `/api/hostfit/config` | 宿主 SED 拟合默认配置与可用波段（v2.18 起按引擎分节 `{pcigale:{defaults,modules,optional_modules,available_bands}, prospector:{defaults,optional_modules,available_bands}}`，前端兼容旧扁平结构，见 §8.20） | 否 |
+| POST | `/api/hostfit/jobs` | 提交宿主 SED 拟合 `{transient_id, mode, redshift?, grid, photometry, config}`（v2.18 起 config 新增 `engine`：`pcigale`（默认）/ `prospector`） | 登录 |
+| GET | `/api/hostfit/jobs` | 任务列表（`?transient_id=`；v2.18 起简报带 `engine` 字段） | 否 |
+| GET | `/api/hostfit/jobs/<id>` | 任务详情（含 best/bayes 参数与 `engine` 字段） | 否 |
+| GET | `/api/hostfit/jobs/<id>/files/<kind>` | 产物：`results`/`sed_png`/`best_model`/`log`；v2.18 起新增 `corner` 类（prospector 角图） | 否 |
 | DELETE | `/api/hostfit/jobs/<id>` | 删除任务及产物 | 管理员 |
 | GET | `/api/sed/models` | SED 模型清单与参数 schema（动态渲染拟合表单用） | 否 |
 | GET | `/api/sed/epochs` | 可用历元建议（`?transient_id=&min_bands=&dt_frac=`） | 否 |
@@ -445,8 +445,8 @@ curl http://localhost:5000/api/auth/status
 | 标签 | 内容 |
 |---|---|
 | 概览 | 基本信息表、子标签、Aladin Lite 天球图 |
-| 光变曲线 | Chart.js 多波段光变曲线，Y 轴切换 mJy/绝对星等，X 轴切换线性/对数，顶部 day/MJD 副轴，静止系选项，误差棒显示开关，波段勾选面板（全选/全不选），原始/银消改正数据切换，经验函数拟合叠加（pl/bpl/sbpl），缩放/重置/导出 |
-| 数据表 | 全部 24 列光变数据（含银消后 AB 星等及误差、来源 source、存入/修改时间），支持行内编辑 + 添加记录 + 多选批量删除 + 上传数据表（CSV 列映射导入）+ 单点银消改正（删除/银消仅管理员；行内编辑管理员任意记录、普通用户仅自己录入的记录（source=本账户），其余记录可扣点）；「列显示」面板勾选要展示的列（localStorage 持久化，默认紧凑子集：时间/时间误差/波段/流量/误差/单位/星等系统/银消/上限/银消量/望远镜/仪器/引用/备注；仅影响页面显示，导出 CSV 始终为服务端全列完整版）；首列勾选框标记行 → 整行橙色高亮（仅前端定位用，不写库），表头复选框可全标/全清 |
+| 光变曲线 | Chart.js 多波段光变曲线，Y 轴切换 mJy/绝对星等，X 轴切换线性/对数，顶部 day/MJD 副轴，静止系选项，误差棒显示开关（勾选时有 time_err 的探测点同绘水平时间误差棒），波段勾选面板（全选/全不选），原始/银消改正数据切换，经验函数拟合叠加（pl/bpl/sbpl/fred，结果显示每参数 ±1σ 与 1σ 置信带），「复制光变图」按钮（PNG 复制到剪贴板，剪贴板不可用时回退下载），「显示当前时刻」红色竖虚线开关（默认关，无 T0 禁用），时间轴刻度科学计数法，缩放/重置/导出 |
+| 数据表 | 全部 24 列光变数据（含银消后 AB 星等及误差、来源 source、存入/修改时间），支持行内编辑 + 添加记录 + 多选批量删除 + 上传数据表（CSV 列映射导入）+ 单点银消改正（删除/银消仅管理员；行内编辑管理员任意记录、普通用户仅自己录入的记录（source=本账户），其余记录可扣点）；「列显示」面板勾选要展示的列（localStorage 持久化，默认紧凑子集：时间/时间误差/波段/流量/误差/单位/星等系统/银消/上限/银消量/望远镜/仪器/引用/备注；仅影响页面显示，导出 CSV 始终为服务端全列完整版）；首列勾选框标记行 → 整行橙色高亮（仅前端定位用，不写库），表头复选框可全标/全清；「添加记录」表单：波段可输入+下拉建议（滤光片 id 按波长排序+本源已有波段）、单位下拉（mJy/uJy/Jy/cgs/keV 系/mag）、时间与时间误差各配乘积因子下拉（×86400/×3600/×60/×1，前端换算为秒入库）；添加记录后停留在数据表页（批量删除等整页刷新同样不再跳回概览） |
 | 余辉拟合 | VegasAfterglow 正向激波拟合：配置/提交任务/状态轮询/结果展示（见 §8.14） |
 | 光谱数据 | 光谱列表（多选对比/逐条偏移/删除）+ 波长-流量图；观测者系横轴 + 有红移时静止系副轴（λ/(1+z)，逐帧同步）；绝对/相对流量模式（相对模式按中值归一+用户偏移）；误差条可开关；**横纵轴各自可切线性/对数**（对数 Y 自动滤除非正流量点）；坐标范围设置（数字输入 xmin/xmax/ymin/ymax + 图上拖拽框选缩放 + 恢复默认）；TNS 风格谱线标记面板（30 组常见谱线 H/He/C/N/O/…+自定义波长+Tellurics+星系线+WR 线，逐组 z 与 v_exp 可调，λ=λ₀(1+z)(1−v/c)，详见 §6.5）；上传光谱（登录后） |
 | 余辉SED分析（开发中） | 预留 |
@@ -499,7 +499,7 @@ frontend/
         ├── fitting_tab.js    # 详情页"余辉拟合"标签页（配置/任务轮询/结果展示，见 §8.14）
         ├── stats.js          # 全局统计（全天图/红移柱状图/波段覆盖）
         ├── relations.js      # 统计关系（6 关系平铺卡片/来源切换/分组 OLS 拟合/导出 CSV）
-        ├── hostfit_tab.js    # 详情页「宿主星系」标签页（宿主信息/测光表/pcigale 拟合，见 §8.20、§8.22）
+        ├── hostfit_tab.js    # 详情页「宿主星系」标签页（宿主信息/测光表/pcigale·prospector 拟合，见 §8.20、§8.22）
         ├── sed_tab.js        # 详情页「SED 分析」标签页（SED 构建/拟合/结果/时间序列诊断，见 §8.27）
         ├── stats_hosts.js    # 宿主星系统计子页（覆盖率/M*/SFR/绝对星等—红移图，见 §8.22）
         ├── create.js         # 新建事件
@@ -574,6 +574,8 @@ drupal-settings `objectFlot.*.params.markings`），全部在前端实现，无�
 | `AJST_CORS_ORIGINS` | CORS 允许来源白名单（逗号分隔；会话基于 cookie，不支持通配） | `localhost/127.0.0.1` 的 5000/8000/8080 端口；显式设为 `'*'` 恢复旧通配行为（不推荐） |
 | `AJST_PCIGALE_BIN` | hostfit 使用的 pcigale 可执行文件路径 | 未设置时按 `shutil.which('pcigale')` → 内置回退路径查找；实际选用路径记录在任务 run.log |
 | `AJST_PCIGALE_FILTER_DIR` | pcigale 滤光片库目录覆盖项（网页端滤光片曲线注册与 `scripts/fetch_svo_filters.py` 共用） | 未设置时按已安装 pcigale 包路径 → which('pcigale') 推导 |
+| `SPS_HOME` | hostfit prospector 引擎所需的 FSPS 数据目录 | 未设置时回退读 `AJST_SPS_HOME`；prospector 为可选依赖（runner 惰性导入），未安装/未配置不影响服务启动，仅运行 prospector 任务时报错 |
+| `AJST_SPS_HOME` | `SPS_HOME` 未设置时的替代 FSPS 数据目录变量 | 无 |
 
 安全相关默认行为（2026-09-12 起）：登录接口对同一 IP+账户 15 分钟内失败 5 次锁定（429）；
 `SESSION_COOKIE_SAMESITE='Lax'`；请求体上限 `MAX_CONTENT_LENGTH=32MB`（超限 413）；
@@ -1162,15 +1164,21 @@ TNS 对象网页执行同步：
 
 **经验函数拟合**（`POST /api/lightcurves/fit_model`，无需登录，同步最小二乘，结果不落库）：
 
-- 请求体：`{"model": "pl"|"bpl"|"sbpl", "points": [{"t","f","ferr"}...], "bounds": {"tb": [lo, hi]}}`
+- 请求体：`{"model": "pl"|"bpl"|"sbpl"|"fred", "points": [{"t","f","ferr"}...], "bounds": {"tb": [lo, hi]}}`
   （`bounds` 可选，bpl/sbpl 拐点 tb 的预设范围（秒），与数据范围取交集）
 - 函数形式（前端 `detail.js fitModelFlux` 为严格镜像）：
   - `pl`：`F = A·t^(−alpha)`，最少 3 点
   - `bpl`：分段幂律，tb 处连续，`A = Fb·tb^alpha1`，最少 5 点
   - `sbpl`（v2.12）：平滑断裂幂律 `F = Fb·[(t/tb)^(n·alpha1)+(t/tb)^(n·alpha2)]^(−1/n)`，
     平滑因子 n>0（越大越尖锐，n→∞ 退化为 bpl），最少 6 点；后端用 logaddexp 数值稳定实现
+  - `fred`（v2.18）：Norris+2005 脉冲模型 `F = A·exp(2μ)·exp(−τ1/u−u/τ2)`，
+    u = x+μ−x1 > 0，μ = (τ1/τ2)^{1/2}（此归一化使 A 即峰值强度；峰值位于
+    x = x1+(τ1τ2)^{1/2}−μ），参数 A/τ1/τ2/x1，最少 5 点
 - 内部以拐点/参考时刻锚定再参数化（Fb/tb），`scipy.optimize.least_squares` 带界求解，
-  参数误差由 Jacobian SVD 近似协方差 + 链式法则变换给出
+  参数误差由 Jacobian SVD 近似协方差 + 链式法则变换给出；v2.18 起响应新增
+  `param_cov`（`{keys, matrix}`，输出参数基的完整协方差，拟合失败时为 null），
+  前端据此在拟合结果列表显示每参数 ±1σ，并在图上叠加 1σ 半透明置信带
+  （由 param_cov 经数值 Jacobian 传播 σ(t)）
 - 前端入口：详情页光变曲线标签下方「添加拟合」行（选 bpl/sbpl 时出现 tb∈[min,max] 预设范围输入）
 
 **距离模数**：`Transient.to_dict()` 新增 `distmod` 字段（astropy Planck18 宇宙学，
@@ -1187,6 +1195,12 @@ TNS 对象网页执行同步：
 - 顶部副轴：`顶部轴: 天/MJD/无`；MJD 由 T0 + t/86400 计算（无 T0 时禁用）；手绘插件
   按显示单位取 1-2-5 规整刻度
 - `静止系 t/(1+z)` 复选框（无红移禁用，仅时间轴除以 1+z）
+- 「复制光变图」按钮（v2.18）：当前光变图（带标题与图例）以 PNG 复制到剪贴板；
+  非安全上下文 / 剪贴板不可用时回退为下载 PNG
+- 「显示当前时刻」开关（v2.18，默认关，源无 T0 时禁用）：图上绘制贯通红色竖虚线
+  标记当前时刻（按 T0 起算的时间差定位，随静止系开关做 (1+z) 换算），不改变坐标轴范围
+- 时间误差棒（v2.18）：勾选误差棒时，有时间误差（time_err）的探测点同时绘制水平时间误差棒
+- 时间横轴刻度标签改科学计数法（v2.18，如 7e3，整数尾数无小数位）
 - `Y: 绝对星等`（无红移禁用）：M = m_AB − distmod，线性反向星等轴（右轴 AB 视星等隐藏），
   星等空间误差 σ_m = (2.5/ln10)·σ_F/F
 - 多源对比页同样新增 `Y: 绝对星等`（按各源红移分别计算，无红移源不显示）
@@ -1195,24 +1209,56 @@ TNS 对象网页执行同步：
 Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详情页光变图、
 多源对比图与拟合标签页图。
 
-### 8.20 宿主星系与 pcigale SED 拟合（2026-08-29 新增）
+### 8.20 宿主星系与 pcigale / prospector SED 拟合（2026-08-29 新增；2026-09-18 起双引擎）
 
 - 数据模型：`host_galaxies` 表（§2.6），每源一行；随 `--dump` 往返 `info/<tid>.json` 的 `host_galaxy` 字段。
 - 详情页「宿主星系」tab（`frontend/js/pages/hostfit_tab.js`）：宿主信息编辑（坐标/红移/红移类型）、
-  多波段测光表（mag + err + mag_sys AB/Vega/ST + 来源，逐行勾选参与拟合）、拟合配置（固定红移 /
-  测光红移网格）、任务队列（5s 轮询）、结果展示（best/bayes 参数表 + SED 图 + best_model.fits 下载）。
-- 拟合子系统 `backend/hostfit/`：作业记录复用 `fitting_results` 表（model_name=`pcigale_host`，
-  状态在 extra_data.status）；runner 生成 pcigale 输入（AB/Vega/ST → mJy 换算，缺 Vega2AB 或无
+  多波段测光表（mag + err + mag_sys AB/Vega/ST + 来源，逐行勾选参与拟合）、拟合配置卡
+  （v2.18 起顶部**引擎单选 pcigale / prospector**，按引擎显示对应参数区；固定红移 /
+  测光红移模式）、任务队列（5s 轮询，任务列表与结果区显示引擎徽标）、结果展示
+  （best/bayes 参数表 + SED 图 + 产物下载；prospector 结果另含 corner 角图）。
+- 拟合子系统 `backend/hostfit/`：作业记录复用 `fitting_results` 表（model_name 按引擎为
+  `pcigale_host` / `prospector_host`，状态在 extra_data.status，extra_data.engine 记录引擎；
+  v2.18 前缺 engine 字段的存量任务按 model_name 推断），`jobs.py` 按引擎分发 runner，
+  产物目录沿用 `fitting_store/<tid>/hostfit_<jobid>/`，不进数据仓库、全量重建清空（与余辉拟合一致）。
+- **pcigale 引擎**（`runner.py`）：生成 pcigale 输入（AB/Vega/ST → mJy 换算，缺 Vega2AB 或无
   pcigale 滤光片的波段跳过并警告）→ 子进程 `pcigale run`（基础链 sfhdelayed+bc03
   +dustatt_modified_CF00+redshifting，pdf_analysis；nebular / dl2014 为前端可勾选的可选模块，
   参数固定默认值；当前模型组合与网格模型数提示实时显示在前端）→ 解析 results.txt →
   matplotlib 生成 sed.png。配套 pcigale.ini.spec 由 runner 从随代码分发的超集模板
   （`backend/hostfit/pcigale.ini.spec`）按启用模块逐任务裁剪生成——pcigale 2025.0 要求 ini
   覆盖 spec 声明的所有段，缺整段报 "parameter None: False" 且 exit 0、不产出 out/（2026-09-04
-  修复，runner 对该情形有防御性识别，校验失败与拟合失败分开报错）。产物在
-  `fitting_store/<tid>/hostfit_<jobid>/`，不进数据仓库、全量重建清空（与余辉拟合一致）。
-- 「写入宿主信息」：用户确认后把 bayes 参数写入 `derived`；测光红移模式同时回写
-  redshift/redshift_err/redshift_type='phot'。
+  修复，runner 对该情形有防御性识别，校验失败与拟合失败分开报错）。
+- **prospector 引擎**（`runner_prospector.py`，v2.18 新增）：
+  - 惰性 import prospect / sedpy / fsps——可选依赖（requirements.txt 有对应注释段：
+    astro-prospector / astro-sedpy / python-fsps / dynesty / emcee / h5py / corner /
+    matplotlib）未安装不影响服务启动与 pcigale 引擎，仅提交 prospector 任务时报错；
+    需 FSPS 数据目录（`SPS_HOME`，未设置时回退 `AJST_SPS_HOME`，见 §7.1）。
+  - 模型：parametric_sfh（delayed-tau：mass / tage / tau / logzsol / dust2）+ 可选组件
+    use_nebular（电离气体发射线）/ use_duste（尘埃红外再辐射）/ use_igm（默认开）；
+    先验范围可配（mass/tau 对数均匀，tage/dust2/logzsol TopHat）；红移模式 fixed 或
+    photoz（zred 自由，TopHat [z_min, z_max]）。
+  - 采样器：dynesty（默认 nlive=100，上限 500）或 emcee（默认 32 walkers × 3000 迭代、
+    burn 500；上限 nwalkers 128 / niter 20000）。
+  - 输出参数 {best, bayes, bayes_err}：自由参数 + 派生量 m_star（存活恒星质量）、
+    mass_formed、sfr（delayed-tau 解析式，100% 形成质量归一）、Av（= dust2 × 1.086）、
+    tage；photoz 模式另有 redshift / redshift_err；chi_squared 为最佳拟合约化 χ²。
+    派生量由 ≤200 个后验子样本逐个计算后取中位数与 1σ。
+  - 产物：result.json / results.txt / sed.png / corner.png / run.log。
+  - 端到端验证：以 GRB170817A 宿主（NGC 4993）的文献测光跑通，
+    m_star ≈ 1.2×10¹¹ M☉，与文献一致。
+- **测光输入口径两引擎一致**：跳过 upperlimit 行、mag_err 缺省按 σ=0.2 mag、AB/Vega/ST
+  星等系统换算、银消改正同一实现（`extinction.correct_host_phot`，见 §8.24）；
+  **波段可用性判据不同**——pcigale 需要 `extra_data.pcigale_name`（pcigale 滤光片名），
+  prospector 需要滤光片透过率曲线（`extra_data.transmission`），且有效波段须 ≥4。
+- API（v2.18）：`GET /api/hostfit/config` 返回结构改为按引擎分节
+  `{pcigale:{defaults,modules,optional_modules,available_bands}, prospector:{defaults,optional_modules,available_bands}}`
+  （前端兼容旧扁平结构）；`POST /api/hostfit/jobs` 的 config 新增 `engine`
+  （`'pcigale'` 默认 / `'prospector'`）；任务简报/详情新增 `engine` 字段；
+  files 新增 `corner` 类（prospector 角图）。
+- 「写入宿主信息」：pcigale 结果照旧把 bayes 参数写入 `derived`；prospector 结果映射
+  derived={m_star, sfr, age_main（tage Gyr→Myr）, Av_ISM, chi2, fit_at, job_id, engine}；
+  测光红移模式两引擎均同时回写 redshift/redshift_err/redshift_type='phot'。
 - 滤光片：`FilterDef.extra_data` 存 `pcigale_name`（如 `sloan.sdss.g`）与 `transmission`
   透过率曲线（SVO FPS 拉取，脚本 `scripts/fetch_svo_filters.py`；pcigale 2025.0 的
   `pcigale-filters add` 在 numpy≥2 下需 np.trapz→trapezoid shim，脚本已内置）。
@@ -1230,7 +1276,7 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
   Dec 限 [-90,90]，非法输入 400。
 - **宿主测光表**（详情页「宿主星系」tab）：band 列改为 datalist 下拉 + 打字模糊过滤
   （候选取自 filters 表，按波长排序），输入波段不在库中时行内红字提示（仍可保存）；
-  新增「上限」列（`upperlimit`，上限行不参与 pcigale 拟合，runner 侧亦跳过）；
+  新增「上限」列（`upperlimit`，上限行不参与拟合，runner 侧亦跳过）；
   `mag_err` 可留空，非上限且误差为空的点后续处理（拟合 / 统计图误差棒）按 σ=0.2 mag 计
   （占位符与表下注释提醒，0.2 不写入记录）。
 - **宿主统计图**：`/api/stats/hosts` 移除 `z_pairs`，新增 `abs_mag_points`
@@ -1286,7 +1332,7 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
   两者都缺或依赖不可用时回退原始值并注明。
   - `/api/stats/hosts` 的 `abs_mag_points`：gext_corr 非真的行先减 A_λ 再算 M，
     返回点新增 `gext_applied` / `gext_Alambda` 字段（前端 tooltip 标注「已银消改正」）。
-  - hostfit 拟合（`hostfit/runner.py`）：job config 中 gext_corr 非真的行先改正再转 mJy，
+  - hostfit 拟合（`hostfit/runner.py` 与 `runner_prospector.py`）：job config 中 gext_corr 非真的行先改正再转 mJy，
     run.log 记录"对 N 个未改正测光点应用了银消改正"（含 E(B-V) 与坐标来源）；
     历史未重跑的 job 不受影响。
   - 导出 `GET /api/export/host_photometry/<tid>?format=csv|json`（需登录）：列含
@@ -1393,7 +1439,7 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
 
 详情页「SED 分析」标签页（`backend/sedfit/` + `backend/routes/sedfit.py` +
 `frontend/js/pages/sed_tab.js`），面向暂现源本体的频谱能量分布构建与拟合，
-与宿主 pcigale SED（§8.20）互补。四个区块：SED 构建器、模型拟合、任务与结果、
+与宿主星系 SED 拟合（§8.20）互补。四个区块：SED 构建器、模型拟合、任务与结果、
 时间序列诊断。
 
 - **SED 构建器（M1）**：`sedfit/builder.py`，同步纯计算。历元选择两种模式：
@@ -1408,10 +1454,9 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
   mw_f99/mw_ccm 消光律，dust_extinction 实现；smc/lmc 为 G03 平均曲线，mw 为
   P92；R_V 可解锁为自由参数）、两段平滑幂律+宿主消光 `powerlaw_2seg`（单断折，
   硬约束 β1≤β2，平滑度 s 为高级选项默认 3.0）、三段平滑幂律 `powerlaw_3seg`
-  （ν_m/ν_c 双断折，硬约束 nu_b1<nu_b2 且 β1≤β2≤β3）、光学+X 双幂律
-  `powerlaw_xray`（输出 β_ox 与
-  β_ox < β_X−0.5 暗暴判据、ν_c 位置判定）、稀释黑体 `blackbody` /
-  `2blackbody`（热成分先验 T>2e4 K 防互换）/ `bb_powerlaw`。MCMC 复用
+  （ν_m/ν_c 双断折，硬约束 nu_b1<nu_b2 且 β1≤β2≤β3）、稀释黑体 `blackbody` /
+  `2blackbody`（热成分先验 T>2e4 K 防互换）/ `bb_powerlaw`。（v2.18 起移除
+  「光学+X 双幂律」模型及其前端关联配置项。）MCMC 复用
   vegas_unified 的 custom_mcmc.py（emcee，worker 内惰性 import，同 fitting 的
   可选依赖约定）；上限点单侧罚。无 z 时黑体退化为 T+R/D 拟合（R/L 不可算并注明）。
   拟合后自动物理检查（β 域/T 域/超光速膨胀等警告）。
@@ -1460,6 +1505,7 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
 | psycopg2 | 2.x | PostgreSQL 驱动 |
 | astropy / dustmaps / dust_extinction | — | 银河系消光改正（CSFD + P92） |
 | VegasAfterglow[mcmc] | 2.0.6 | 余辉正向激波拟合（含 bilby/emcee/dynesty/corner，见 §8.14） |
+| astro-prospector / astro-sedpy / python-fsps（可选） | — | hostfit prospector 宿主 SED 拟合引擎（需 FSPS 数据目录，见 §8.20） |
 | JavaScript ESM | — | 前端模块系统 |
 | Bootstrap | 5.x | UI 框架 |
 | Chart.js | 4.x | 图表 |
@@ -1493,10 +1539,34 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 
 ## 十一、版本历史
 
+### v2.18（2026-09-18）— hostfit prospector 引擎 + 光变页/数据表增强 + SED 模型精简
+
+- hostfit 新增 prospector 拟合引擎（与 pcigale 并列可选）：`backend/hostfit/runner_prospector.py`
+  （惰性 import prospect/sedpy/fsps，缺包不影响服务启动；FSPS 数据目录取 `SPS_HOME` /
+  `AJST_SPS_HOME`）；parametric_sfh（delayed-tau）+ 可选 use_nebular/use_duste/use_igm 组件，
+  dynesty 或 emcee 采样，红移 fixed/photoz；输出派生量 m_star/mass_formed/sfr/Av/tage
+  （≤200 后验子样本取中位数与 1σ），产物含 corner 角图；fitting_results.model_name
+  按引擎为 `pcigale_host`/`prospector_host`；端到端验证：GRB170817A 宿主（NGC 4993）
+  文献测光跑通，m_star≈1.2×10¹¹ M☉ 与文献一致；详见 §8.20
+- hostfit API：`GET /api/hostfit/config` 改按引擎分节返回（前端兼容旧扁平结构），
+  `POST /api/hostfit/jobs` config 新增 `engine`，任务简报/详情带 `engine` 字段，
+  files 新增 `corner` 类；前端拟合配置卡按引擎切换参数区、任务列表与结果区显示引擎徽标
+- 光变曲线页：「复制光变图」按钮（PNG 复制到剪贴板，非安全上下文/剪贴板不可用时回退下载）、
+  「显示当前时刻」红色竖虚线开关（默认关，无 T0 禁用，随静止系开关 (1+z) 换算）、
+  勾选误差棒时探测点加绘水平时间误差棒、时间轴刻度改科学计数法
+- 经验函数拟合：新增 FRED 脉冲模型（Norris+2005，最少 5 点）；`fit_model` 响应新增
+  `param_cov`（输出参数基协方差，失败为 null），前端显示每参数 ±1σ 并叠加 1σ 置信带
+  （数值 Jacobian 传播）
+- 数据表「添加记录」表单：波段可输入+下拉建议、单位下拉、时间/时间误差乘积因子下拉
+  （前端换算为秒入库）；添加记录后停留在数据表页（批量删除等整页刷新同样生效）
+- SED 分析：移除「光学+X 双幂律」模型（powerlaw_xray）及前端关联配置（ν_split 配置项、
+  暗暴判据高亮等）；现有模型 powerlaw_dust / powerlaw_2seg / powerlaw_3seg / blackbody /
+  2blackbody / bb_powerlaw / blackbody_series
+
 ### v2.17（2026-09-13）— 暂现源 SED 分析
 
 - 详情页新增「SED 分析」标签页：SED 构建器（时段取值 / GP 内插两种同时化模式）、
-  模型拟合（幂律+宿主消光、光学+X 双幂律与 β_ox 暗暴判据、单/双黑体、黑体+幂律，
+  模型拟合（幂律+宿主消光、两段/三段平滑幂律、单/双黑体、黑体+幂律，
   MCMC 复用 custom_mcmc）、多历元黑体序列（T/R/L(t) 三联图）、闭包关系 α–β 诊断、
   伪玻尔兹曼光变（L_obs/L_bb/L_bc 交叉检验），详见 §8.27
 - 后端新增 `backend/sedfit/` 包与 `/api/sed/*` 路由；任务复用 `fitting_results` 表

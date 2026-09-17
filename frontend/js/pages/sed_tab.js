@@ -1013,9 +1013,6 @@ function renderModelConfig() {
           ${isPl ? `
           <div class="col-6 col-md-3"><label class="small text-secondary mb-0">ν0 (Hz)</label>
             <input type="number" class="form-control form-control-sm" id="sedNu0" step="any" placeholder="默认 5e14"></div>` : ''}
-          ${key === 'powerlaw_xray' ? `
-          <div class="col-6 col-md-3"><label class="small text-secondary mb-0">ν_split (Hz)</label>
-            <input type="number" class="form-control form-control-sm" id="sedNuSplit" step="any" placeholder="默认 1e17"></div>` : ''}
           <div class="col-12">
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="sedBandpass" checked>
@@ -1087,8 +1084,6 @@ async function submitJob() {
     if (isFinite(nburn)) config.nburn = nburn;
     const nu0 = numOrNull(document.getElementById('sedNu0')?.value);
     if (nu0 != null && nu0 > 0) config.nu0 = nu0;
-    const nuSplit = numOrNull(document.getElementById('sedNuSplit')?.value);
-    if (nuSplit != null && nuSplit > 0) config.nu_split = nuSplit;
     const bp = document.getElementById('sedBandpass');
     if (bp && !bp.checked) config.bandpass = false;
   }
@@ -1264,7 +1259,7 @@ async function loadResult(jobId) {
   else renderSingleResult(detail);
 }
 
-// 派生量统一渲染（数值 sci3；布尔 是/否；字符串转义；暗暴标记高亮）
+// 派生量统一渲染（数值 sci3；布尔 是/否；字符串转义）
 function _derivedHtml(derived) {
   const entries = Object.entries(derived || {});
   if (!entries.length) return '';
@@ -1274,8 +1269,7 @@ function _derivedHtml(derived) {
     else if (typeof v === 'boolean') txt = v ? '是' : '否';
     else if (typeof v === 'number') txt = sci3(v);
     else txt = esc(v);
-    const danger = k === 'dark_burst' && v === true;
-    return `<span class="badge-tag ${danger ? 'bg-danger text-white' : 'badge-neutral'}" title="${escAttr(k)}">${esc(k)} = ${txt}</span>`;
+    return `<span class="badge-tag badge-neutral" title="${escAttr(k)}">${esc(k)} = ${txt}</span>`;
   }).join(' ');
   return `<div class="mb-2"><span class="small text-secondary">派生量：</span><div class="d-flex flex-wrap gap-1 mt-1">${rows}</div></div>`;
 }
@@ -1326,7 +1320,7 @@ function renderSingleResult(detail) {
     ['耗时', fmtRuntime(detail.runtime_s)],
   ];
   // 幂律系模型允许把 β 一键填入闭包诊断
-  const betaName = params.beta ? 'beta' : (params.beta_o ? 'beta_o' : null);
+  const betaName = params.beta ? 'beta' : null;
 
   area.innerHTML = `
     <div class="card">

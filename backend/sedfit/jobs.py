@@ -1,9 +1,10 @@
 """SED 拟合异步任务系统（克隆 fitting/jobs.py 模式）。
 
 - 单 worker 线程池串行执行；任务记录落在 fitting_results 表：
-    model_name  = 'sed_<model>'（sed_powerlaw_dust / sed_powerlaw_xray /
-                  sed_blackbody / sed_2blackbody / sed_bb_powerlaw /
-                  sed_blackbody_series；不含冒号，不串入 fitting/hostfit 列表）
+    model_name  = 'sed_<model>'（sed_powerlaw_dust / sed_powerlaw_2seg /
+                  sed_powerlaw_3seg / sed_blackbody / sed_2blackbody /
+                  sed_bb_powerlaw / sed_blackbody_series；不含冒号，
+                  不串入 fitting/hostfit 列表）
     parameters  = 最大似然参数 {名: {v, err}}（series 模式为汇总信息）
     chi_squared = chi2_min（未除 dof；series 模式为 None）
     extra_data  = {engine: 'sed_mcmc', model, config, status, error, runtime_s,

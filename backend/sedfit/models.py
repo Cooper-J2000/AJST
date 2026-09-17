@@ -26,7 +26,6 @@ _H = 6.62607015e-27         # 普朗克常数 [erg·s]
 _K_B = 1.380649e-16         # 玻尔兹曼常数 [erg/K]
 _SIGMA_SB = 5.670374419e-5  # 斯特藩-玻尔兹曼常数 [erg/cm²/s/K⁴]
 _PC_CM = 3.085677581e18     # 1 pc [cm]
-_NU_1KEV = 2.417989242e17   # 1 keV 光子对应频率 [Hz]
 
 
 def planck_nu(nu, T):
@@ -103,86 +102,6 @@ class PowerLawDust:
     @staticmethod
     def sanity_checks(params, derived, meta):
         return _beta_checks(params.get('beta'), meta)
-
-
-class PowerLawXray:
-    """光学+X 双幂律扩展：ν<ν_split 为光学段（含宿主消光），ν≥ν_split 为 X 段。
-
-    两段各自归一化、不强制连续；输出 β_ox 与暗暴判据
-    （β_ox < β_X − 0.5，Jakobsson+2004 / van der Horst+2009）。"""
-    key = 'powerlaw_xray'
-    label = '光学+X 双幂律（β_ox/β_X 暗暴判据）'
-    params_schema = [
-        {'name': 'A_o', 'lo': 1e-8, 'hi': 1e4, 'scale': 'log', 'unit': 'mJy',
-         'desc': '光学段 ν0 处归一化（未消光）'},
-        {'name': 'beta_o', 'lo': -2.0, 'hi': 3.5, 'scale': 'linear', 'unit': '',
-         'desc': '光学段谱指数'},
-        {'name': 'A_X', 'lo': 1e-10, 'hi': 1e2, 'scale': 'log', 'unit': 'mJy',
-         'desc': 'X 段 1keV 处归一化'},
-        {'name': 'beta_X', 'lo': -2.0, 'hi': 3.5, 'scale': 'linear', 'unit': '',
-         'desc': 'X 段谱指数'},
-        {'name': 'Av', 'lo': 0.0, 'hi': 6.0, 'scale': 'linear', 'unit': 'mag',
-         'desc': '宿主 V 带消光（仅作用光学段）'},
-    ]
-    rv_schema = PowerLawDust.rv_schema
-
-    @staticmethod
-    def param_defs(config):
-        specs = [(p['name'], p['lo'], p['hi'], p['scale'])
-                 for p in PowerLawXray.params_schema]
-        if config.get('rv_free'):
-            specs.append(('Rv', 1.5, 6.0, 'linear'))
-        return _param_defs(specs)
-
-    @staticmethod
-    def model_flux(params, t, nu, config):
-        nu = np.asarray(nu, dtype=float)
-        nu0 = float(config.get('nu0') or 5e14)
-        nu_split = float(config.get('nu_split') or 1e17)
-        f_mjy = np.empty_like(nu)
-        opt = nu < nu_split
-        f_mjy[opt] = params['A_o'] * (nu[opt] / nu0) ** (-params['beta_o'])
-        f_mjy[opt] = laws.extinguish(nu[opt], f_mjy[opt], config.get('z'),
-                                     config.get('law', 'smc'), params['Av'],
-                                     rv=params.get('Rv') or config.get('rv'))
-        f_mjy[~opt] = params['A_X'] * (nu[~opt] / _NU_1KEV) ** (-params['beta_X'])
-        return f_mjy * MJY_TO_CGS
-
-    @staticmethod
-    def derived(params, config):
-        nu0 = float(config.get('nu0') or 5e14)
-        nu_opt, nu_x = 6e14, _NU_1KEV  # 5000 Å / 1 keV 参考点
-        # β_ox 用观测（含消光）光学流量；按文献惯例取正值定义
-        # β_ox = ln(F_opt/F_X)/ln(ν_X/ν_opt)（Fν∝ν^(−β_ox)，Jakobsson+2004；
-        # 设计方案公式分母写 ln(ν_opt/ν_X)，会差一个负号，此处按文献惯例实现）
-        f_o = laws.extinguish(np.array([nu_opt]),
-                              np.array([params['A_o'] * (nu_opt / nu0) ** (-params['beta_o'])]),
-                              config.get('z'), config.get('law', 'smc'), params['Av'],
-                              rv=params.get('Rv') or config.get('rv'))[0]
-        f_x = params['A_X'] * (nu_x / _NU_1KEV) ** (-params['beta_X'])
-        beta_ox = (math.log(f_o / f_x) / math.log(nu_x / nu_opt)
-                   if f_o > 0 and f_x > 0 else float('nan'))
-        beta_x = params['beta_X']
-        same_seg = abs(params['beta_o'] - beta_x) < 0.1
-        return {
-            'beta_o': params['beta_o'], 'beta_X': beta_x,
-            'beta_ox': beta_ox,
-            'dark_burst': bool(np.isfinite(beta_ox) and beta_ox < beta_x - 0.5),
-            'nu_c_note': ('β_o ≈ β_X：光学与 X 射线同谱段（ν_c 在 X 之上）'
-                          if same_seg else
-                          'β_o ≠ β_X：谱 break 位于光学—X 之间（ν_c 或 ν_m 介于其间）'),
-            'p_if_nu_above_nu_c': 2.0 * beta_x,
-            'p_if_nu_m_below_nu_below_nu_c': 2.0 * beta_x + 1.0,
-        }
-
-    @staticmethod
-    def sanity_checks(params, derived, meta):
-        warns = _beta_checks(params.get('beta_o'), meta, name='β_o')
-        warns += _beta_checks(params.get('beta_X'), meta, name='β_X')
-        if derived.get('dark_burst'):
-            warns.append(f"β_ox={derived['beta_ox']:.2f} < β_X−0.5："
-                         '满足暗暴判据（Jakobsson+2004）')
-        return warns
 
 
 class PowerLaw2Seg:
@@ -573,7 +492,7 @@ class BBPowerLaw(_BBBase):
                 + _beta_checks(params.get('beta'), meta))
 
 
-MODELS = {m.key: m for m in (PowerLawDust, PowerLawXray, PowerLaw2Seg,
+MODELS = {m.key: m for m in (PowerLawDust, PowerLaw2Seg,
                              PowerLaw3Seg, BlackBody, TwoBlackBody, BBPowerLaw)}
 
 # 任务 model_name 前缀（fitting_results 表，禁止含冒号以免串入 fitting 列表）
@@ -600,7 +519,6 @@ def describe(key):
         'config_options': {
             'law': [l['name'] for l in laws.list_laws()],
             'nu0': '幂律参考频率 Hz（默认 5e14）',
-            'nu_split': '双幂律分段频率 Hz（默认 1e17）',
             's': 'powerlaw_2seg 断折平滑度（高级选项，默认 3.0，越大越锐利）',
             's1': 'powerlaw_3seg 第一断折平滑度（高级选项，默认 3.0，越大越锐利）',
             's2': 'powerlaw_3seg 第二断折平滑度（高级选项，默认 3.0）',

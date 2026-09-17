@@ -6,8 +6,8 @@ import { showToast } from '../api.js';
 import { fitLightcurveModel } from '../api.js';
 import { dragRectPlugin, attachDragZoom } from '../dragzoom.js';
 import { chartColors, ACADEMIC_FONT, academicFonts } from '../theme.js';
-import { mJyToMagAB, sortBandsByFreq, pointToMJy } from '../bands.js';
-import { esc, escAttr, sciFormat, sig3, minOf, maxOf } from '../utils.js';
+import { mJyToMagAB, sortBandsByFreq, pointToMJy, LOG_AXIS_FLOOR } from '../bands.js';
+import { esc, escAttr, sciFormat, sciTick, sci3, sig3, minOf, maxOf } from '../utils.js';
 import { createYErrBarPlugin } from '../chart_plugins.js';
 
 let lcChartInstance = null;
@@ -18,11 +18,18 @@ let lcAxisRange = { xmin: null, xmax: null, ymin: null, ymax: null };
 // ─── 叠加在光变图上的拟合曲线 ───
 let lcFits = [];
 const FIT_COLORS = chartColors().fits;   // 拟合线配色（随主题；切换主题后 reload 生效）
-const FIT_MODEL_NAMES = { pl: 'powerlaw', bpl: 'broken-powerlaw', sbpl: 'smoothly-broken-powerlaw' };
+const FIT_MODEL_NAMES = { pl: 'powerlaw', bpl: 'broken-powerlaw', sbpl: 'smoothly-broken-powerlaw', fred: 'FRED (Norris+2005)' };
+// 拟合列表参数显示：键序与标签（时间参数带 s 后缀）
+const FIT_PARAM_ORDER = { pl: ['A', 'alpha'], bpl: ['A', 'alpha1', 'alpha2', 'tb'], sbpl: ['A', 'alpha1', 'alpha2', 'tb', 'n'], fred: ['A', 'tau1', 'tau2', 'x1'] };
+const FIT_PARAM_LABELS = { A: 'A', alpha: 'α', alpha1: 'α1', alpha2: 'α2', tb: 'tb', n: 'n', tau1: 'τ1', tau2: 'τ2', x1: 'x1' };
 // ─── 当前源的红移/T0/距离模数（光变图静止系、顶部 MJD 轴、绝对星等用） ───
 let _lcRedshift = null;
 let _lcT0MJD = null;   // T0 对应的 MJD（无 T0 时为 null）
 let _lcDistmod = null;
+let _lcName = null;    // 源名（复制光变图标题用）
+// ─── 当前时刻竖线（图头「显示当前时刻」开关，默认关闭） ───
+let _lcShowNow = false;
+let _lcZfac = 1;   // 静止系因子（buildLCChart 每轮重建同步）
 // ─── 光变图波段可见性（勾选框面板控制，默认全显示） ───
 let lcBandVisible = {};  // band → bool
 // ─── 光变图顶部副轴配置（null = 不画） ───
@@ -41,10 +48,11 @@ export function t0ToMJD(t0) {
 }
 
 // render() 获取源数据后调用：注入光变图用的源级参数
-export function setLCSourceParams({ redshift, t0, distmod }) {
+export function setLCSourceParams({ redshift, t0, distmod, name }) {
   _lcRedshift = (redshift != null && redshift > -1) ? redshift : null;
   _lcT0MJD = t0ToMJD(t0);
   _lcDistmod = (distmod != null) ? distmod : null;
+  _lcName = name || null;
 }
 
 // render() 重建 DOM 前调用：销毁图表并重置全部图状态
@@ -54,10 +62,13 @@ export function resetLCChart() {
   lcAxisRange = { xmin: null, xmax: null, ymin: null, ymax: null };
   lcBandVisible = {};
   lcShowErr = true;
+  _lcShowNow = false;
+  _lcZfac = 1;
   _lcTopAxis = null;
   _lcRedshift = null;
   _lcT0MJD = null;
   _lcDistmod = null;
+  _lcName = null;
   _bands = null;
   _bandNames = null;
   _spectralColors = null;
@@ -74,6 +85,14 @@ function fitModelFlux(model, prm, t) {
     const m = Math.max(e1, e2);
     return Fb * Math.exp(-(m + Math.log(Math.exp(e1 - m) + Math.exp(e2 - m))) / prm.n);
   }
+  if (model === 'fred') {
+    // Norris 2005 脉冲形：μ=(τ1/τ2)^(1/2)，exp(2μ) 归一化使 A 即峰值强度；
+    // 定义域 u = t+μ-x1 > 0，域外取 0
+    const mu = Math.sqrt(prm.tau1 / prm.tau2);
+    const u = t + mu - prm.x1;
+    if (u <= 0) return 0;
+    return prm.A * Math.exp(2 * mu - prm.tau1 / u - u / prm.tau2);
+  }
   // bpl: tb 处连续
   return t <= prm.tb
     ? prm.A * Math.pow(t, -prm.alpha1)
@@ -84,6 +103,7 @@ function makeFitLabel(fit) {
   const prm = fit.params;
   if (fit.model === 'pl') return `${fit.band} PL: α=${sig3(prm.alpha)}`;
   if (fit.model === 'sbpl') return `${fit.band} SBPL: α1=${sig3(prm.alpha1)}, α2=${sig3(prm.alpha2)}, tb=${sig3(prm.tb)}s, n=${sig3(prm.n)}`;
+  if (fit.model === 'fred') return `${fit.band} FRED: A=${sci3(prm.A)}, τ1=${sig3(prm.tau1)}s, τ2=${sig3(prm.tau2)}s, x1=${sig3(prm.x1)}s`;
   return `${fit.band} BPL: α1=${sig3(prm.alpha1)}, α2=${sig3(prm.alpha2)}, tb=${sig3(prm.tb)}s`;
 }
 
@@ -92,8 +112,42 @@ let lcShowErr = true;   // 是否绘制误差棒（图头「误差棒」开关�
 const errorBarPlugin = createYErrBarPlugin({
   enabled: () => lcShowErr,
   errOf: (ds, raw, i) => ds._errorValues ? ds._errorValues[i] : null,
+  xErrOf: (ds, raw, i) => ds._timeErrValues ? ds._timeErrValues[i] : null,
   skipDataset: ds => ds._isUpperLimit || ds._isFit,
 });
+
+// ─── 当前时刻竖线（红色虚线，贯通全图；afterDraw 手绘，不参与轴范围计算） ───
+const lcNowLinePlugin = {
+  id: 'lcNowLine',
+  afterDraw(chart) {
+    if (!_lcShowNow || _lcT0MJD == null) return;
+    const xs = chart.scales.x;
+    const area = chart.chartArea;
+    if (!xs || !area) return;
+    // 与横轴同单位同坐标系：观测系秒数 = (当前 MJD − T0 MJD)×86400，静止系再除 (1+z)
+    const nowMJD = Date.now() / 86400000 + 40587;  // Unix epoch = MJD 40587
+    const tNow = (nowMJD - _lcT0MJD) * 86400 / _lcZfac;
+    if (!(tNow >= xs.min && tNow <= xs.max)) return;
+    const px = xs.getPixelForValue(tNow);
+    if (!isFinite(px)) return;
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.strokeStyle = '#f85149';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(px, area.top);
+    ctx.lineTo(px, area.bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#f85149';
+    ctx.font = `11px ${ACADEMIC_FONT}`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText('now', px + 4, area.top + 4);
+    ctx.restore();
+  },
+};
 
 // ─── 光变图顶部副轴（day / MJD）───
 // 每帧根据主横轴当前范围在显示单位内取 1-2-5 规整刻度，再换算回秒定位像素
@@ -193,18 +247,64 @@ function buildBandPanel(sortedBands, spectralColors) {
   });
 }
 
+// ─── 1σ 置信带（mJy 空间）：采样点中心差分数值 Jacobian，σ(t)=√(J·cov·Jᵀ) ───
+// fit.param_cov = { keys: [...], matrix: [[...]] }（后端 fit_model 返回，键序为 params 参数基）
+function fitBandPoints(fit, ts) {
+  const cov = fit.param_cov;
+  if (!cov || !Array.isArray(cov.keys) || !Array.isArray(cov.matrix)) return null;
+  const keys = cov.keys, M = cov.matrix, k = keys.length;
+  if (!k || M.length !== k || M.some(row => !Array.isArray(row) || row.length !== k)) return null;
+  const base = keys.map(key => fit.params[key]);
+  if (base.some(v => v == null || !isFinite(v))) return null;
+  const modelAt = (pv, tt) => {
+    const prm = {};
+    keys.forEach((key, j) => { prm[key] = pv[j]; });
+    return fitModelFlux(fit.model, prm, tt);
+  };
+  const out = [];
+  for (const tt of ts) {
+    const f0 = modelAt(base, tt);
+    if (!(f0 > 0) || !isFinite(f0)) continue;
+    const J = new Array(k);
+    let bad = false;
+    for (let j = 0; j < k; j++) {
+      const h = Math.max(Math.abs(base[j]), 1e-12) * 1e-5;
+      const pp = [...base], pm = [...base];
+      pp[j] += h; pm[j] -= h;
+      const fp = modelAt(pp, tt), fm = modelAt(pm, tt);
+      if (!isFinite(fp) || !isFinite(fm)) { bad = true; break; }
+      J[j] = (fp - fm) / (2 * h);
+    }
+    if (bad) continue;
+    let v = 0;
+    for (let i = 0; i < k; i++) for (let j = 0; j < k; j++) v += J[i] * M[i][j] * J[j];
+    if (!(v >= 0)) continue;
+    const s = Math.sqrt(v);
+    out.push({ x: tt, lo: f0 - s, hi: f0 + s });
+  }
+  return out;
+}
+
+// 拟合参数文本（含 1σ 误差；A 用科学计数，时间参数带 s 后缀）
+function fitParamsText(fit) {
+  const errs = fit.param_errors || {};
+  return (FIT_PARAM_ORDER[fit.model] || []).map(k => {
+    const v = fit.params[k];
+    if (v == null) return null;
+    const fmt = k === 'A' ? sci3 : sig3;
+    const unit = (k === 'tb' || k === 'x1') ? 's' : '';
+    const e = errs[k];
+    return `${FIT_PARAM_LABELS[k]}=${fmt(v)}${(e != null && isFinite(e)) ? '±' + fmt(e) : ''}${unit}`;
+  }).filter(Boolean).join(', ');
+}
+
 // ─── 拟合列表 UI ───
 function renderFitList() {
   const el = document.getElementById('lcFitList');
   if (!el) return;
   if (lcFits.length === 0) { el.innerHTML = ''; return; }
   el.innerHTML = lcFits.map((fit, i) => {
-    const prm = fit.params;
-    const ptxt = fit.model === 'pl'
-      ? `α=${sig3(prm.alpha)}`
-      : fit.model === 'sbpl'
-        ? `α1=${sig3(prm.alpha1)}, α2=${sig3(prm.alpha2)}, tb=${sig3(prm.tb)}s, n=${sig3(prm.n)}`
-        : `α1=${sig3(prm.alpha1)}, α2=${sig3(prm.alpha2)}, tb=${sig3(prm.tb)}s`;
+    const ptxt = fitParamsText(fit);
     const prange = (fit.pmin !== fit.tmin || fit.pmax !== fit.tmax)
       ? ` · 绘制[${sciFormat(fit.pmin)}, ${sciFormat(fit.pmax)}]s` : '';
     return `<div class="d-flex align-items-center gap-2 mb-1">
@@ -255,6 +355,10 @@ export function wireLCChartGlobals(bands, bandNames, spectralColors) {
     lcShowErr = on;
     if (lcChartInstance) lcChartInstance.update('none');
   };
+  window.lcShowNowToggle = (on) => {   // 当前时刻竖线开关：只影响绘制，不动轴范围
+    _lcShowNow = on;
+    if (lcChartInstance) lcChartInstance.update('none');
+  };
 
   // ── 坐标范围手动调节 ──
   window.applyLCAxisRange = () => {
@@ -299,7 +403,7 @@ export function wireLCChartGlobals(bands, bandNames, spectralColors) {
       .filter(d => d && d.t > 0 && d.f > 0
         && (isNaN(tminIn) || d.t >= tminIn)
         && (isNaN(tmaxIn) || d.t <= tmaxIn));
-    const need = model === 'pl' ? 3 : (model === 'bpl' ? 5 : 6);
+    const need = model === 'pl' ? 3 : (model === 'sbpl' ? 6 : 5);
     if (pts.length < need) {
       showToast(`有效数据点不足（${FIT_MODEL_NAMES[model] || model} 需 ≥${need} 点，当前 ${pts.length} 点）`, 'warning');
       return;
@@ -333,6 +437,8 @@ export function wireLCChartGlobals(bands, bandNames, spectralColors) {
         pmin: (isFinite(pminIn) && pminIn > 0) ? pminIn : tmin,
         pmax: (isFinite(pmaxIn) && pmaxIn > 0) ? pmaxIn : tmax,
         params: res.params,
+        param_errors: res.param_errors || null,
+        param_cov: res.param_cov || null,
         N: res.N,
         color: FIT_COLORS[lcFits.length % FIT_COLORS.length],
       };
@@ -355,6 +461,63 @@ export function wireLCChartGlobals(bands, bandNames, spectralColors) {
     rebuildLCPlot(bands, bandNames, spectralColors);
   };
 }
+
+// ─── 复制光变图到剪贴板（含图例与标题） ───
+// 临时打开内置图例/标题同步重绘，离屏 canvas 铺底色合成后写剪贴板；
+// 非安全上下文或剪贴板写图失败时回退为下载 PNG
+window.copyLCChart = async () => {
+  const chart = lcChartInstance;
+  if (!chart) { showToast('光变图尚未生成，请先打开光变曲线页', 'warning'); return; }
+  const cc = chartColors();
+  const plg = chart.options.plugins;
+  const legend = plg.legend, title = plg.title || (plg.title = {});
+  const prev = { lg: legend.display, ti: title.display, text: title.text };
+  legend.display = true;
+  legend.position = 'top';
+  legend.labels = { color: cc.legend, font: academicFonts().legend, filter: (item) => item.text !== '' };
+  title.display = true;
+  title.text = `${_lcName || ''} 光变曲线`;
+  title.color = cc.legend;
+  title.font = academicFonts().title;
+  chart.update('none');
+  const restore = () => {
+    legend.display = prev.lg;
+    title.display = prev.ti;
+    title.text = prev.text;
+    chart.update('none');
+  };
+  try {
+    const src = chart.canvas;
+    const off = document.createElement('canvas');
+    off.width = src.width;
+    off.height = src.height;
+    const octx = off.getContext('2d');
+    octx.fillStyle = cc.canvasBg;
+    octx.fillRect(0, 0, off.width, off.height);
+    octx.drawImage(src, 0, 0);
+    const blob = await new Promise(r => off.toBlob(r, 'image/png'));
+    if (!blob) throw new Error('图像导出失败');
+    if (navigator.clipboard && window.isSecureContext && typeof ClipboardItem !== 'undefined') {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        showToast('光变图已复制到剪贴板', 'success');
+        return;
+      } catch { /* 剪贴板写图失败，回退下载 */ }
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${_lcName || 'lightcurve'}_lc.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    showToast('当前环境不支持剪贴板写图，已改为下载 PNG', 'warning');
+  } catch (err) {
+    showToast(`复制失败: ${err.message}`, 'danger');
+  } finally {
+    restore();
+  }
+};
 
 // ─── 数据表行内编辑/扣点成功后同步光变图数据源 ───
 // 就地替换 bands 分组数组中的点对象（与数据表 lcItems 共享同一引用），使已叠加的
@@ -399,6 +562,7 @@ function buildLCChart(bands, bandNames, spectralColors) {
   // 静止系：t/(1+z)（需红移）
   const restFrame = (document.getElementById('lcRestFrame')?.checked || false) && _lcRedshift != null;
   const zfac = restFrame ? (1 + _lcRedshift) : 1;
+  _lcZfac = zfac;  // 模块级同步（当前时刻竖线用）
   // 顶部副轴
   const topMode = document.getElementById('topAxis')?.value || 'day';
   _lcTopAxis = (topMode === 'none' || (topMode === 'mjd' && _lcT0MJD == null))
@@ -429,7 +593,9 @@ function buildLCChart(bands, bandNames, spectralColors) {
       const vals = detections.map(p => {
         const m = pointToMJy(p, useGext);
         if (!m) return null;
-        return { x: p.time / zfac, y: toY(m.y), err: toYerr(m.y, m.err), raw: p, clipped: m.clipped };
+        // 时间误差（秒）与横轴同坐标系：静止系同样除 (1+z)
+        const terr = (p.time_err != null && p.time_err > 0) ? p.time_err / zfac : null;
+        return { x: p.time / zfac, y: toY(m.y), err: toYerr(m.y, m.err), terr, raw: p, clipped: m.clipped };
       }).filter(d => d && isFinite(d.x) && isFinite(d.y)
         && !(absMag && d.clipped));  // 绝对星等模式下原始值≤0 的点无对应星等，不绘制（流量模式截断到底部并标注）
 
@@ -445,6 +611,7 @@ function buildLCChart(bands, bandNames, spectralColors) {
           pointRadius: 3,
           pointHoverRadius: 5,
           _errorValues: vals.map(d => d.err),
+          _timeErrValues: vals.map(d => d.terr),
           _clippedFlags: vals.map(d => d.clipped),
           _isUpperLimit: false,
           _band: band,
@@ -485,12 +652,39 @@ function buildLCChart(bands, bandNames, spectralColors) {
   for (const fit of lcFits) {
     const t0 = fit.pmin ?? fit.tmin, t1 = fit.pmax ?? fit.tmax;
     if (!(t0 > 0) || !(t1 > t0)) continue;
+    const ts = [];
+    for (let i = 0; i < 120; i++) ts.push(t0 * Math.pow(t1 / t0, i / 119));
     const data = [];
-    for (let i = 0; i < 120; i++) {
-      const tt = t0 * Math.pow(t1 / t0, i / 119);
+    for (const tt of ts) {
       const f = fitModelFlux(fit.model, fit.params, tt);
       if (!(f > 0) || !isFinite(f)) continue;
       data.push({ x: tt / zfac, y: toY(f) });
+    }
+    // 1σ 置信带（半透明阴影；先压入上/下边界，拟合线后画在其上）
+    const band = fitBandPoints(fit, ts);
+    if (band && band.length > 2) {
+      const hiPts = [], loPts = [];
+      for (const b of band) {
+        const yHi = toY(b.hi);
+        const yLo = toY(Math.max(b.lo, LOG_AXIS_FLOOR));
+        if (isFinite(yHi) && isFinite(yLo)) {
+          hiPts.push({ x: b.x / zfac, y: yHi });
+          loPts.push({ x: b.x / zfac, y: yLo });
+        }
+      }
+      if (hiPts.length > 2) {
+        datasets.push({
+          type: 'line', label: '', data: hiPts,
+          borderWidth: 0, pointRadius: 0, pointHoverRadius: 0,
+          showLine: true, fill: false, order: -1, _isFit: true,
+        });
+        datasets.push({
+          type: 'line', label: '', data: loPts,
+          borderWidth: 0, pointRadius: 0, pointHoverRadius: 0,
+          showLine: true, fill: '-1', backgroundColor: fit.color + '2e',
+          order: -1, _isFit: true,
+        });
+      }
     }
     datasets.push({
       type: 'line',
@@ -562,7 +756,7 @@ function buildLCChart(bands, bandNames, spectralColors) {
     lcChartInstance = new Chart(ctx, {
     type: 'scatter',
     data: { datasets },
-    plugins: [errorBarPlugin, lcTopAxisPlugin, dragRectPlugin],
+    plugins: [errorBarPlugin, lcNowLinePlugin, lcTopAxisPlugin, dragRectPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -596,7 +790,7 @@ function buildLCChart(bands, bandNames, spectralColors) {
           title: { display: true, text: restFrame ? 't/(1+z)  (s)' : 'time since T0  (s)', color: cc.tick, font: fonts.title },
           grid: { color: cc.gridSoft },
           border: { color: cc.tick },
-          ticks: { color: cc.tick, font: fonts.tick, callback: (v) => sciFormat(v) },
+          ticks: { color: cc.tick, font: fonts.tick, callback: (v) => sciTick(v) },
           afterDataLimits(scale) {
             const r = computeAxisRange(scale.chart, 'x');
             scale.min = r.min;

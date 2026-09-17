@@ -8,7 +8,8 @@ import { normErr } from './utils.js';
 // opts:
 //   id          插件 id（默认 'errorBar'）
 //   enabled     () => bool，图头「误差棒」开关（默认恒 true）
-//   errOf       (ds, raw, i) => number|null，误差来源（ds._errorValues[i] 或 raw.err）
+//   errOf       (ds, raw, i) => number|null，y 误差来源（ds._errorValues[i] 或 raw.err）
+//   xErrOf      (ds, raw, i) => number|null，x 误差来源（可选；提供时画水平误差棒，钳到 x 轴范围）
 //   skipDataset (ds) => bool，整个数据集跳过（上限点层/拟合线层等）
 //   skipPoint   (raw) => bool，单点跳过（如 raw.isUL）
 export function createYErrBarPlugin(opts = {}) {
@@ -16,6 +17,7 @@ export function createYErrBarPlugin(opts = {}) {
     id = 'errorBar',
     enabled = () => true,
     errOf,
+    xErrOf = null,
     skipDataset = null,
     skipPoint = null,
   } = opts;
@@ -24,7 +26,7 @@ export function createYErrBarPlugin(opts = {}) {
     beforeDatasetsDraw(chart) {
       if (!enabled()) return;
       try {
-        const ctx = chart.ctx, yScale = chart.scales.y;
+        const ctx = chart.ctx, yScale = chart.scales.y, xScale = chart.scales.x;
         if (!ctx || !yScale) return;
         chart.data.datasets.forEach((ds, dsIdx) => {
           if (skipDataset && skipDataset(ds)) return;
@@ -39,22 +41,47 @@ export function createYErrBarPlugin(opts = {}) {
             const raw = ds.data[i];
             if (!raw || raw.y == null || !isFinite(raw.y)) continue;
             if (skipPoint && skipPoint(raw)) continue;
-            const err = errOf(ds, raw, i);
-            if (err == null || !(err > 0)) continue;
             const el = meta.data[i];
             if (!el || el.skip) continue;
-            const yTop = yScale.getPixelForValue(raw.y + err);
-            const yBot = yScale.getPixelForValue(raw.y - err);
-            if (!isFinite(yTop) || !isFinite(yBot)) continue;
-            const cx = el.x;
-            ctx.beginPath();
-            ctx.moveTo(cx, Math.min(yTop, yBot));
-            ctx.lineTo(cx, Math.max(yTop, yBot));
-            ctx.moveTo(cx - 3, yTop);
-            ctx.lineTo(cx + 3, yTop);
-            ctx.moveTo(cx - 3, yBot);
-            ctx.lineTo(cx + 3, yBot);
-            ctx.stroke();
+            const err = errOf(ds, raw, i);
+            if (err != null && err > 0) {
+              const yTop = yScale.getPixelForValue(raw.y + err);
+              const yBot = yScale.getPixelForValue(raw.y - err);
+              if (isFinite(yTop) && isFinite(yBot)) {
+                const cx = el.x;
+                ctx.beginPath();
+                ctx.moveTo(cx, Math.min(yTop, yBot));
+                ctx.lineTo(cx, Math.max(yTop, yBot));
+                ctx.moveTo(cx - 3, yTop);
+                ctx.lineTo(cx + 3, yTop);
+                ctx.moveTo(cx - 3, yBot);
+                ctx.lineTo(cx + 3, yBot);
+                ctx.stroke();
+              }
+            }
+            // 水平时间误差棒（钳到 x 轴范围；log 轴上 xs.min>0 恒成立）
+            if (xErrOf && xScale) {
+              const xe = xErrOf(ds, raw, i);
+              if (xe != null && xe > 0 && isFinite(raw.x)) {
+                const lo = Math.max(raw.x - xe, xScale.min);
+                const hi = Math.min(raw.x + xe, xScale.max);
+                if (hi > lo) {
+                  const xL = xScale.getPixelForValue(lo);
+                  const xR = xScale.getPixelForValue(hi);
+                  if (isFinite(xL) && isFinite(xR)) {
+                    const cy = el.y;
+                    ctx.beginPath();
+                    ctx.moveTo(xL, cy);
+                    ctx.lineTo(xR, cy);
+                    ctx.moveTo(xL, cy - 3);
+                    ctx.lineTo(xL, cy + 3);
+                    ctx.moveTo(xR, cy - 3);
+                    ctx.lineTo(xR, cy + 3);
+                    ctx.stroke();
+                  }
+                }
+              }
+            }
           }
           ctx.restore();
         });

@@ -138,6 +138,13 @@ export function getWavelength(band) {
   return null;
 }
 
+// 已缓存滤光片 id 列表（按波长升序；供新增记录等表单候选）
+export function getFilterIdsSorted() {
+  return Object.entries(_filterWavelengths)
+    .sort((a, b) => (a[1] || 0) - (b[1] || 0))
+    .map(([id]) => id);
+}
+
 // ─── 波段按频率升序排序（低频在前；无频率的按名称排最后） ───
 export function sortBandsByFreq(bandNames) {
   const c = 2.998e8;

@@ -68,6 +68,21 @@ export function sciFormat(v) {
   return v.toExponential(1);
 }
 
+// 横轴刻度专用科学计数法（7000 → "7e3"）：|v|≥1e3 或 0<|v|<1e-2 用指数式，
+// 整数尾数不带小数位、非整数尾数保留必要位，其间用普通数，0 显示 "0"
+export function sciTick(v) {
+  if (v === 0 || v == null || !isFinite(v)) return '0';
+  const a = Math.abs(v);
+  if (a >= 1e3 || a < 1e-2) {
+    let e = Math.floor(Math.log10(a));
+    let m = v / Math.pow(10, e);
+    if (!Number.isInteger(m)) m = parseFloat(m.toPrecision(3));
+    if (Math.abs(m) >= 10) { m /= 10; e += 1; }  // 尾数四舍五入到 10 时升阶
+    return `${m}e${e}`;
+  }
+  return String(parseFloat(v.toPrecision(6)));
+}
+
 // 2-3 位有效数字（拟合参数标注/宿主摘要用）
 export function sig3(v) {
   if (v == null || !isFinite(v)) return '?';

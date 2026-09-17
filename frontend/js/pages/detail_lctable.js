@@ -7,6 +7,7 @@ import {
 } from '../api.js';
 import { showLcUpload } from './lc_upload.js';
 import { esc, escAttr, fmtNum } from '../utils.js';
+import { getFilterIdsSorted } from '../bands.js';
 import { render, currentTid } from './detail.js';
 import { syncLcPoint } from './detail_lcchart.js';
 
@@ -305,11 +306,21 @@ window.lcEditSave = async (id) => {
 
 // ─── 添加新光变记录 ───
 const LC_NEW_EDITABLE = new Set(['time','time_err','band','flux_density','flux_density_err','flux_density_unit','mag_system','gext_corr','upperlimit','host_subtracted','gext_Alambda','mag_gextcor','mag_gextcor_err','flux_density_gextcor','flux_density_gextcor_err','weights','discard','telescope','instrument','reference','comment']);
+// 单位下拉候选（对齐 bands.js toMJy/pointToMJy 支持的单位；mag 配合 mag_system 列）
+const LC_NEW_UNITS = ['mJy', 'uJy', 'Jy', 'cgs(erg/cm2/s/Hz)', 'erg/cm2/s/keV', 'mag', 'magnitude'];
+// 时间/时间误差乘积因子（提交时前端乘好以秒入库，time_unit 保持 's'）
+const LC_NEW_TFACS = [[86400, '×86400 天'], [3600, '×3600 小时'], [60, '×60 分'], [1, '×1 秒']];
 window.lcAddNewRow = () => {
   // 检查是否已有新增行
   if (document.getElementById('lcNewRow')) return;
   const tbody = document.querySelector('.table-scroll tbody');
   if (!tbody) return;
+  // 波段候选：滤光片 id（按波长排序）+ 本源已有波段名去重
+  const bandCands = [...new Set([...getFilterIdsSorted(), ...lcItems.map(p => p.band).filter(Boolean)])];
+  const tfacSelect = (field) =>
+    `<select class="form-select form-select-sm lc-new-tfac" data-for="${field}" style="width:82px" title="输入值乘以此因子后以秒入库">` +
+    LC_NEW_TFACS.map(([v, label]) => `<option value="${v}" ${v === 1 ? 'selected' : ''}>${label}</option>`).join('') +
+    `</select>`;
   const tr = document.createElement('tr');
   tr.id = 'lcNewRow';
   tr.className = 'row-new';
@@ -325,6 +336,15 @@ window.lcAddNewRow = () => {
       input = `<select class="form-select form-select-sm lc-new-input" data-field="${f}" style="width:70px"><option value="false">否</option><option value="true">是</option><option value="null">未知</option></select>`;
     } else if (['gext_corr','upperlimit','discard'].includes(f)) {
       input = `<select class="form-select form-select-sm lc-new-input" data-field="${f}" style="width:65px"><option value="false">否</option><option value="true">是</option></select>`;
+    } else if (f === 'band') {
+      input = `<input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" list="lcNewBandList" placeholder="band" style="width:100px">` +
+        `<datalist id="lcNewBandList">${bandCands.map(b => `<option value="${escAttr(b)}"></option>`).join('')}</datalist>`;
+    } else if (f === 'flux_density_unit') {
+      input = `<select class="form-select form-select-sm lc-new-input" data-field="${f}" style="width:130px">` +
+        LC_NEW_UNITS.map(u => `<option value="${escAttr(u)}" ${u === 'mJy' ? 'selected' : ''}>${esc(u)}</option>`).join('') +
+        `</select>`;
+    } else if (f === 'time' || f === 'time_err') {
+      input = `<div class="d-flex gap-1 align-items-center"><input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="${f}" style="width:80px">${tfacSelect(f)}</div>`;
     } else {
       input = `<input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="${f}" style="width:90px">`;
     }
@@ -359,7 +379,12 @@ window.lcAddNewSave = async () => {
       body[field] = val === 'null' ? null : val === 'true';
     } else if (['gext_corr', 'upperlimit', 'discard'].includes(field)) {
       body[field] = val === 'true';
-    } else if (['time', 'time_err', 'flux_density', 'flux_density_err', 'gext_Alambda', 'mag_gextcor', 'mag_gextcor_err', 'flux_density_gextcor', 'flux_density_gextcor_err', 'weights'].includes(field)) {
+    } else if (['time', 'time_err'].includes(field)) {
+      // 乘积因子换算：输入值 × 因子后以秒入库（time_unit 保持 's'）
+      const facEl = inp.closest('td')?.querySelector('.lc-new-tfac');
+      const fac = facEl ? parseFloat(facEl.value) : 1;
+      body[field] = val ? parseFloat(val) * (isFinite(fac) ? fac : 1) : null;
+    } else if (['flux_density', 'flux_density_err', 'gext_Alambda', 'mag_gextcor', 'mag_gextcor_err', 'flux_density_gextcor', 'flux_density_gextcor_err', 'weights'].includes(field)) {
       body[field] = val ? parseFloat(val) : null;
     } else {
       body[field] = val || null;

@@ -1,11 +1,11 @@
-"""宿主星系 pcigale 拟合任务系统（模仿 fitting/jobs.py）。
+"""宿主星系拟合任务系统（pcigale / prospector 双引擎，模仿 fitting/jobs.py）。
 
 - 任务记录落在 fitting_results 表：
-    model_name  = 'pcigale_host'
+    model_name  = 'pcigale_host' | 'prospector_host'（f'{engine}_host'）
     parameters  = {'best': {...}, 'bayes': {...}, 'bayes_err': {...}}
-    chi_squared = best.reduced_chi_square
-    extra_data  = {engine: 'pcigale', config, status, error, runtime_s,
-                   warnings, files: {results, sed_png, best_model, log}, created_by}
+    chi_squared = reduced chi2
+    extra_data  = {engine: 'pcigale'|'prospector', config, status, error, runtime_s,
+                   warnings, files: {...}, created_by}
     status ∈ pending | running | done | failed | interrupted
 - 产物文件存 backend/fitting_store/<transient_id>/hostfit_<job_id>/。
 """
@@ -22,7 +22,9 @@ from hostfit import runner
 _STORE_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            'fitting_store')
 
-MODEL_NAME = 'pcigale_host'
+MODEL_NAME = 'pcigale_host'  # 兼容旧引用；新代码请用 MODEL_NAMES
+MODEL_NAMES = ('pcigale_host', 'prospector_host')
+ENGINES = ('pcigale', 'prospector')
 
 # 单 worker 串行队列
 _pool = ThreadPoolExecutor(max_workers=1)
@@ -41,17 +43,19 @@ def _set_status(sess, row, status, **extra):
     sess.commit()
 
 
-def create_job(transient_id, config, created_by=None):
+def create_job(transient_id, config, created_by=None, engine='pcigale'):
     """建任务（pending）并入队，返回任务 id。调用方需已完成校验。"""
+    if engine not in ENGINES:
+        raise ValueError(f'未知拟合引擎: {engine!r}')
     sess = get_session()
     try:
         row = FittingResult(
             transient_id=transient_id,
-            model_name=MODEL_NAME,
+            model_name=f'{engine}_host',
             parameters={},
             chi_squared=None,
             extra_data={
-                'engine': 'pcigale',
+                'engine': engine,
                 'config': config,
                 'status': 'pending',
                 'error': None,
@@ -99,12 +103,17 @@ def _run_job(job_id):
     sess = get_session()
     try:
         row = sess.get(FittingResult, job_id)
-        if row is None or row.model_name != MODEL_NAME:
+        if row is None or row.model_name not in MODEL_NAMES:
             return
         ed = dict(row.extra_data or {})
         transient_id = row.transient_id
+        model_name = row.model_name
     finally:
         sess.close()
+    # 按 extra_data.engine 分发到对应执行器（缺省按 model_name 推断）
+    engine = ed.get('engine')
+    if engine not in ENGINES:
+        engine = 'prospector' if model_name == 'prospector_host' else 'pcigale'
     workdir = job_dir(transient_id, job_id)
     os.makedirs(workdir, exist_ok=True)
     t0 = time.time()
@@ -112,15 +121,25 @@ def _run_job(job_id):
         def log(msg):
             lf.write(str(msg) + '\n')
             lf.flush()
-        log(f'===== hostfit job {job_id} (transient {transient_id}) 开始 =====')
+        log(f'===== hostfit job {job_id} (transient {transient_id}, '
+            f'engine={engine}) 开始 =====')
         try:
             _update_status(job_id, 'running')
-            result = runner.run(job_id, ed.get('config') or {}, log, workdir=workdir)
+            if engine == 'prospector':
+                from hostfit import runner_prospector as _runner
+                files_kinds = (('results', 'results.txt'),
+                               ('sed_png', 'sed.png'),
+                               ('corner', 'corner.png'),
+                               ('log', 'run.log'))
+            else:
+                _runner = runner
+                files_kinds = (('results', os.path.join('out', 'results.txt')),
+                               ('sed_png', 'sed.png'),
+                               ('best_model', os.path.join('out', 'host_best_model.fits')),
+                               ('log', 'run.log'))
+            result = _runner.run(job_id, ed.get('config') or {}, log, workdir=workdir)
             files = {}
-            for kind, rel in (('results', os.path.join('out', 'results.txt')),
-                              ('sed_png', 'sed.png'),
-                              ('best_model', os.path.join('out', 'host_best_model.fits')),
-                              ('log', 'run.log')):
+            for kind, rel in files_kinds:
                 if os.path.exists(os.path.join(workdir, rel)):
                     files[kind] = rel
             sess = get_session()
@@ -147,7 +166,8 @@ def mark_interrupted():
     sess = get_session()
     try:
         n = 0
-        for row in sess.query(FittingResult).filter_by(model_name=MODEL_NAME).all():
+        for row in sess.query(FittingResult).filter(
+                FittingResult.model_name.in_(MODEL_NAMES)).all():
             ed = row.extra_data or {}
             if ed.get('status') in ('running', 'pending'):
                 ed = dict(ed)
@@ -167,7 +187,7 @@ def delete_job(job_id):
     sess = get_session()
     try:
         row = sess.get(FittingResult, job_id)
-        if row is None or row.model_name != MODEL_NAME:
+        if row is None or row.model_name not in MODEL_NAMES:
             return False, '任务不存在'
         status = (row.extra_data or {}).get('status')
         if status in ('pending', 'running'):

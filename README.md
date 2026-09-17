@@ -50,7 +50,9 @@ Web UI (all local, no build step):
 - **Home / overview** — entry point with quick statistics
 - **Transient list** — filtering, export, one-click Galactic-extinction
   correction
-- **Detail page** — light-curve plotting, data table editing, tags, aliases
+- **Detail page** — light-curve plotting (copy chart as PNG, current-time
+  marker line, time error bars, empirical fits incl. the FRED pulse model),
+  data table editing, tags, aliases
 - **Compare** — overlay light curves of multiple transients
 - **Digitizer** — extract data points from published figure screenshots
   (calibration → manual/color-based point picking → CSV export or direct
@@ -66,9 +68,11 @@ Web UI (all local, no build step):
   a standalone FS, two-component jet)
 - **Host galaxies** — per-source host coordinates, redshift (spectroscopic or
   photometric) and multi-band photometry (AB/Vega/ST mag systems), plus a
-  built-in [pcigale](https://cigale.lam.fr) SED-fitting tab: fixed-z or
-  photometric-z runs with selectable bands, results table and best-model SED
-  plot, and one-click write-back of the adopted parameters
+  built-in SED-fitting tab with two selectable engines —
+  [pcigale](https://cigale.lam.fr) or
+  [prospector](https://prospect.readthedocs.io) (optional dependencies):
+  fixed-z or photometric-z runs with selectable bands, results table and
+  best-model SED plot, and one-click write-back of the adopted parameters
 - **GCN tool** — browse GCN circulars with per-source info cards and
   photometry entry
 - **Light-curve upload** — batch CSV import with column mapping
@@ -99,7 +103,9 @@ APIs and integrations:
   from the **SVO Filter Profile Service**; filter transmission curves for the
   host-galaxy SED fits are also retrieved from SVO FPS.
 - **Host-galaxy SED fitting** — **pcigale** (Boquien et al. 2019; v2025.0
-  tested), run as a subprocess with results rendered by `matplotlib`.
+  tested), run as a subprocess with results rendered by `matplotlib`;
+  alternatively **prospector** (Johnson et al. 2021; optional) with
+  **python-fsps** stellar-population data and dynesty/emcee sampling.
 - **All-sky map** — embedded **Aladin Lite 3.8.2** (CDS).
 - **Afterglow fitting** — **VegasAfterglow** (v2.0.6 tested), with `corner`
   and `matplotlib` for posterior plots.
@@ -145,6 +151,8 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 # optional, only for afterglow fitting:
 # pip install "VegasAfterglow[mcmc]" corner matplotlib
+# optional, only for the prospector host-SED engine (needs an FSPS data dir):
+# pip install astro-prospector astro-sedpy fsps dynesty emcee h5py corner
 
 # create the database (as a PostgreSQL superuser or with createdb rights)
 createdb ajst_catalog
@@ -172,6 +180,7 @@ your own transients through the UI or the APIs.
 | `AJST_CATALOG_PASSWORD` | random per startup | initial admin password |
 | `AJST_INGEST_TOKEN` | unset (ingest API disabled) | Bearer token for `/api/ingest/*` |
 | `AJST_DATA_DIR` | `<repo>/catadata` | data directory location |
+| `SPS_HOME` | unset | FSPS data directory (prospector engine only) |
 | `AJST_PYTHON` | `python3` | interpreter used by `start.sh` |
 | `PORT` | `5000` | listen port |
 

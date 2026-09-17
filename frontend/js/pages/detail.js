@@ -23,9 +23,14 @@ import { initAladin, resetAladin } from './detail_aladin.js';
 
 export let currentTid = null;
 
+// ─── 当前激活的 tab（render 整页重建后恢复，如添加数据后停留在数据表页；切换源时复位概览） ───
+let activeTab = 'overview';
+let activeTabTid = null;
+
 // ─── 主渲染函数 ───
 export async function render(tid) {
   currentTid = tid;
+  if (activeTabTid !== tid) { activeTab = 'overview'; activeTabTid = tid; }
   window.currentTid = tid;  // 供内联 onclick（如导出按钮/文章编辑取消）引用当前源
   const seq = navSeq();     // 导航序号：请求期间切到其它路由则丢弃本次渲染
   // 重置各功能区状态（DOM 即将重建）
@@ -50,7 +55,7 @@ export async function render(tid) {
     ensureFilterCache(filtersData);
     initOverview(transient, articles);
     // 光变图用的源级参数（注入 detail_lcchart.js；模板里的开关可用性用本地副本判断）
-    setLCSourceParams({ redshift: transient.redshift, t0: transient.t0, distmod: transient.distmod });
+    setLCSourceParams({ redshift: transient.redshift, t0: transient.t0, distmod: transient.distmod, name: transient.id });
     const canRestFrame = (transient.redshift != null && transient.redshift > -1);
     const canAbsMag = transient.distmod != null;
     const canMJD = t0ToMJD(transient.t0) != null;
@@ -238,6 +243,11 @@ export async function render(tid) {
                   <input class="form-check-input" type="checkbox" id="lcShowErr" checked onchange="lcShowErrToggle(this.checked)">
                   <label class="form-check-label small" for="lcShowErr">误差棒</label>
                 </div>
+                <div class="form-check form-check-inline mb-0" ${canMJD ? 'title="在图上画一条当前时刻对应的红色竖虚线（位置 = T0 至今的时间差）"' : 'title="该源无 T0，无法定位当前时刻"'}>
+                  <input class="form-check-input" type="checkbox" id="lcShowNow" onchange="lcShowNowToggle(this.checked)" ${canMJD ? '' : 'disabled'}>
+                  <label class="form-check-label small" for="lcShowNow">显示当前时刻</label>
+                </div>
+                <button class="btn btn-sm btn-outline-secondary" onclick="copyLCChart()" title="复制当前光变图（含图例与标题）到剪贴板；不支持时改为下载 PNG"><i class="bi bi-clipboard"></i> 复制光变图</button>
                 <div class="form-check form-check-inline mb-0" ${canRestFrame ? 'title="时间轴除以 (1+z) 改正到静止系"' : 'title="该源无红移，静止系不可用"'}>
                   <input class="form-check-input" type="checkbox" id="lcRestFrame" onchange="rebuildLCPlot()" ${canRestFrame ? '' : 'disabled'}>
                   <label class="form-check-label small" for="lcRestFrame">静止系 t/(1+z)</label>
@@ -268,6 +278,7 @@ export async function render(tid) {
                     <option value="pl">powerlaw</option>
                     <option value="bpl">broken-powerlaw</option>
                     <option value="sbpl">smoothly-broken-powerlaw</option>
+                    <option value="fred">FRED (Norris+2005)</option>
                   </select>
                   <select class="form-select form-select-sm" id="fitBand" style="width:auto">
                     ${bandNames.map(b => `<option value="${escAttr(b)}">${esc(b)}</option>`).join('')}
@@ -452,6 +463,7 @@ export async function render(tid) {
         if (link.classList.contains('disabled')) return;
         document.querySelectorAll('#detailTabs .nav-link').forEach(l => l.classList.remove('active'));
         link.classList.add('active');
+        activeTab = link.dataset.tab;
         document.querySelectorAll('#tabContent .tab-pane').forEach(t => t.style.display = 'none');
         const pane = document.getElementById(`tab-${link.dataset.tab}`);
         if (pane) pane.style.display = 'block';
@@ -491,6 +503,12 @@ export async function render(tid) {
         }
       });
     });
+
+    // render 重建后恢复此前激活的 tab（click 复用切换逻辑，含各 tab 惰性初始化）
+    if (activeTab !== 'overview') {
+      const link = document.querySelector(`#detailTabs .nav-link[data-tab="${activeTab}"]`);
+      if (link) link.click();
+    }
 
     // 默认初始化 Aladin（概览页默认显示；无坐标源指向银河系中心占位）
     setTimeout(() => {

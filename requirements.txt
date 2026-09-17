@@ -25,3 +25,15 @@ configobj>=5.0
 # matplotlib>=3.8
 # 安装后需运行一次 scripts/fetch_svo_filters.py 注册滤光片曲线
 # 注：emcee/h5py 由 VegasAfterglow[mcmc] 附带安装
+
+# ── 可选：宿主星系 prospector 拟合引擎（与 pcigale 并列，宿主星系 tab 可选）──
+# astro-prospector>=1.4
+# astro-sedpy>=0.4
+# fsps>=0.4        # python-fsps；另需编译好的 FSPS 数据目录
+# dynesty>=2.1
+# emcee>=3.1
+# h5py>=3.0
+# corner>=2.2      # 后验角图
+# matplotlib>=3.8
+# 运行前需设 SPS_HOME 指向 FSPS 数据目录（未设时后端回退 AJST_SPS_HOME，
+# 再回退本机默认 /home/ajst/local/fsps）

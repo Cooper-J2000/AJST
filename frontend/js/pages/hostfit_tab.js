@@ -1,7 +1,7 @@
 // === 宿主星系标签页（详情页内嵌） ===
 // 由 detail.js 在切换到「宿主星系」标签时调用 initHostfitTab(container, tid)，
 // 切走或页面重渲染时调用 destroyHostfitTab() 停止轮询。
-// 三个卡片：宿主信息（查看/编辑/测光表）、拟合配置（CIGALE 网格）、拟合任务与结果。
+// 三个卡片：宿主信息（查看/编辑/测光表）、拟合配置（pcigale / prospector 双引擎）、拟合任务与结果。
 import {
   isAuthed, isAdmin, showToast,
   getHost, saveHost, getFilters,
@@ -24,6 +24,7 @@ let _jobs = [];
 let _pollTimer = null;
 let _selectedId = null;     // 当前展开结果的任务 id
 let _resultReqId = 0;       // 结果加载请求令牌（竞态防护）
+let _engine = 'pcigale';    // 拟合配置卡当前选中的引擎
 
 // ─── 工具 ───
 
@@ -70,9 +71,30 @@ const PARAM_LABELS = {
   'attenuation.Av_ISM': 'ISM 消光 Av (mag)',
   'attenuation.Av_BC': 'BC 消光 Av (mag)',
   'dust.luminosity': '尘埃光度 (L☉)',
+  // prospector 引擎（自由参数 + 派生量，flat 键）
+  'mass': '形成质量 mass (M☉)',
+  'mass_formed': '形成质量 (M☉)',
+  'm_star': '恒星质量 M* (M☉)',
+  'sfr': '恒星形成率 SFR (M☉/yr)',
+  'tage': '年龄 tage (Gyr)',
+  'tau': 'SFH 时标 τ (Gyr)',
+  'dust2': 'V 带光学深度 dust2',
+  'Av': 'V 带消光 Av (mag)',
+  'logzsol': '金属丰度 log(Z/Z☉)',
+  'redshift': '红移 z',
+  'zred': '红移 z',
 };
 function paramLabel(name) {
   return PARAM_LABELS[name] || name.replace(/\./g, ' · ');
+}
+
+function engineBadge(engine) {
+  const e = engine || 'pcigale';
+  return `<span class="badge-tag badge-neutral">${esc(e)}</span>`;
+}
+
+function jobEngine(detail) {
+  return detail.engine || (detail.model_name === 'prospector_host' ? 'prospector' : 'pcigale');
 }
 
 const STATUS_BADGE = {
@@ -157,7 +179,13 @@ export async function initHostfitTab(container, tid) {
   renderHostCard();
 
   try {
-    if (!_hfConfig) _hfConfig = await getHostfitConfig();
+    if (!_hfConfig) {
+      _hfConfig = await getHostfitConfig();
+      // 兼容旧版扁平结构（无按引擎分组）：包装为 {pcigale: 旧结构, prospector: null}
+      if (_hfConfig && !_hfConfig.pcigale) {
+        _hfConfig = { pcigale: _hfConfig, prospector: null };
+      }
+    }
     renderConfigCard();
   } catch (e) {
     const body = document.getElementById('hfConfigBody');
@@ -172,6 +200,7 @@ export function destroyHostfitTab() {
   _tid = null;
   _host = null;
   _selectedId = null;
+  _engine = 'pcigale';
 }
 
 // ─── 宿主信息卡 ───
@@ -411,12 +440,40 @@ async function saveHostInfo() {
 function renderConfigCard() {
   const body = document.getElementById('hfConfigBody');
   if (!body || !_hfConfig) return;
-  const dft = _hfConfig.defaults || {};
+  const pcg = _hfConfig.pcigale || {};
+  const prs = _hfConfig.prospector || null;
+  const dft = pcg.defaults || {};
+  const prDft = (prs && prs.defaults) || {};
   const authed = isAuthed();
   const listStr = (arr) => Array.isArray(arr) ? arr.join(', ') : '';
   const fixedZ = (_host && _host.redshift != null) ? _host.redshift : '';
+  const isPrs = _engine === 'prospector' && prs;
+
+  // prospector 先验范围输入（lo/hi）
+  const prPriors = prDft.priors || {};
+  const priorInputs = (key, label) => {
+    const dv = prPriors[key] || ['', ''];
+    return `
+      <div class="col-6"><label class="small text-secondary mb-0">${label} 下限</label>
+        <input type="number" class="form-control form-control-sm hf-prprior" data-p="${key}" data-f="lo" step="any" value="${dv[0]}"></div>
+      <div class="col-6"><label class="small text-secondary mb-0">${label} 上限</label>
+        <input type="number" class="form-control form-control-sm hf-prprior" data-p="${key}" data-f="hi" step="any" value="${dv[1]}"></div>`;
+  };
+  const emceeDft = prDft.emcee || {};
+  const dynDft = prDft.dynesty || {};
 
   body.innerHTML = `
+    <div class="small mb-2">
+      <span class="text-secondary">拟合引擎：</span>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="hfEngine" id="hfEnginePcg" value="pcigale" ${!isPrs ? 'checked' : ''}>
+        <label class="form-check-label" for="hfEnginePcg">pcigale</label>
+      </div>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="hfEngine" id="hfEnginePrs" value="prospector" ${isPrs ? 'checked' : ''} ${prs ? '' : 'disabled'}>
+        <label class="form-check-label" for="hfEnginePrs">prospector${prs ? '' : '（后端不可用）'}</label>
+      </div>
+    </div>
     <div class="small mb-2">
       <div class="form-check">
         <input class="form-check-input" type="radio" name="hfMode" id="hfModeFixed" value="fixed" checked>
@@ -431,45 +488,107 @@ function renderConfigCard() {
       </div>
       <div class="row g-2 mt-1 ms-3" id="hfZGridRow" style="max-width:420px">
         <div class="col-4"><label class="small text-secondary mb-0">z_min</label>
-          <input type="number" class="form-control form-control-sm hf-zgrid" id="hfZMin" step="any" value="${dft.z_min ?? 0}"></div>
+          <input type="number" class="form-control form-control-sm hf-zgrid" id="hfZMin" step="any" value="${isPrs ? (prDft.z_min ?? 0) : (dft.z_min ?? 0)}"></div>
         <div class="col-4"><label class="small text-secondary mb-0">z_max</label>
-          <input type="number" class="form-control form-control-sm hf-zgrid" id="hfZMax" step="any" value="${dft.z_max ?? 6}"></div>
-        <div class="col-4"><label class="small text-secondary mb-0">z_step</label>
+          <input type="number" class="form-control form-control-sm hf-zgrid" id="hfZMax" step="any" value="${isPrs ? (prDft.z_max ?? 2) : (dft.z_max ?? 6)}"></div>
+        <div class="col-4" id="hfZStepCol"><label class="small text-secondary mb-0">z_step</label>
           <input type="number" class="form-control form-control-sm hf-zgrid" id="hfZStep" step="any" value="${dft.z_step ?? 0.05}"></div>
       </div>
     </div>
-    <div class="mb-2">
-      <a class="small text-secondary text-decoration-none" data-bs-toggle="collapse" href="#hfAdvanced" role="button" aria-expanded="false">
-        <i class="bi bi-sliders"></i> 高级：参数网格（逗号分隔）
-      </a>
-      <div class="collapse mt-2" id="hfAdvanced">
-        <div class="row g-2">
-          <div class="col-12"><label class="small text-secondary mb-0">tau_main (Myr)</label>
-            <input type="text" class="form-control form-control-sm hf-grid" id="hfTauMain" value="${esc(listStr(dft.tau_main))}"></div>
-          <div class="col-12"><label class="small text-secondary mb-0">age_main (Myr)</label>
-            <input type="text" class="form-control form-control-sm hf-grid" id="hfAgeMain" value="${esc(listStr(dft.age_main))}"></div>
-          <div class="col-12"><label class="small text-secondary mb-0">Av_ISM (mag)</label>
-            <input type="text" class="form-control form-control-sm hf-grid" id="hfAvIsm" value="${esc(listStr(dft.Av_ISM))}"></div>
+    <div id="hfPcgBlock" style="${isPrs ? 'display:none' : ''}">
+      <div class="mb-2">
+        <a class="small text-secondary text-decoration-none" data-bs-toggle="collapse" href="#hfAdvanced" role="button" aria-expanded="false">
+          <i class="bi bi-sliders"></i> 高级：参数网格（逗号分隔）
+        </a>
+        <div class="collapse mt-2" id="hfAdvanced">
+          <div class="row g-2">
+            <div class="col-12"><label class="small text-secondary mb-0">tau_main (Myr)</label>
+              <input type="text" class="form-control form-control-sm hf-grid" id="hfTauMain" value="${esc(listStr(dft.tau_main))}"></div>
+            <div class="col-12"><label class="small text-secondary mb-0">age_main (Myr)</label>
+              <input type="text" class="form-control form-control-sm hf-grid" id="hfAgeMain" value="${esc(listStr(dft.age_main))}"></div>
+            <div class="col-12"><label class="small text-secondary mb-0">Av_ISM (mag)</label>
+              <input type="text" class="form-control form-control-sm hf-grid" id="hfAvIsm" value="${esc(listStr(dft.Av_ISM))}"></div>
+          </div>
         </div>
       </div>
+      <div class="small mb-2">
+        <span class="text-secondary">模型组合：</span><code id="hfModuleLine"></code>
+        <div class="form-check mt-1">
+          <input class="form-check-input hf-optmod" type="checkbox" id="hfUseNebular">
+          <label class="form-check-label" for="hfUseNebular">星云发射（nebular）</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input hf-optmod" type="checkbox" id="hfUseDl2014">
+          <label class="form-check-label" for="hfUseDl2014">尘埃红外发射（dl2014）</label>
+        </div>
+        <div class="text-secondary mt-1" style="font-size:0.78rem" id="hfGridHint"></div>
+      </div>
     </div>
-    <div class="small mb-2">
-      <span class="text-secondary">模型组合：</span><code id="hfModuleLine"></code>
-      <div class="form-check mt-1">
-        <input class="form-check-input hf-optmod" type="checkbox" id="hfUseNebular">
-        <label class="form-check-label" for="hfUseNebular">星云发射（nebular）</label>
+    <div id="hfPrsBlock" style="${isPrs ? '' : 'display:none'}">
+      <div class="small mb-2">
+        <div class="text-secondary">模型：delayed-tau SFH（mass / tage / τ / logzsol / dust2，FSPS）+ 可选组件</div>
+        <div class="form-check mt-1">
+          <input class="form-check-input hf-prmod" type="checkbox" id="hfPrNeb">
+          <label class="form-check-label" for="hfPrNeb">星云发射（nebular）</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input hf-prmod" type="checkbox" id="hfPrDuste">
+          <label class="form-check-label" for="hfPrDuste">尘埃红外再辐射（dust_emission）</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input hf-prmod" type="checkbox" id="hfPrIgm" checked>
+          <label class="form-check-label" for="hfPrIgm">IGM 吸收（默认开）</label>
+        </div>
       </div>
-      <div class="form-check">
-        <input class="form-check-input hf-optmod" type="checkbox" id="hfUseDl2014">
-        <label class="form-check-label" for="hfUseDl2014">尘埃红外发射（dl2014）</label>
+      <div class="small mb-2">
+        <div class="d-flex align-items-center gap-2">
+          <label class="text-secondary mb-0" for="hfPrSampler">采样器：</label>
+          <select class="form-select form-select-sm" id="hfPrSampler" style="width:120px">
+            <option value="dynesty" ${(prDft.sampler || 'dynesty') === 'dynesty' ? 'selected' : ''}>dynesty</option>
+            <option value="emcee" ${prDft.sampler === 'emcee' ? 'selected' : ''}>emcee</option>
+          </select>
+        </div>
+        <div class="row g-2 mt-1" id="hfPrDynParams">
+          <div class="col-6"><label class="small text-secondary mb-0">nlive（10~500）</label>
+            <input type="number" class="form-control form-control-sm hf-prsamp" id="hfPrNlive" step="1" value="${dynDft.nlive ?? 100}"></div>
+        </div>
+        <div class="row g-2 mt-1" id="hfPrEmceeParams" style="display:none">
+          <div class="col-4"><label class="small text-secondary mb-0">nwalkers（8~128）</label>
+            <input type="number" class="form-control form-control-sm hf-prsamp" id="hfPrNwalkers" step="1" value="${emceeDft.nwalkers ?? 32}"></div>
+          <div class="col-4"><label class="small text-secondary mb-0">niter（≤20000）</label>
+            <input type="number" class="form-control form-control-sm hf-prsamp" id="hfPrNiter" step="1" value="${emceeDft.niter ?? 3000}"></div>
+          <div class="col-4"><label class="small text-secondary mb-0">nburn（&lt;niter）</label>
+            <input type="number" class="form-control form-control-sm hf-prsamp" id="hfPrNburn" step="1" value="${emceeDft.nburn ?? 500}"></div>
+        </div>
+        <div class="text-secondary mt-1" style="font-size:0.78rem" id="hfPrHint"></div>
       </div>
-      <div class="text-secondary mt-1" style="font-size:0.78rem" id="hfGridHint"></div>
+      <div class="mb-2">
+        <a class="small text-secondary text-decoration-none" data-bs-toggle="collapse" href="#hfPrPriors" role="button" aria-expanded="false">
+          <i class="bi bi-sliders"></i> 高级：先验范围（lo / hi）
+        </a>
+        <div class="collapse mt-2" id="hfPrPriors">
+          <div class="row g-2">
+            ${priorInputs('mass', 'mass (M☉)')}
+            ${priorInputs('tage', 'tage (Gyr)')}
+            ${priorInputs('tau', 'τ (Gyr)')}
+            ${priorInputs('dust2', 'dust2（V 带光学深度）')}
+            ${priorInputs('logzsol', 'logzsol')}
+          </div>
+        </div>
+      </div>
     </div>
     <div class="small text-secondary mb-2" id="hfFitHint"></div>
     <button class="btn btn-sm btn-primary w-100" id="hfSubmitBtn" ${authed ? '' : 'disabled'}>
       <i class="bi bi-play-fill"></i> 提交拟合
     </button>`;
 
+  body.querySelectorAll('input[name="hfEngine"]').forEach(r => {
+    r.addEventListener('change', () => {
+      _engine = r.value;
+      toggleEngineBlocks();
+      updateSubmitState();
+    });
+  });
   body.querySelectorAll('input[name="hfMode"]').forEach(r => {
     r.addEventListener('change', () => { updateGridHint(); updateSubmitState(); });
   });
@@ -477,17 +596,66 @@ function renderConfigCard() {
     el.addEventListener('input', updateGridHint);
     el.addEventListener('change', updateGridHint);
   });
+  body.querySelectorAll('.hf-prsamp').forEach(el => {
+    el.addEventListener('input', updatePrHint);
+    el.addEventListener('change', updatePrHint);
+  });
+  document.getElementById('hfPrSampler')?.addEventListener('change', toggleSamplerParams);
   updateModuleLine();
   updateGridHint();
+  toggleSamplerParams();
   updateSubmitState();
   document.getElementById('hfSubmitBtn').addEventListener('click', submitJob);
 }
 
+// 引擎切换：显示/隐藏 pcigale 与 prospector 各自的配置区块
+function toggleEngineBlocks() {
+  const isPrs = _engine === 'prospector';
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  show('hfPcgBlock', !isPrs);
+  show('hfPrsBlock', isPrs);
+  show('hfZStepCol', !isPrs);
+  updateModuleLine();
+  updateGridHint();
+  updatePrHint();
+}
+
+// prospector 采样参数区块切换 + 摘要
+function toggleSamplerParams() {
+  const s = document.getElementById('hfPrSampler')?.value || 'dynesty';
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  show('hfPrDynParams', s !== 'emcee');
+  show('hfPrEmceeParams', s === 'emcee');
+  updatePrHint();
+}
+
+function updatePrHint() {
+  const el = document.getElementById('hfPrHint');
+  if (!el) return;
+  const s = document.getElementById('hfPrSampler')?.value || 'dynesty';
+  if (s === 'emcee') {
+    const nw = numOrNull(document.getElementById('hfPrNwalkers')?.value) ?? '?';
+    const ni = numOrNull(document.getElementById('hfPrNiter')?.value) ?? '?';
+    const nb = numOrNull(document.getElementById('hfPrNburn')?.value) ?? '?';
+    el.textContent = `emcee：${nw} walkers × ${ni} 步（burn-in ${nb} 步），耗时随参数规模增长`;
+  } else {
+    const nl = numOrNull(document.getElementById('hfPrNlive')?.value) ?? '?';
+    el.textContent = `dynesty：nlive=${nl}，通常数分钟`;
+  }
+}
+
 // 任务实际使用的模块组合（从任务 config 还原）
 function jobModules(detail) {
-  const base = (_hfConfig && _hfConfig.modules || '').split('+').filter(Boolean);
-  const mods = [];
   const cfg = detail.config || {};
+  if (jobEngine(detail) === 'prospector') {
+    const mods = ['delayed-tau SFH (FSPS)'];
+    if (cfg.use_nebular) mods.push('星云发射');
+    if (cfg.use_duste) mods.push('尘埃红外发射');
+    if (cfg.use_igm !== false) mods.push('IGM 吸收');
+    return `模型：prospector — ${mods.join(' + ')}（${cfg.sampler || 'dynesty'} 采样）`;
+  }
+  const base = ((_hfConfig && _hfConfig.pcigale && _hfConfig.pcigale.modules) || '').split('+').filter(Boolean);
+  const mods = [];
   base.forEach(m => {
     mods.push(m);
     if (m === 'bc03' && cfg.use_nebular) mods.push('nebular');
@@ -496,10 +664,10 @@ function jobModules(detail) {
   return '模型：' + mods.join(' + ');
 }
 
-// 模型组合展示：基础链 + 勾选的可选模块
+// 模型组合展示：基础链 + 勾选的可选模块（pcigale 区块）
 function updateModuleLine() {  const el = document.getElementById('hfModuleLine');
   if (!el || !_hfConfig) return;
-  const base = (_hfConfig.modules || '').split('+').filter(Boolean);
+  const base = ((_hfConfig.pcigale && _hfConfig.pcigale.modules) || '').split('+').filter(Boolean);
   const mods = [];
   base.forEach(m => {
     mods.push(m);
@@ -509,10 +677,11 @@ function updateModuleLine() {  const el = document.getElementById('hfModuleLine'
   el.textContent = mods.join(' + ');
 }
 
-// 网格规模提示：模型数 = tau×age×Av×（测光红移模式的 z 网格数）
+// 网格规模提示（仅 pcigale；prospector 的提示在 updatePrHint）：
+// 模型数 = tau×age×Av×（测光红移模式的 z 网格数）
 function updateGridHint() {
   const el = document.getElementById('hfGridHint');
-  if (!el) return;
+  if (!el || _engine === 'prospector') return;
   const n = (id) => parseNumList(document.getElementById(id)?.value).length;
   let models = Math.max(1, n('hfTauMain')) * Math.max(1, n('hfAgeMain')) * Math.max(1, n('hfAvIsm'));
   const mode = document.querySelector('input[name="hfMode"]:checked')?.value;
@@ -530,7 +699,14 @@ function updateGridHint() {
       : models > 5000 ? ' <span class="text-warning">网格偏大，注意耗时</span>' : '');
 }
 
-// 勾选测光点 ≥4 且已登录才可提交；不足则禁用并提示
+// 当前引擎可用的波段集合（pcigale 需 pcigale_name，prospector 需透过率曲线）
+function engineBands() {
+  if (!_hfConfig) return null;
+  const c = _engine === 'prospector' ? _hfConfig.prospector : _hfConfig.pcigale;
+  return c && c.available_bands ? new Set(c.available_bands) : null;
+}
+
+// 勾选测光点 ≥4 且已登录才可提交；不足则禁用并提示（另提示当前引擎不可用波段数）
 function updateSubmitState() {
   const btn = document.getElementById('hfSubmitBtn');
   const hint = document.getElementById('hfFitHint');
@@ -540,16 +716,25 @@ function updateSubmitState() {
   const enough = pts.length >= MIN_FIT_POINTS;
   btn.disabled = !authed || !enough;
   if (hint) {
-    hint.innerHTML = !authed
-      ? '<i class="bi bi-lock"></i> 登录后可提交拟合'
-      : `参与拟合的测光点：<b>${pts.length}</b> / 至少 ${MIN_FIT_POINTS} 个` +
-        (enough ? '' : '（在左侧测光表中勾选/录入更多点）');
+    if (!authed) {
+      hint.innerHTML = '<i class="bi bi-lock"></i> 登录后可提交拟合';
+      return;
+    }
+    const bands = engineBands();
+    const usable = bands ? pts.filter(p => bands.has(p.band)).length : pts.length;
+    const unusable = pts.length - usable;
+    hint.innerHTML = `参与拟合的测光点：<b>${pts.length}</b> / 至少 ${MIN_FIT_POINTS} 个` +
+      (enough ? '' : '（在左侧测光表中勾选/录入更多点）') +
+      (unusable > 0 ? `<br><span class="text-warning"><i class="bi bi-exclamation-triangle"></i> ` +
+        `${unusable} 个点的波段当前引擎（${_engine}）不可用` +
+        `${_engine === 'prospector' ? '（缺透过率曲线）' : '（缺 pcigale_name）'}，提交时会被拒绝/跳过</span>` : '');
   }
 }
 
 async function submitJob() {
   if (!isAuthed()) { showToast('请先登录', 'warning'); return; }
   const mode = document.querySelector('input[name="hfMode"]:checked')?.value || 'fixed';
+  const engine = _engine;
   const checked = checkedPhotPoints();
   if (checked.some(p => p.gext_corr == null)) {
     showToast('请先在测光表中明确每个参与拟合的点是否已做银河系消光改正（「银消已改正」列）', 'warning');
@@ -563,26 +748,70 @@ async function submitJob() {
     showToast(`参与拟合的测光点不足 ${MIN_FIT_POINTS} 个`, 'warning');
     return;
   }
-  const grid = {
-    tau_main: parseNumList(document.getElementById('hfTauMain')?.value),
-    age_main: parseNumList(document.getElementById('hfAgeMain')?.value),
-    Av_ISM: parseNumList(document.getElementById('hfAvIsm')?.value),
-  };
-  const payload = { transient_id: _tid, mode, grid, photometry,
-                    use_nebular: !!document.getElementById('hfUseNebular')?.checked,
-                    use_dl2014: !!document.getElementById('hfUseDl2014')?.checked };
+  const payload = { transient_id: _tid, engine, mode, photometry };
+  if (engine === 'prospector') {
+    payload.use_nebular = !!document.getElementById('hfPrNeb')?.checked;
+    payload.use_duste = !!document.getElementById('hfPrDuste')?.checked;
+    payload.use_igm = !!document.getElementById('hfPrIgm')?.checked;
+    const sampler = document.getElementById('hfPrSampler')?.value || 'dynesty';
+    payload.sampler = sampler;
+    if (sampler === 'emcee') {
+      const emcee = {
+        nwalkers: numOrNull(document.getElementById('hfPrNwalkers')?.value),
+        niter: numOrNull(document.getElementById('hfPrNiter')?.value),
+        nburn: numOrNull(document.getElementById('hfPrNburn')?.value),
+      };
+      if (emcee.nwalkers == null || emcee.niter == null || emcee.nburn == null) {
+        showToast('emcee 采样参数（nwalkers / niter / nburn）需为有效数值', 'warning');
+        return;
+      }
+      payload.emcee = emcee;
+    } else {
+      const nlive = numOrNull(document.getElementById('hfPrNlive')?.value);
+      if (nlive == null) { showToast('dynesty nlive 需为有效数值', 'warning'); return; }
+      payload.dynesty = { nlive };
+    }
+    // 先验范围（lo/hi 必填且成对）
+    const priors = {};
+    let priorBad = false;
+    document.querySelectorAll('.hf-prprior').forEach(el => {
+      const v = numOrNull(el.value);
+      if (v == null) priorBad = true;
+      (priors[el.dataset.p] = priors[el.dataset.p] || [null, null])[el.dataset.f === 'lo' ? 0 : 1] = v;
+    });
+    if (priorBad) { showToast('先验范围（高级折叠内）存在空值', 'warning'); return; }
+    payload.priors = priors;
+    if (mode === 'photoz') {
+      payload.z_min = numOrNull(document.getElementById('hfZMin')?.value);
+      payload.z_max = numOrNull(document.getElementById('hfZMax')?.value);
+      if (payload.z_min == null || payload.z_max == null) {
+        showToast('测光红移模式需要有效的 z_min / z_max', 'warning');
+        return;
+      }
+    }
+  } else {
+    const grid = {
+      tau_main: parseNumList(document.getElementById('hfTauMain')?.value),
+      age_main: parseNumList(document.getElementById('hfAgeMain')?.value),
+      Av_ISM: parseNumList(document.getElementById('hfAvIsm')?.value),
+    };
+    payload.grid = grid;
+    payload.use_nebular = !!document.getElementById('hfUseNebular')?.checked;
+    payload.use_dl2014 = !!document.getElementById('hfUseDl2014')?.checked;
+    if (mode === 'photoz') {
+      grid.z_min = numOrNull(document.getElementById('hfZMin')?.value);
+      grid.z_max = numOrNull(document.getElementById('hfZMax')?.value);
+      grid.z_step = numOrNull(document.getElementById('hfZStep')?.value);
+      if (grid.z_min == null || grid.z_max == null || !(grid.z_step > 0)) {
+        showToast('测光红移模式需要有效的 z_min / z_max / z_step', 'warning');
+        return;
+      }
+    }
+  }
   if (mode === 'fixed') {
     const z = numOrNull(document.getElementById('hfFixedZ')?.value);
     if (z == null) { showToast('固定红移模式需要先在宿主信息中设置并保存红移', 'warning'); return; }
     payload.redshift = z;
-  } else {
-    grid.z_min = numOrNull(document.getElementById('hfZMin')?.value);
-    grid.z_max = numOrNull(document.getElementById('hfZMax')?.value);
-    grid.z_step = numOrNull(document.getElementById('hfZStep')?.value);
-    if (grid.z_min == null || grid.z_max == null || !(grid.z_step > 0)) {
-      showToast('测光红移模式需要有效的 z_min / z_max / z_step', 'warning');
-      return;
-    }
   }
 
   const btn = document.getElementById('hfSubmitBtn');
@@ -590,7 +819,7 @@ async function submitJob() {
   btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 提交中...';
   try {
     const res = await submitHostfitJob(payload);
-    showToast(`拟合任务 #${res.id} 已提交`, 'success');
+    showToast(`拟合任务 #${res.id} 已提交（${engine}）`, 'success');
     await refreshJobs();
   } catch (e) {
     showToast(`提交失败: ${e.message}`, 'danger');
@@ -639,12 +868,13 @@ function renderJobs() {
     <div class="table-scroll" style="max-height:400px;overflow-y:auto">
       <table class="table table-sm table-hover mb-0" style="font-size:0.8rem">
         <thead><tr>
-          <th>#</th><th>创建时间</th><th>模式</th><th>状态</th><th>χ²</th><th></th>
+          <th>#</th><th>引擎</th><th>创建时间</th><th>模式</th><th>状态</th><th>χ²</th><th></th>
         </tr></thead>
         <tbody>
           ${_jobs.map(j => `
             <tr data-jobid="${j.id}" class="${j.id === _selectedId ? 'table-active' : ''}" style="cursor:pointer">
               <td>${j.id}</td>
+              <td>${engineBadge(j.engine)}</td>
               <td class="text-nowrap small">${fmtTime(j.created_at)}</td>
               <td>${j.mode === 'photoz' ? '测光红移' : (j.mode === 'fixed' ? '固定红移' : (j.mode || '-'))}</td>
               <td>${STATUS_BADGE[j.status] || esc(j.status)}</td>
@@ -721,11 +951,27 @@ async function loadResult(jobId) {
   const authed = isAuthed();
   const done = detail.status === 'done';
   const ts = Date.now();  // 防缓存
+  const files = detail.files || {};
+  // 下载按钮按任务实际登记的产物渲染（sed_png 已作为主图展示，不重复）
+  const FILE_LABELS = { best_model: 'best_model.fits', results: 'results.txt',
+                        corner: 'corner.png', log: 'run.log' };
+  const downloadBtns = Object.keys(files)
+    .filter(k => k !== 'sed_png' && FILE_LABELS[k])
+    .map(k => `<a class="btn btn-sm btn-outline-secondary" href="${hostfitJobFileUrl(jobId, k)}" download>
+      <i class="bi bi-download"></i> ${FILE_LABELS[k]}</a>`).join('\n          ');
+  const cornerImg = files.corner ? `
+        <div class="row g-3 mt-1">
+          <div class="col-lg-8">
+            <div class="small text-secondary mb-1">后验角图（corner）</div>
+            <img src="${hostfitJobFileUrl(jobId, 'corner')}?t=${ts}" class="img-fluid rounded border" alt="corner"
+                 onerror="this.outerHTML='<div class=\\'text-secondary small\\'>corner 图加载失败</div>'">
+          </div>
+        </div>` : '';
 
   area.innerHTML = `
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <span><i class="bi bi-graph-up-arrow"></i> 拟合结果 — 任务 #${detail.id}
+        <span><i class="bi bi-graph-up-arrow"></i> 拟合结果 — 任务 #${detail.id} ${engineBadge(jobEngine(detail))}
           <span class="text-secondary small">${detail.mode === 'photoz' ? '测光红移' : '固定红移'} · χ²=${detail.chi_squared != null ? sci3(detail.chi_squared) : '-'}</span>
           <div class="text-secondary" style="font-size:0.72rem">${esc(jobModules(detail))}</div></span>
         ${authed && done ? `<button class="btn btn-sm btn-outline-success" id="hfWriteHost">
@@ -756,14 +1002,9 @@ async function loadResult(jobId) {
             <img src="${hostfitJobFileUrl(jobId, 'sed_png')}?t=${ts}" class="img-fluid rounded border" alt="SED"
                  onerror="this.outerHTML='<div class=\\'text-secondary small\\'>SED 图加载失败（任务可能未产出图）</div>'">
           </div>
-        </div>
+        </div>${cornerImg}
         <div class="mt-3 d-flex flex-wrap gap-2">
-          <a class="btn btn-sm btn-outline-secondary" href="${hostfitJobFileUrl(jobId, 'best_model')}" download>
-            <i class="bi bi-download"></i> best_model.fits</a>
-          <a class="btn btn-sm btn-outline-secondary" href="${hostfitJobFileUrl(jobId, 'results')}" download>
-            <i class="bi bi-download"></i> results.txt</a>
-          <a class="btn btn-sm btn-outline-secondary" href="${hostfitJobFileUrl(jobId, 'log')}" download>
-            <i class="bi bi-download"></i> run.log</a>
+          ${downloadBtns}
         </div>
       </div>
     </div>`;
@@ -778,23 +1019,43 @@ async function writeToHost(detail) {
   if (!confirm(`将任务 #${detail.id} 的拟合结果写入 ${_tid} 的宿主信息？（覆盖 derived 字段）`)) return;
   const bayes = flattenParams(detail.parameters && detail.parameters.bayes);
   const bayesErr = (detail.parameters && detail.parameters.bayes_err) || {};
-  const derived = {
-    m_star: paramVal(bayes, 'stellar.m_star'),
-    sfr: paramVal(bayes, 'sfh.sfr'),
-    age_main: paramVal(bayes, 'sfh.age_main'),
-    Av_ISM: paramVal(bayes, 'attenuation.Av_ISM'),
-    chi2: detail.chi_squared ?? null,
-    fit_at: new Date().toISOString(),
-    job_id: detail.id,
-  };
+  const engine = jobEngine(detail);
+  let derived, zKey;
+  if (engine === 'prospector') {
+    // prospector 结果键为 flat（m_star/sfr/tage/Av/redshift）；
+    // age_main 沿用 pcigale 口径单位 Myr（tage 为 Gyr，×1000 换算）
+    const tageGyr = paramVal(bayes, 'tage');
+    derived = {
+      m_star: paramVal(bayes, 'm_star'),
+      sfr: paramVal(bayes, 'sfr'),
+      age_main: tageGyr != null ? tageGyr * 1000 : null,
+      Av_ISM: paramVal(bayes, 'Av'),
+      chi2: detail.chi_squared ?? null,
+      fit_at: new Date().toISOString(),
+      job_id: detail.id,
+      engine: 'prospector',
+    };
+    zKey = 'redshift';
+  } else {
+    derived = {
+      m_star: paramVal(bayes, 'stellar.m_star'),
+      sfr: paramVal(bayes, 'sfh.sfr'),
+      age_main: paramVal(bayes, 'sfh.age_main'),
+      Av_ISM: paramVal(bayes, 'attenuation.Av_ISM'),
+      chi2: detail.chi_squared ?? null,
+      fit_at: new Date().toISOString(),
+      job_id: detail.id,
+    };
+    zKey = 'universe.redshift';
+  }
   for (const k of Object.keys(derived)) if (derived[k] == null) delete derived[k];
   const body = { derived };
   if (detail.mode === 'photoz') {
-    const z = paramVal(bayes, 'universe.redshift');
+    const z = paramVal(bayes, zKey);
     if (z != null) {
       body.redshift = z;
       body.redshift_type = 'phot';
-      const zerr = bayesErr['universe.redshift'];
+      const zerr = bayesErr[zKey];
       if (zerr != null && isFinite(Number(zerr))) body.redshift_err = Number(zerr);
     }
   }

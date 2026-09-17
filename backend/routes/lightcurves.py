@@ -24,7 +24,7 @@ LC_SORTABLE = {'id', 'time', 'time_err', 'band', 'flux_density', 'flux_density_e
 def fit_model():
     """光变曲线时变函数拟合（线性 mJy 空间加权最小二乘）
 
-    请求体: {"model": "pl"|"bpl"|"sbpl", "points": [{"t":.., "f":.., "ferr":..|null}, ...],
+    请求体: {"model": "pl"|"bpl"|"sbpl"|"fred", "points": [{"t":.., "f":.., "ferr":..|null}, ...],
              "bounds": {"tb": [lo, hi]}  — 可选，bpl/sbpl 拐点预设范围（秒，与数据范围取交集）}
       pl : F(t) = A * t^(-alpha)
       bpl: F(t) = A * t^(-alpha1)                (t <= tb)
@@ -32,15 +32,20 @@ def fit_model():
       sbpl: F(t) = Fb * [ (t/tb)^(n*alpha1) + (t/tb)^(n*alpha2) ]^(-1/n)
                   平滑断裂幂律，n>0 为平滑因子（越大越尖锐；n→∞ 退化为 bpl），
                   A = Fb * tb^alpha1 与 bpl 归一化约定一致
-    返回: {"params": {...}, "param_errors": {...}|null, "N": n}
+      fred: F(x) = A * exp(2μ) * exp(-τ1/(x+μ-x1) - (x+μ-x1)/τ2)，μ=(τ1/τ2)^(1/2)
+                  Norris et al. 2005 脉冲形（A 即峰值强度，峰值位于 x = x1+(τ1τ2)^(1/2)-μ）；
+                  定义域 x+μ-x1>0，域外取 0；A 为振幅，τ1/τ2 为上升/下降时标，x1 为起始时间（秒）
+    返回: {"params": {...}, "param_errors": {...}|null,
+           "param_cov": {"keys": [...], "matrix": [[...]]}|null, "N": n}
+      param_cov 为输出参数基下的完整协方差（键序见 keys），供前端传播 1σ 置信带
     """
     import numpy as np
     from scipy.optimize import least_squares
 
     body = request.get_json(force=True) or {}
     model = body.get('model')
-    if model not in ('pl', 'bpl', 'sbpl'):
-        return {'error': 'model must be "pl", "bpl" or "sbpl"'}, 400
+    if model not in ('pl', 'bpl', 'sbpl', 'fred'):
+        return {'error': 'model must be "pl", "bpl", "sbpl" or "fred"'}, 400
     raw_points = body.get('points') or []
     t, f, sig = [], [], []
     for p in raw_points:
@@ -60,7 +65,7 @@ def fit_model():
         f.append(fi)
         # 有 ferr 的点按 1/ferr 加权，无 ferr 的点 sigma=1（不加权）
         sig.append(fe if (fe is not None and np.isfinite(fe) and fe > 0) else 1.0)
-    need = 3 if model == 'pl' else (5 if model == 'bpl' else 6)
+    need = 3 if model == 'pl' else (6 if model == 'sbpl' else 5)
     if len(t) < need:
         return {'error': 'insufficient'}, 400
     t = np.asarray(t)
@@ -105,13 +110,24 @@ def fit_model():
         # log( e^(n*a1*lnx) + e^(n*a2*lnx) ) = logaddexp，避免幂运算上溢
         return Fb * np.exp(-np.logaddexp(n * a1 * lnx, n * a2 * lnx) / n)
 
-    flux_func = pl_flux_r if model == 'pl' else (bpl_flux_r if model == 'bpl' else sbpl_flux_r)
+    # fred：μ=(τ1/τ2)^(1/2) 时 exp(2μ) 归一化使 A 即峰值强度（Norris 2005 eq.1），
+    # 指数合并为一项求值；定义域 u=x+μ-x1>0，域外取 0
+    def fred_flux_r(p, x):
+        A, t1, t2, x1 = p
+        mu = np.sqrt(t1 / t2)
+        u = x + mu - x1
+        r = np.zeros_like(x)
+        m = u > 0
+        r[m] = A * np.exp(2.0 * mu - t1 / u[m] - u[m] / t2)
+        return r
+
+    flux_func = {'pl': pl_flux_r, 'bpl': bpl_flux_r, 'sbpl': sbpl_flux_r, 'fred': fred_flux_r}[model]
 
     def resid(p):
         with np.errstate(over='ignore', invalid='ignore'):
             r = (flux_func(p, t) - f) / sig
-        # 探索过程中产生的 inf/nan 残差替换为大有限值，避免求解器卡死
-        return np.where(np.isfinite(r), r, 1e100)
+        # 探索过程中产生的 inf/nan 残差替换为大有限值并钳幅，避免求解器卡死/协方差溢出
+        return np.clip(np.where(np.isfinite(r), r, 1e60), -1e60, 1e60)
 
     if model == 'pl':
         fref0 = float(np.interp(np.log(tref), np.log(np.sort(t)), f[np.argsort(t)]))
@@ -125,13 +141,28 @@ def fit_model():
         bounds = ([1e-300, -30.0, -30.0, tb_lo],
                   [np.inf, 30.0, 30.0, tb_hi])
         keys = ('A', 'alpha1', 'alpha2', 'tb')
-    else:
+    elif model == 'sbpl':
         ipeak = int(np.argmax(f))
         tb0 = min(max(float(t[ipeak]), tb_lo), tb_hi)
         x0 = [float(f[ipeak]), -1.0, 1.0, tb0, 3.0]
         bounds = ([1e-300, -30.0, -30.0, tb_lo, 0.05],
                   [np.inf, 30.0, 30.0, tb_hi, 100.0])
         keys = ('A', 'alpha1', 'alpha2', 'tb', 'n')
+    else:
+        # fred 初值启发：A≈最大流量（A 即峰值强度），x1 使峰值落在流量最大点，
+        # τ1/τ2 取峰前/峰后时间跨度的 1/2 量级
+        span = max(float(t.max() - t.min()), 1e-6)
+        tau_hi = max(100.0 * span, 10.0)
+        ipeak = int(np.argmax(f))
+        tpeak = float(t[ipeak])
+        tau1_0 = min(max((tpeak - float(t.min())) / 2.0, 1e-6), tau_hi)
+        tau2_0 = min(max((float(t.max()) - tpeak) / 2.0, 1e-6), tau_hi)
+        # 峰值位于 x = x1 + (τ1τ2)^(1/2) - (τ1/τ2)^(1/2)，反推 x1 使峰值=t_peak
+        x1_0 = tpeak - (float(np.sqrt(tau1_0 * tau2_0)) - float(np.sqrt(tau1_0 / tau2_0)))
+        x0 = [float(f[ipeak]), tau1_0, tau2_0, x1_0]
+        bounds = ([1e-300, 1e-6, 1e-6, float(t.min()) - 10.0 * span],
+                  [np.inf, tau_hi, tau_hi, float(t.max())])
+        keys = ('A', 'tau1', 'tau2', 'x1')
     try:
         res = least_squares(resid, x0, bounds=bounds, max_nfev=20000, x_scale='jac')
     except Exception as e:
@@ -139,19 +170,22 @@ def fit_model():
     if not res.success:
         return {'error': f'fit failed: {res.message}'}, 400
 
-    # 换算回前端约定的形式：F = A * t^(-alpha)；bpl/sbpl 为 A = Fb * tb^a1
+    # 换算回前端约定的形式：F = A * t^(-alpha)；bpl/sbpl 为 A = Fb * tb^a1；fred 无需换算
     if model == 'pl':
         Fref, alpha = res.x
         conv = [Fref * tref ** alpha, alpha]
     elif model == 'bpl':
         Fb, a1, a2, tb = res.x
         conv = [Fb * tb ** a1, a1, a2, tb]
-    else:
+    elif model == 'sbpl':
         Fb, a1, a2, tb, n = res.x
         conv = [Fb * tb ** a1, a1, a2, tb, n]
+    else:
+        conv = list(res.x)  # fred：内部参数即输出参数
     params = dict(zip(keys, (float(v) for v in conv)))
     # Jacobian 近似协方差：cov = (J^T J)^-1 * chi2/dof，再经链式法则变换到输出参数
     errors = None
+    param_cov = None
     try:
         J = np.atleast_2d(res.jac)
         _, svals, VT = np.linalg.svd(J, full_matrices=False)
@@ -173,20 +207,25 @@ def fit_model():
                                   [0.0, 1.0, 0.0, 0.0],
                                   [0.0, 0.0, 1.0, 0.0],
                                   [0.0, 0.0, 0.0, 1.0]])
-                else:
+                elif model == 'sbpl':
                     A_out, a1_, a2_, tb_, n_ = conv
                     G = np.array([[tb_ ** a1_, A_out * np.log(tb_), 0.0, Fb * a1_ * tb_ ** (a1_ - 1.0), 0.0],
                                   [0.0, 1.0, 0.0, 0.0, 0.0],
                                   [0.0, 0.0, 1.0, 0.0, 0.0],
                                   [0.0, 0.0, 0.0, 1.0, 0.0],
                                   [0.0, 0.0, 0.0, 0.0, 1.0]])
+                else:
+                    G = np.eye(4)  # fred：无再参数化
                 cov_out = G @ cov @ G.T
+                if np.isfinite(cov_out).all():
+                    param_cov = {'keys': list(keys), 'matrix': cov_out.tolist()}
                 errs = np.sqrt(np.diag(cov_out))
                 if np.isfinite(errs).all():
                     errors = dict(zip(keys, (float(v) for v in errs)))
     except Exception:
         errors = None
-    return jsonify({'params': params, 'param_errors': errors, 'N': int(len(t))})
+        param_cov = None
+    return jsonify({'params': params, 'param_errors': errors, 'param_cov': param_cov, 'N': int(len(t))})
 
 
 @lightcurves_bp.route('', methods=['GET'])
