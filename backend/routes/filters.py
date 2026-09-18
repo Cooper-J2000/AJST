@@ -45,7 +45,8 @@ def create_filter():
         existing = sess.query(FilterDef).filter(FilterDef.id == body['id']).first()
         if existing:
             return {'error': f'Filter {body["id"]} already exists'}, 409
-        f = FilterDef(id=body['id'], wavelength=float(body.get('wavelength', 0)))
+        f = FilterDef(id=body['id'], wavelength=float(body.get('wavelength', 0)),
+                      gext_coeff=extinction.dust_coeff(body.get('wavelength', 0)))
         if 'filter_type' in body: f.filter_type = body['filter_type']
         if 'vega2ab' in body: f.vega2ab = float(body['vega2ab'])
         if 'description' in body: f.description = body['description']
@@ -67,6 +68,7 @@ def create_filter():
             f.extra_data = extra
         sess.add(f)
         sess.commit()
+        extinction.invalidate_filter_meta()
         resp = f.to_dict()
         if warning:
             resp['warning'] = warning
@@ -99,10 +101,14 @@ def update_filter(fid):
             merged = dict(f.extra_data or {})
             merged.update(body['extra_data'])
             f.extra_data = merged
+        # 波长变动 → 同时重算银河系消光系数 k = A_λ/E(B-V)（射电等域外波段为 0）
+        if f.wavelength != old_wl:
+            f.gext_coeff = extinction.dust_coeff(f.wavelength)
         # 波长/Vega2AB 变动 → 该波段所有已银消改正的数据点自动重算
         if f.wavelength != old_wl or f.vega2ab != old_v2a:
             extinction.recompute_band(sess, fid)
         sess.commit()
+        extinction.invalidate_filter_meta()
         return jsonify(f.to_dict())
     finally:
         sess.close()
@@ -130,6 +136,7 @@ def delete_filter(fid):
             return {'error': 'Not found'}, 404
         sess.delete(f)
         sess.commit()
+        extinction.invalidate_filter_meta()
         return {'status': 'deleted', 'id': fid}
     except Exception as e:
         sess.rollback()

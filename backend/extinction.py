@@ -83,11 +83,104 @@ def get_ebv(ra, dec):
     return _ebv_cache[key]
 
 
-def compute_alambda(ebv, wavelength_a):
-    """由 E(B-V) 和有效波长(Å)计算消光量 A_λ = Rv·E(B-V)·P92(λ)"""
+# ─── 消光系数 k_λ = A_λ/E(B-V) = Rv·P92(λ) ───
+# P92 只在 1/λ ∈ x_range（缺省 [0.001, 1000] µm⁻¹，即 10 Å – 1e7 Å）内有定义；
+# 域外波段（射电/X 射线）尘埃消光可忽略，系数取 0（= 不做改正）。
+_coeff_cache = {}
+
+
+def p92_wavelength_range():
+    """P92 有效波长范围（Å，含端点），由模型 x_range（µm⁻¹）换算。"""
+    lo, hi = getattr(_p92_model, 'x_range', (0.001, 1000.0))
+    return 1.0e4 / float(hi), 1.0e4 / float(lo)
+
+
+def dust_coeff(wavelength_a):
+    """银河系尘埃消光系数 k = A_λ/E(B-V)（mag）。
+
+    P92 域内 → Rv·P92(λ)；域外（射电/X 射线）→ 0.0（尘埃消光可忽略，
+    即不做改正）；波长缺失/非法 → None（调用方应跳过）。按波长缓存
+    （P92 数值求值约 0.4 ms/次，而全域滤波器只有几十个波长）。
+    """
     import astropy.units as u
-    av = RV * ebv
-    return float(av * _p92_model(wavelength_a * u.Angstrom))
+    try:
+        wl = float(wavelength_a)
+    except (TypeError, ValueError):
+        return None
+    if not (wl > 0):
+        return None
+    key = round(wl, 6)
+    if key not in _coeff_cache:
+        lo, hi = p92_wavelength_range()
+        if not (lo <= wl <= hi):
+            _coeff_cache[key] = 0.0        # 域外：尘埃消光可忽略，不做改正
+        else:
+            if _p92_model is None and not _load():
+                return None                # 依赖不可用：不缓存，待可算时再试
+            _coeff_cache[key] = float(RV * _p92_model(wl * u.Angstrom))
+    return _coeff_cache[key]
+
+
+def compute_alambda(ebv, wavelength_a=None, coeff=None):
+    """消光量 A_λ = k·E(B-V)。
+
+    k 优先取持久化的 filters.gext_coeff（免 P92 求值），否则由波长现算
+    （dust_coeff）；两者都得 None 时返回 None（该点无法改正）。
+    """
+    if coeff is None:
+        coeff = dust_coeff(wavelength_a)
+    if coeff is None:
+        return None
+    return float(coeff) * float(ebv)
+
+
+# ─── 滤波器元数据进程内缓存 ───
+# correct_host_phot 等热路径过去每次都 sess.query(FilterDef).all()，要解码
+# 129 行的 transmission JSONB（实测 76 ms/次，宿主统计里重复 299 次 ≈ 31.8 s）；
+# 这里只取所需 4 列并做进程内缓存（带 TTL，兜底 CLI/脚本改库的情况）。
+_filter_meta_cache = None       # (timestamp, {band: {...}})
+_FILTER_META_TTL = 60.0         # 秒
+
+
+def filter_meta(sess, refresh=False):
+    """{band: {'wavelength','vega2ab','gext_coeff'}}（只取所需列，进程内缓存）。"""
+    global _filter_meta_cache
+    import time as _time
+    now = _time.time()
+    if (refresh or _filter_meta_cache is None
+            or now - _filter_meta_cache[0] > _FILTER_META_TTL):
+        from models import FilterDef
+        _filter_meta_cache = (now, {
+            r.id: {'wavelength': r.wavelength, 'vega2ab': r.vega2ab,
+                   'gext_coeff': r.gext_coeff}
+            for r in sess.execute(
+                select(FilterDef.id, FilterDef.wavelength,
+                       FilterDef.vega2ab, FilterDef.gext_coeff)).all()
+        })
+    return _filter_meta_cache[1]
+
+
+def invalidate_filter_meta():
+    """滤波器定义（波长/Vega2AB/系数）变更后调用，使进程内缓存失效。"""
+    global _filter_meta_cache
+    _filter_meta_cache = None
+
+
+def refresh_ebv(row):
+    """坐标建立/变更后刷新 row.gext_ebv（E(B-V) 缓存）。
+
+    无坐标 → 置 None；尘埃图依赖不可用 → 保留旧值（不写坏数据）。
+    只赋值、不 commit，由调用方负责。
+    """
+    ra = getattr(row, 'ra', None)
+    dec = getattr(row, 'dec', None)
+    if ra is None or dec is None:
+        row.gext_ebv = None
+        return None
+    if not _load():
+        return row.gext_ebv
+    row.gext_ebv = get_ebv(ra, dec)
+    return row.gext_ebv
 
 
 # 光学/紫外/红外波长窗口（Å）：排除 P92 曲线不覆盖的射电与 X 射线波段
@@ -95,17 +188,20 @@ OPTICAL_WL_MIN_A = 1000.0
 OPTICAL_WL_MAX_A = 1.0e7
 
 
-def _optical_alambda(filt, ebv):
+def _optical_alambda(wavelength, ebv, coeff=None):
     """
     统一光学窗口判定 + A_λ 计算：
-    filt 缺失 / 波长无效 / 波长超窗 / P92 计算报错 → 返回 None，否则返回 A_λ。
+    波长缺失/非法/超出光学窗口(1000 Å–1e7 Å) → 返回 None，否则返回 A_λ
+    （优先用持久化的 filters.gext_coeff，免 P92 求值）。
     """
-    if filt is None or filt.wavelength is None or filt.wavelength <= 0:
+    try:
+        wl = float(wavelength)
+    except (TypeError, ValueError):
         return None
-    if not (OPTICAL_WL_MIN_A <= filt.wavelength <= OPTICAL_WL_MAX_A):
+    if wl <= 0 or not (OPTICAL_WL_MIN_A <= wl <= OPTICAL_WL_MAX_A):
         return None
     try:
-        return compute_alambda(ebv, filt.wavelength)
+        return compute_alambda(ebv, wl, coeff=coeff)
     except ValueError:
         return None
 
@@ -186,13 +282,13 @@ def run(sess, transient_id=None, lightcurve_id=None):
       lightcurve_id 指定 → 单个数据点
     返回统计信息 dict（调用方负责 commit）。
     """
-    from models import Transient, Lightcurve, FilterDef
+    from models import Transient, Lightcurve
 
     if not _load():
         return {'ok': False, 'error': f'消光计算依赖不可用: {_import_error}'}
 
-    # 滤波器表（光学/红外波段，不在表中的波段如 keV/GHz 不做改正）
-    filters = {f.id: f for f in sess.query(FilterDef).all()}
+    # 滤波器元数据（进程内缓存，只取 id/wavelength/vega2ab/gext_coeff）
+    filters = filter_meta(sess)
 
     q = sess.query(Lightcurve)
     if lightcurve_id is not None:
@@ -213,9 +309,9 @@ def run(sess, transient_id=None, lightcurve_id=None):
     ebv_cache = {}   # transient_id → E(B-V)
     alam_cache = {}  # (transient_id, band) → A_λ
 
-    # 一次性预取涉及源的坐标（只取所需列，不载入完整 ORM 实体），避免逐行 query（N+1）
+    # 一次性预取涉及源的坐标与缓存 E(B-V)（只取所需列，避免逐行 query）
     t_map = {r.id: r for r in sess.execute(
-        select(Transient.id, Transient.ra, Transient.dec)
+        select(Transient.id, Transient.ra, Transient.dec, Transient.gext_ebv)
         .where(Transient.id.in_({lc.transient_id for lc in rows}))).all()}
 
     for lc in rows:
@@ -227,8 +323,8 @@ def run(sess, transient_id=None, lightcurve_id=None):
             # 原作者已做过消光改正的数据（如 GRBSNWebtool 部分来源），不重复改正
             stats['skipped_flux'] += 1
             continue
-        filt = filters.get(lc.band)
-        if filt is None or filt.wavelength is None or filt.wavelength <= 0:
+        meta = filters.get(lc.band)
+        if meta is None or not meta['wavelength'] or meta['wavelength'] <= 0:
             stats['skipped_band'] += 1
             continue
         if obs_mag(lc) is None:
@@ -238,13 +334,16 @@ def run(sess, transient_id=None, lightcurve_id=None):
         key = (lc.transient_id, lc.band)
         if key not in alam_cache:
             if lc.transient_id not in ebv_cache:
-                ebv_cache[lc.transient_id] = get_ebv(t.ra, t.dec)
-            alam_cache[key] = _optical_alambda(filt, ebv_cache[lc.transient_id])
+                ebv_cache[lc.transient_id] = (t.gext_ebv if t.gext_ebv is not None
+                                              else get_ebv(t.ra, t.dec))
+            alam_cache[key] = _optical_alambda(meta['wavelength'],
+                                               ebv_cache[lc.transient_id],
+                                               coeff=meta['gext_coeff'])
         if alam_cache[key] is None:
             stats['skipped_not_optical'] += 1
             continue
 
-        if correct_point(lc, alam_cache[key], filt.vega2ab):
+        if correct_point(lc, alam_cache[key], meta['vega2ab']):
             stats['corrected'] += 1
         else:
             stats['skipped_flux'] += 1
@@ -256,16 +355,19 @@ def run(sess, transient_id=None, lightcurve_id=None):
 
 # ─── 宿主星系测光改正（只算不写） ───
 
-def correct_host_phot(sess, ra, dec, phot_rows):
+def correct_host_phot(sess, ra, dec, phot_rows, ebv=None):
     """
-    宿主星系测光行的银河系消光改正计算（复用 CSFD+P92 查询，不写库）。
+    宿主星系测光行的银河系消光改正计算（只算不写）。
 
     phot_rows: host_galaxies.photometry 的 JSONB 行 [{band, mag, gext_corr, ...}]。
     改正方向与光变点一致：改正后星等 = mag − A_λ（更亮；A_λ 是星等加性量，
     与 Vega→AB / ST→流量的换算可交换，故直接在原星等系统上减）。
+    ebv: 调用方预先取到的 E(B-V)（如行上的 gext_ebv 缓存）；None 时按 (ra, dec)
+         查 CSFD 尘图。A_λ 用持久化的 filters.gext_coeff（射电等域外波段为 0），
+         因此 ebv + 系数齐备时本函数不再需要尘图/P92 依赖。
     返回 {'ok', 'error', 'ebv', 'rows'}；rows 与输入等长对齐，每项：
       applied   — True 表示该行标记为未改正（gext_corr 非真）且已成功计算
-      A_lambda  — 该行波段的银消量（mag）
+      A_lambda  — 该行波段的银消量（mag，射电等域外波段为 0）
       mag_corr  — 改正后星等（float(mag) − A_λ）
       reason    — 未改正的原因（already_corrected / bad_mag / band_no_wavelength /
                   not_optical（波长超出光学窗口或 P92 计算失败）/ not_dict）
@@ -276,14 +378,14 @@ def correct_host_phot(sess, ra, dec, phot_rows):
                 'rows': [{'applied': False, 'A_lambda': None, 'mag_corr': None,
                           'reason': 'unavailable'} for _ in (phot_rows or [])]}
 
-    if ra is None or dec is None:
-        return _fail('缺少宿主/源坐标，无法查询尘埃图')
-    if not _load():
-        return _fail(f'消光计算依赖不可用: {_import_error}')
+    filters = filter_meta(sess)
+    if ebv is None:
+        if ra is None or dec is None:
+            return _fail('缺少宿主/源坐标，无法查询尘埃图')
+        if not _load():
+            return _fail(f'消光计算依赖不可用: {_import_error}')
+        ebv = get_ebv(ra, dec)
 
-    from models import FilterDef
-    filters = {f.id: f for f in sess.query(FilterDef).all()}
-    ebv = get_ebv(ra, dec)
     alam_cache = {}   # band → A_λ
     rows = []
     for p in phot_rows or []:
@@ -301,12 +403,17 @@ def correct_host_phot(sess, ra, dec, phot_rows):
         except (TypeError, ValueError):
             item['reason'] = 'bad_mag'
             continue
-        filt = filters.get(band)
-        if filt is None or not filt.wavelength or filt.wavelength <= 0:
+        meta = filters.get(band)
+        if meta is None or not meta['wavelength'] or meta['wavelength'] <= 0:
             item['reason'] = 'band_no_wavelength'
             continue
         if band not in alam_cache:
-            alam_cache[band] = _optical_alambda(filt, ebv)
+            alm = _optical_alambda(meta['wavelength'], ebv, coeff=meta['gext_coeff'])
+            if alm is None and meta['gext_coeff'] is None \
+                    and not _load():
+                item['reason'] = 'unavailable'
+                continue
+            alam_cache[band] = alm
         if alam_cache[band] is None:
             item['reason'] = 'not_optical'
             continue
@@ -334,7 +441,9 @@ def recompute_point(sess, lc):
         return
     if not _load():
         return  # 依赖不可用时保留旧值，不破坏数据
-    alambda = _optical_alambda(filt, get_ebv(t.ra, t.dec))
+    ebv = t.gext_ebv if t.gext_ebv is not None else get_ebv(t.ra, t.dec)
+    alambda = _optical_alambda(filt.wavelength if filt is not None else None, ebv,
+                               coeff=(filt.gext_coeff if filt is not None else None))
     if alambda is None:
         clear_point(lc)
         return
@@ -343,7 +452,7 @@ def recompute_point(sess, lc):
 
 def recompute_transient(sess, transient_id):
     """源坐标变动后：重算该源所有已改正的数据点；坐标被清除则全部清除。"""
-    from models import Transient, Lightcurve, FilterDef
+    from models import Transient, Lightcurve
     rows = sess.query(Lightcurve).filter(
         Lightcurve.transient_id == transient_id,
         Lightcurve.gext_corr.is_(True),
@@ -357,42 +466,44 @@ def recompute_transient(sess, transient_id):
         return
     if not _load():
         return
-    filters = {f.id: f for f in sess.query(FilterDef).all()}
-    ebv = get_ebv(t.ra, t.dec)
+    filters = filter_meta(sess)
+    ebv = t.gext_ebv if t.gext_ebv is not None else get_ebv(t.ra, t.dec)
     alam_cache = {}
     for lc in rows:
-        filt = filters.get(lc.band)
-        if obs_mag(lc) is None:
+        meta = filters.get(lc.band)
+        if meta is None or obs_mag(lc) is None:
             clear_point(lc)
             continue
         if lc.band not in alam_cache:
-            alam_cache[lc.band] = _optical_alambda(filt, ebv)
+            alam_cache[lc.band] = _optical_alambda(meta['wavelength'], ebv,
+                                                   coeff=meta['gext_coeff'])
         if alam_cache[lc.band] is None:
             clear_point(lc)
             continue
-        correct_point(lc, alam_cache[lc.band], filt.vega2ab)
+        correct_point(lc, alam_cache[lc.band], meta['vega2ab'])
 
 
 def recompute_band(sess, band):
     """滤波器定义（波长/Vega2AB）变动后：重算该波段所有已改正的数据点。"""
-    from models import Transient, Lightcurve, FilterDef
+    from models import Transient, Lightcurve
     rows = sess.query(Lightcurve).filter(
         Lightcurve.band == band,
         Lightcurve.gext_corr.is_(True),
     ).all()
     if not rows:
         return
-    filt = sess.query(FilterDef).filter(FilterDef.id == band).first()
-    if filt is None or filt.wavelength is None or filt.wavelength <= 0:
+    # 滤波器元数据强制刷新（本函数由滤波器变更触发，且变更尚未 commit）
+    meta = filter_meta(sess, refresh=True).get(band)
+    if meta is None or not meta['wavelength'] or meta['wavelength'] <= 0:
         for lc in rows:
             clear_point(lc)
         return
     if not _load():
         return
     ebv_cache = {}
-    # 一次性预取涉及源的坐标（只取所需列，不载入完整 ORM 实体），避免逐行 query（N+1）
+    # 一次性预取涉及源的坐标与缓存 E(B-V)（只取所需列，避免逐行 query）
     t_map = {r.id: r for r in sess.execute(
-        select(Transient.id, Transient.ra, Transient.dec)
+        select(Transient.id, Transient.ra, Transient.dec, Transient.gext_ebv)
         .where(Transient.id.in_({lc.transient_id for lc in rows}))).all()}
     for lc in rows:
         if obs_mag(lc) is None:
@@ -403,12 +514,14 @@ def recompute_band(sess, band):
             clear_point(lc)
             continue
         if lc.transient_id not in ebv_cache:
-            ebv_cache[lc.transient_id] = get_ebv(t.ra, t.dec)
-        alambda = _optical_alambda(filt, ebv_cache[lc.transient_id])
+            ebv_cache[lc.transient_id] = (t.gext_ebv if t.gext_ebv is not None
+                                          else get_ebv(t.ra, t.dec))
+        alambda = _optical_alambda(meta['wavelength'], ebv_cache[lc.transient_id],
+                                   coeff=meta['gext_coeff'])
         if alambda is None:
             clear_point(lc)
             continue
-        correct_point(lc, alambda, filt.vega2ab)
+        correct_point(lc, alambda, meta['vega2ab'])
 
 
 # ─── 光谱银河系消光改正（二级产物） ───

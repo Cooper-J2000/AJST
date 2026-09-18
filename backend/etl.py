@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 from app import get_engine, get_session
 from models import Base, Transient, Lightcurve, FilterDef, Tag, Spectrum, Article, HostGalaxy, utcnow
+import extinction
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.environ.get('AJST_DATA_DIR', os.path.join(PROJECT_ROOT, 'catadata'))
@@ -133,10 +134,12 @@ def import_filters(sess, force=False):
             existing.vega2ab = info.get('Vega2AB', 0.0)
             existing.description = info.get('description')
             existing.extra_data = info.get('extra_data') or {}
+            existing.gext_coeff = extinction.dust_coeff(existing.wavelength)
         else:
             sess.add(FilterDef(
                 id=fid, wavelength=info.get('wavelength', 0),
                 filter_type=info.get('type'), vega2ab=info.get('Vega2AB', 0.0),
+                gext_coeff=extinction.dust_coeff(info.get('wavelength', 0)),
                 description=info.get('description'),
                 extra_data=info.get('extra_data') or {},
             ))
@@ -184,6 +187,7 @@ def import_one_transient(sess, tid):
         if isinstance(data.get('extra_data'), dict):
             t.extra_data = data['extra_data']
         t.updated_at = utcnow()
+        extinction.refresh_ebv(t)      # 坐标建立/变更 → 刷新 E(B-V) 缓存
     else:
         t = Transient(
             id=tid, ra=parse_float(data.get('ra')), dec=parse_float(data.get('dec')),
@@ -198,6 +202,7 @@ def import_one_transient(sess, tid):
             extra_data=data.get('extra_data') if isinstance(data.get('extra_data'), dict) else {},
         )
         sess.add(t)
+        extinction.refresh_ebv(t)      # 坐标建立 → 计算 E(B-V) 缓存
     sess.flush()
 
     # 研究文章：info JSON 含 articles 字段时对该源做全量替换（与光变一致；
@@ -247,6 +252,7 @@ def import_one_lightcurve(sess, tid):
         print(f'  [WARN] {tid}: LC file exists but no info JSON, creating stub')
         t = Transient(id=tid)
         sess.add(t)
+        extinction.refresh_ebv(t)      # 无坐标 → 置 None
         sess.flush()
 
     # 删除旧光变数据（该源的全量替换）

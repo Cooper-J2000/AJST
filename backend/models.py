@@ -82,6 +82,7 @@ class Transient(Base):
     pos_error       = Column(Float, nullable=True)
     pos_error_unit  = Column(String(16), default='arcsec')
     pos_ref         = Column(Text, nullable=True)
+    gext_ebv        = Column(Float, nullable=True)   # 本坐标处 CSFD 尘图 E(B-V) 缓存（坐标变更时刷新）
     comment         = Column(Text, nullable=True)
     sub_tag         = Column(JSONB, default=list)          # ["L", "S", "X"]
     tags            = Column(JSONB, default=list)          # ["fxt"]
@@ -271,6 +272,9 @@ class FilterDef(Base):
     wavelength  = Column(Float, nullable=False)
     filter_type = Column(String(16), nullable=True)      # 'mean' / 'ref'
     vega2ab     = Column(Float, default=0.0)
+    gext_coeff  = Column(Float, nullable=True)           # 银河系消光系数 k = A_λ/E(B-V) = Rv·P92(λ)
+                                                         # （尘烷，P92 域 10 Å–1e7 Å）；射电等域外波段为 0（尘烷消光
+                                                         # 可忽略，即不做改正）；NULL = 波长缺失/无法计算
     description = Column(Text, nullable=True)
     extra_data    = Column(JSONB, default=dict)
 
@@ -280,6 +284,7 @@ class FilterDef(Base):
             'wavelength': self.wavelength,
             'filter_type': self.filter_type,
             'vega2ab': self.vega2ab,
+            'gext_coeff': self.gext_coeff,
             'description': self.description,
             'extra_data': self.extra_data or {},
         }
@@ -403,6 +408,7 @@ class HostGalaxy(Base):
                            nullable=False, unique=True, index=True)
     ra            = Column(Float, nullable=True)         # 宿主坐标（度）
     dec           = Column(Float, nullable=True)
+    gext_ebv      = Column(Float, nullable=True)         # 本坐标处 CSFD 尘图 E(B-V) 缓存（坐标变更时刷新）
     redshift      = Column(Float, nullable=True)         # 宿主红移
     redshift_err  = Column(Float, nullable=True)         # 光谱红移=0，测光红移有误差
     redshift_type = Column(String(16), nullable=True)    # 'spec' / 'phot'

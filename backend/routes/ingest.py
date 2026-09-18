@@ -229,6 +229,7 @@ def photometry():
                                   t0=t0, aliases=list(nt.get('aliases') or []),
                                   extra_data=extra)
             sess.add(transient)
+            extinction.refresh_ebv(transient)   # 坐标建立 → 计算 E(B-V) 缓存
             sess.flush()
             created_transient = True
 

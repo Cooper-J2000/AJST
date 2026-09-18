@@ -244,8 +244,10 @@ def update_transient(tid):
         old_ra, old_dec = t.ra, t.dec
         _apply_transient_fields(t, body)
         t.updated_at = utcnow()
-        # 坐标变动 → 该源所有已银消改正的数据点自动重算（坐标被清除则清除改正）
+        # 坐标变动 → 刷新 E(B-V) 缓存 + 该源所有已银消改正的数据点自动重算
+        # （坐标被清除则清除改正）
         if t.ra != old_ra or t.dec != old_dec:
+            extinction.refresh_ebv(t)
             extinction.recompute_transient(sess, tid)
         sess.commit()
         return jsonify(t.to_dict())
