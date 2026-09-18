@@ -7,10 +7,10 @@ GET /api/stats/tags        — 标签 / 子标签目标数
 GET /api/stats/hosts       — 宿主星系覆盖与参数分布
 """
 from flask import Blueprint, jsonify
-from sqlalchemy import func, distinct, text
+from sqlalchemy import func, distinct, text, select
 from app import get_session
-from models import Transient, Lightcurve, FilterDef, HostGalaxy, distance_modulus
-from extinction import correct_host_phot
+from models import Transient, Lightcurve, HostGalaxy, distance_modulus
+from extinction import correct_host_phot, filter_meta
 
 stats_bp = Blueprint('stats', __name__)
 
@@ -102,23 +102,30 @@ def host_stats():
                 sfr.append(d['sfr'])
                 sfr_points.append({'tid': h.transient_id, 'z': z, 'sfr': d['sfr']})
         # 宿主测光 → 绝对星等（需宿主红移）
-        filters = {f.id: f for f in sess.query(FilterDef).all()}
+        # 滤波器元数据用进程内缓存（extinction.filter_meta，免每次解码 transmission）
+        filters = filter_meta(sess)
 
         def _vega2ab(band):
             f = filters.get(band) or filters.get(str(band).lower())
-            return (f.vega2ab or 0.0) if f else 0.0
+            return (f['vega2ab'] or 0.0) if f else 0.0
 
-        # 暂现源坐标缓存（宿主缺坐标时回退用，惰性查询）
-        t_coords = {}
+        # 暂现源坐标 + E(B-V) 缓存：一次性预取，避免逐行 sess.get(Transient)（N+1）
+        t_rows = {r.id: r for r in sess.execute(
+            select(Transient.id, Transient.ra, Transient.dec, Transient.gext_ebv)
+            .where(Transient.id.in_([h.transient_id for h in hosts]))).all()}
 
         def _coords(h):
             if h.ra is not None and h.dec is not None:
                 return h.ra, h.dec
-            tid = h.transient_id
-            if tid not in t_coords:
-                t = sess.get(Transient, tid)
-                t_coords[tid] = (t.ra, t.dec) if t is not None else (None, None)
-            return t_coords[tid]
+            t = t_rows.get(h.transient_id)
+            return (t.ra, t.dec) if t is not None else (None, None)
+
+        def _ebv(h):
+            """E(B-V) 缓存：宿主行优先，回退暂现源行；都无则 None（由函数查尘图）。"""
+            if h.gext_ebv is not None:
+                return h.gext_ebv
+            t = t_rows.get(h.transient_id)
+            return None if t is None else t.gext_ebv
 
         abs_mag_points = []
         for h in hosts:
@@ -129,11 +136,11 @@ def host_stats():
             if dm is None:
                 continue
             phot = h.photometry or []
-            # 有未改正行时整体算一次改正（尘埃图按坐标查一次）
+            # 有未改正行时整体算一次改正（E(B-V)/滤波器系数已缓存，不再查尘图/重查滤波器表）
             corr = None
             if any(isinstance(p, dict) and not p.get('gext_corr', False) for p in phot):
                 ra, dec = _coords(h)
-                res = correct_host_phot(sess, ra, dec, phot)
+                res = correct_host_phot(sess, ra, dec, phot, ebv=_ebv(h))
                 if res.get('ok'):
                     corr = res['rows']
             for idx, p in enumerate(phot):

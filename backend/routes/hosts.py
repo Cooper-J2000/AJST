@@ -10,6 +10,7 @@ from flask import Blueprint, jsonify, request, abort
 from app import get_session, require_auth, require_admin, current_username
 from models import Transient, HostGalaxy
 from coords import parse_ra, parse_dec
+import extinction
 
 hosts_bp = Blueprint('hosts', __name__)
 
@@ -92,6 +93,8 @@ def upsert_host(transient_id):
                 host.dec = parse_dec(body['dec'])
         except ValueError as e:
             abort(400, description=str(e))
+        if 'ra' in body or 'dec' in body:
+            extinction.refresh_ebv(host)   # 坐标建立/变更 → 刷新 E(B-V) 缓存
         if 'redshift_type' in body:
             host.redshift_type = body['redshift_type']
         if 'photometry' in body:

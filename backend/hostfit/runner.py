@@ -114,7 +114,9 @@ def _apply_gext_correction(job_id, config, log):
             else (t.ra if t is not None else None)
         dec = host.dec if (host is not None and host.dec is not None) \
             else (t.dec if t is not None else None)
-        res = correct_host_phot(sess, ra, dec, phot)
+        ebv_c = host.gext_ebv if (host is not None and host.gext_ebv is not None) \
+            else (t.gext_ebv if t is not None else None)
+        res = correct_host_phot(sess, ra, dec, phot, ebv=ebv_c)
     finally:
         sess.close()
     if not res.get('ok'):

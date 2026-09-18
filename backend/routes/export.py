@@ -109,14 +109,17 @@ def export_host_photometry(tid):
         corr = {'ok': False, 'rows': [{} for _ in phot], 'ebv': None}
         if any(isinstance(p, dict) and not p.get('gext_corr', False) for p in phot):
             ra, dec = host.ra, host.dec
-            if ra is None or dec is None:
+            ebv_c = host.gext_ebv
+            if ra is None or dec is None or ebv_c is None:
                 t = sess.get(Transient, tid)
                 if t is not None:
                     if ra is None:
                         ra = t.ra
                     if dec is None:
                         dec = t.dec
-            corr = correct_host_phot(sess, ra, dec, phot)
+                    if ebv_c is None:
+                        ebv_c = t.gext_ebv
+            corr = correct_host_phot(sess, ra, dec, phot, ebv=ebv_c)
         rows = []
         for p, c in zip(phot, corr['rows']):
             if not isinstance(p, dict):

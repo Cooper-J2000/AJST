@@ -48,6 +48,12 @@ def init_db():
         conn.execute(text(
             "ALTER TABLE spectra ADD COLUMN IF NOT EXISTS parent_id BIGINT"
             " REFERENCES spectra(id) ON DELETE CASCADE"))
+        conn.execute(text(
+            "ALTER TABLE filters ADD COLUMN IF NOT EXISTS gext_coeff DOUBLE PRECISION"))
+        conn.execute(text(
+            "ALTER TABLE transients ADD COLUMN IF NOT EXISTS gext_ebv DOUBLE PRECISION"))
+        conn.execute(text(
+            "ALTER TABLE host_galaxies ADD COLUMN IF NOT EXISTS gext_ebv DOUBLE PRECISION"))
     # 种子管理员：无任何 admin 账户时创建 admin，密码取 AUTH_PASSWORD
     # （环境变量 AJST_CATALOG_PASSWORD；未设置时为每次启动随机生成，
     #  请务必通过环境变量显式设置一个强密码，见 docs/TECHNICAL.md §7.1）
