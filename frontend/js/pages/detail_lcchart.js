@@ -274,9 +274,22 @@ function buildBandPanel(sortedBands, spectralColors) {
   });
 }
 
-// ─── 1σ 置信带（mJy 空间）：采样点中心差分数值 Jacobian，σ(t)=√(J·cov·Jᵀ) ───
+// ─── 1σ 置信带（mJy 空间）───
+// 优先用 MCMC 后验样本路径（fit.samples：输出参数基的 dict 列表，后端 fit_model 返回）：
+// 每个样本在网格上求值，逐网格点取 16/84 分位作为 lo/hi；
+// fit.samples 缺失时回退 Jacobian 路径：采样点中心差分数值 Jacobian，σ(t)=√(J·cov·Jᵀ)
 // fit.param_cov = { keys: [...], matrix: [[...]] }（后端 fit_model 返回，键序为 params 参数基）
 function fitBandPoints(fit, ts) {
+  if (Array.isArray(fit.samples) && fit.samples.length > 10) {
+    const curve = fit.samples.map(prm => ts.map(tt => fitModelFlux(fit.model, prm, tt)));
+    const out = [];
+    for (let i = 0; i < ts.length; i++) {
+      const col = curve.map(v => v[i]).filter(v => v > 0 && isFinite(v)).sort((a, b) => a - b);
+      if (col.length < 10) continue;
+      out.push({ x: ts[i], lo: col[Math.floor(0.16 * (col.length - 1))], hi: col[Math.ceil(0.84 * (col.length - 1))] });
+    }
+    if (out.length > 2) return out;
+  }
   const cov = fit.param_cov;
   if (!cov || !Array.isArray(cov.keys) || !Array.isArray(cov.matrix)) return null;
   const keys = cov.keys, M = cov.matrix, k = keys.length;
@@ -430,7 +443,7 @@ export function wireLCChartGlobals(bands, bandNames, spectralColors) {
       .filter(d => d && d.t > 0 && d.f > 0
         && (isNaN(tminIn) || d.t >= tminIn)
         && (isNaN(tmaxIn) || d.t <= tmaxIn));
-    const need = model === 'pl' ? 3 : (model === 'sbpl' ? 6 : 5);
+    const need = model === 'pl' ? 2 : (model === 'sbpl' ? 5 : 4);
     if (pts.length < need) {
       showToast(`有效数据点不足（${FIT_MODEL_NAMES[model] || model} 需 ≥${need} 点，当前 ${pts.length} 点）`, 'warning');
       return;
@@ -466,6 +479,7 @@ export function wireLCChartGlobals(bands, bandNames, spectralColors) {
         params: res.params,
         param_errors: res.param_errors || null,
         param_cov: res.param_cov || null,
+        samples: Array.isArray(res.samples) ? res.samples : null,
         N: res.N,
         color: FIT_COLORS[lcFits.length % FIT_COLORS.length],
       };
@@ -478,6 +492,7 @@ export function wireLCChartGlobals(bands, bandNames, spectralColors) {
       renderFitList();
       rebuildLCPlot(bands, bandNames, spectralColors);
       showToast('拟合已添加', 'success');
+      if (res.degenerate) showToast('点数仅够确定参数，无法给出误差估计', 'warning');
     } catch (err) {
       showToast(`拟合失败: ${err.message}`, 'danger');
     }
@@ -669,6 +684,7 @@ function buildLCChart(bands, bandNames, spectralColors) {
           _errorValues: vals.map(d => d.err),
           _timeErrValues: vals.map(d => d.terr),
           _clippedFlags: vals.map(d => d.clipped),
+          _telescope: vals.map(d => d.raw.telescope || null),
           _isUpperLimit: false,
           _band: band,
         });
@@ -697,6 +713,7 @@ function buildLCChart(bands, bandNames, spectralColors) {
           pointRadius: 5,
           pointRotation: 180,
           _errorValues: [],
+          _telescope: uv.map(d => d.raw.telescope || null),
           _isUpperLimit: true,
           _band: band,
         });
@@ -834,6 +851,9 @@ function buildLCChart(bands, bandNames, spectralColors) {
                 : `${tTxt}, ${sciFormat(p.y)} mJy (AB ${mJyToMagAB(p.y).toFixed(2)})`;
               if (err != null && err > 0) txt += ` ±${absMag ? err.toFixed(2) : sciFormat(err)}`;
               if (ds._clippedFlags && ds._clippedFlags[ctx.dataIndex]) txt += ' [原始值≤0，已截断]';
+              if (ds._band) txt += ` · 波段: ${ds._band}`;
+              const tel = ds._telescope ? ds._telescope[ctx.dataIndex] : null;
+              if (tel) txt += ` · 望远镜: ${tel}`;
               return txt;
             },
           },

@@ -225,7 +225,7 @@ export async function render() {
                 <label class="form-label small mb-0">${label}</label>
                 <div class="input-group input-group-sm">
                   <input type="text" class="form-control" id="gcnObsT_${k}">
-                  <select class="form-select" id="gcnObsU_${k}" style="max-width:64px">
+                  <select class="form-select" id="gcnObsU_${k}" style="max-width:88px;padding-right:1.4rem">
                     <option value="s" selected>s</option><option value="m">min</option><option value="h">h</option><option value="d">d</option>
                   </select>
                 </div>
@@ -234,7 +234,7 @@ export async function render() {
                 <label class="form-label small mb-0">曝光 exposure</label>
                 <div class="input-group input-group-sm">
                   <input type="text" class="form-control" id="gcnObsExpo">
-                  <select class="form-select" id="gcnObsExpoU" style="max-width:64px">
+                  <select class="form-select" id="gcnObsExpoU" style="max-width:88px;padding-right:1.4rem">
                     <option value="s" selected>s</option><option value="m">min</option><option value="h">h</option><option value="d">d</option>
                   </select>
                 </div>

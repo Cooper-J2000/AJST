@@ -313,7 +313,7 @@ const LC_NEW_TFACS = [[1, '秒 x1'], [60, '分 x60'], [3600, '小时 x3600'], [8
 window.lcAddNewRow = () => {
   // 检查是否已有新增行
   if (document.getElementById('lcNewRow')) return;
-  const tbody = document.querySelector('.table-scroll tbody');
+  const tbody = document.getElementById('lcTableBody');
   if (!tbody) return;
   // 波段候选：滤光片 id（按波长排序）+ 本源已有波段名去重
   const bandCands = [...new Set([...getFilterIdsSorted(), ...lcItems.map(p => p.band).filter(Boolean)])];
@@ -356,6 +356,11 @@ window.lcAddNewRow = () => {
   </td>`;
   tbody.appendChild(tr);
   applyLcColVis();  // 新行同样遵循当前列隐藏状态
+  // 只滚动表格容器到底部露出新行，不滚动页面；等下一帧布局稳定后再滚
+  requestAnimationFrame(() => {
+    const sc = tr.closest('.table-scroll');
+    if (sc) sc.scrollTop = sc.scrollHeight;
+  });
 };
 
 window.lcAddNewCancel = () => {
@@ -405,10 +410,13 @@ window.lcGextRun = async (id) => {
   if (!isAdmin()) { showToast('仅管理员可执行银消改正', 'warning'); return; }
   try {
     const st = await runExtinction({ lightcurve_id: id });
+    const skipped = st.stats?.skipped_not_optical || 0;
+    const extra = (st.note ? `；${st.note}` : '') +
+      (skipped > 0 ? `；跳过非光学波段 ${skipped} 点` : '');
     if (st.corrected > 0) {
-      showToast('该数据点已完成银消改正', 'success');
+      showToast('该数据点已完成银消改正' + extra, 'success');
     } else {
-      showToast('该数据点无法改正（缺坐标 / 波段不支持 / 流量无效）', 'warning');
+      showToast('该数据点无法改正（缺坐标 / 波段不支持 / 流量无效）' + extra, 'warning');
     }
     render(currentTid);
   } catch (err) {

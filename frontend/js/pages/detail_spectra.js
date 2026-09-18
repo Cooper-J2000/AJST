@@ -140,6 +140,7 @@ export async function initSpectraTab(tid, redshift) {
       return;
     }
     const admin = isAdmin();
+    const authed = isAuthed();
     // 父子分组渲染：原始谱正常行，其改正子谱缩进紧随（缺失父的孤儿子谱排最后）
     const childrenByParent = new Map();
     list.filter(s => s.parent_id).forEach(s => {
@@ -176,7 +177,7 @@ export async function initSpectraTab(tid, redshift) {
                  step="0.1" value="${_specOffsets[s.id] || 0}" title="纵向偏移（相对流量模式）" onchange="setSpecOffset(${s.id}, this.value)">
           <a class="btn btn-sm btn-outline-secondary py-0 px-1" href="/api/spectra/${s.id}/download" download
              title="下载光谱文本（波长Å 流量 [误差]）" onclick="event.stopPropagation()"><i class="bi bi-download"></i></a>
-          ${admin && !isChild ? `<button class="btn btn-sm btn-outline-warning py-0 px-1" title="生成/重新生成银河系消光改正谱" onclick="gextCorrectSpectrum(${s.id})"><i class="bi bi-stars"></i></button>` : ''}
+          ${authed && !isChild ? `<button class="btn btn-sm btn-outline-warning py-0 px-1" title="生成/重新生成银河系消光改正谱" onclick="gextCorrectSpectrum(${s.id})"><i class="bi bi-stars"></i></button>` : ''}
           ${admin ? `<button class="btn btn-sm btn-outline-danger py-0 px-1" title="删除该光谱" onclick="deleteSpectrum(${s.id})"><i class="bi bi-trash"></i></button>` : ''}
         </td>
       </tr>${remarks ? `
@@ -246,7 +247,7 @@ window.specTypeChange = async (id, val) => {
 };
 
 window.gextCorrectSpectrum = async (id) => {
-  if (!isAdmin()) { showToast('仅管理员可执行消光改正', 'warning'); return; }
+  if (!isAuthed()) { showToast('请登录后执行消光改正', 'warning'); return; }
   const hasChild = [..._specListMeta.values()].some(m => m.parent_id === id);
   if (hasChild && !confirm('已存在银河系消光改正谱，从原始光谱重新生成并覆盖？')) return;
   try {

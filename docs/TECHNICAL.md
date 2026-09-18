@@ -1,6 +1,6 @@
 # AJST 暂现源光变目录系统 — 技术文档
 
-> 版本：2.19
+> 版本：2.20
 > 更新日期：2026-09-18
 
 > **说明**：本文档由开发过程中的技术文档整理而来，部分内容（数据规模、批次导入历史、
@@ -296,7 +296,7 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 - **执行方式**（数据入库后的可选步骤，需登录）：
   - 前端：事件列表页「全局银消改正」按钮（全库）；详情页「银消改正」按钮（单源）；数据表每行 🌙 按钮（单点）
   - API：`POST /api/extinction/run`，body `{}` / `{"transient_id": "..."}` / `{"lightcurve_id": N}`
-- **适用条件**：源有 RA/Dec 坐标 + 波段在 `filters` 表中（keV/GHz 等非光学波段自动跳过）+ 数据为有效星等或正的流量密度
+- **适用条件**：源有 RA/Dec 坐标 + 波段在 `filters` 表中且有效波长落在光学/紫外/红外窗口（1000 Å–1 mm）内（keV/GHz 等非光学波段自动跳过，计入 `skipped_not_optical`）+ 数据为有效星等或正的流量密度；run/clear 响应附带 `note` 说明该窗口
 - **自动重算**：数据点被修改（流量/波段等）、源坐标变动、滤波器波长或 Vega2AB 变动时，已改正的数据点自动重算；条件不再满足（如坐标被清空）时自动清除改正结果
 - **清除**：`POST /api/extinction/clear`（参数同 run）
 - ETL `--dump` 导出的 CSV 含 `mag_Gextcor` / `mag_Gextcor_err` 列，可随文件回导
@@ -315,7 +315,7 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | DELETE | `/api/transients/<id>` | 删除事件（级联删除） | 管理员 |
 | GET | `/api/lightcurves/<tid>` | 某源的全部光变数据 | 否 |
 | POST | `/api/lightcurves/batch` | 批量新增光变点（自动记录 `source`=当前账户） | 登录 |
-| POST | `/api/lightcurves/fit_model` | 时变函数拟合（pl/bpl/sbpl + tb 预设范围，不落库，见 §8.19） | 否 |
+| POST | `/api/lightcurves/fit_model` | 时变函数拟合（pl/bpl/sbpl/fred + tb 预设范围 + 多起点最小二乘与 emcee 后验，返回 param_cov/samples，不落库，见 §8.19） | 否 |
 | PUT | `/api/lightcurves/<id>` | 更新单个光变点（普通用户可改自己录入的记录，即 `source`=本账户；他人记录仅可改 `discard` 扣点） | 登录 |
 | DELETE | `/api/lightcurves/<id>` | 删除单个光变点 | 管理员 |
 | DELETE | `/api/lightcurves` | 按 transient_id 删除 | 管理员 |
@@ -340,7 +340,7 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | GET | `/api/spectra/<id>/download` | 下载光谱数据文件（`#` 注释头元数据 + 两/三列空白分隔文本，Content-Disposition attachment，见 §8.28） | 否 |
 | POST | `/api/spectra/upload` | 上传光谱（两列/三列文本或 JSON，服务端校验规范化） | 登录 |
 | PUT | `/api/spectra/<id>` | 修改光谱类型 `spec_type`（transient/host/mix，DB 与库存文件同步写；v2.19 起传播到银消改正子行） | 管理员 |
-| POST | `/api/spectra/<id>/gext_correct` | 光谱银河系消光改正（CSFD+P92+Rv3.1，幂等生成二级改正谱，见 §8.28） | 管理员 |
+| POST | `/api/spectra/<id>/gext_correct` | 光谱银河系消光改正（CSFD+P92+Rv3.1，幂等生成二级改正谱，见 §8.28） | 登录 |
 | DELETE | `/api/spectra/<id>` | 删除光谱（记录 + 文件；删除原始谱级联删除其改正谱，见 §8.28） | 管理员 |
 | GET | `/api/fitting/engines` | 拟合引擎清单（模型情形/默认先验/采样缺省，见 §8.14） | 否 |
 | POST | `/api/fitting/jobs` | 提交余辉拟合任务（异步） | 登录 |
@@ -432,7 +432,7 @@ curl http://localhost:5000/api/auth/status
 
 | 路由 | 页面 | 功能 |
 |---|---|---|
-| `#/` / `#/list` | 事件列表 | 搜索/筛选（标签/红移/RA/Dec）/排序（ID/红移/T0）/分页/删除/全局银消改正 |
+| `#/` / `#/list` | 事件列表 | 搜索/筛选（标签/红移/RA/Dec）/排序（ID/红移/T0，默认 T0 倒序、T0 为空的排最后）/分页/删除/全局银消改正 |
 | `#/stats` | 全局统计 | 概览卡片 + Mollweide 全天图 + 红移直方图（按 tag 筛选）+ 波段覆盖 |
 | `#/stats/relations` | 统计关系 | GRB 瞬时辐射 6 个 2D 统计关系（Amati 等）散点 + 分组拟合（见 §8.13） |
 | `#/transient/<id>` | 单源详情 | 基本信息 + 子标签 + 光变曲线 + 全列数据表 + 行内编辑 |
@@ -447,10 +447,10 @@ curl http://localhost:5000/api/auth/status
 | 标签 | 内容 |
 |---|---|
 | 概览 | 基本信息表、子标签、Aladin Lite 天球图 |
-| 光变曲线 | Chart.js 多波段光变曲线，Y 轴切换 mJy/绝对星等，X 轴切换线性/对数，顶部 day/MJD 副轴，静止系选项，误差棒显示开关（勾选时有 time_err 的探测点同绘水平时间误差棒），波段勾选面板（全选/全不选），原始/银消改正数据切换，经验函数拟合叠加（pl/bpl/sbpl/fred，结果显示每参数 ±1σ 与 1σ 置信带），「复制光变图」按钮（PNG 复制到剪贴板，剪贴板不可用时回退下载），「显示当前时刻」红色竖虚线开关（默认关，无 T0 禁用），时间轴刻度科学计数法，缩放/重置/导出 |
-| 数据表 | 全部 24 列光变数据（含银消后 AB 星等及误差、来源 source、存入/修改时间），支持行内编辑 + 添加记录 + 多选批量删除 + 上传数据表（CSV 列映射导入）+ 单点银消改正（删除/银消仅管理员；行内编辑管理员任意记录、普通用户仅自己录入的记录（source=本账户），其余记录可扣点）；「列显示」面板勾选要展示的列（localStorage 持久化，默认紧凑子集：时间/时间误差/波段/流量/误差/单位/星等系统/银消/上限/银消量/望远镜/仪器/引用/备注；仅影响页面显示，导出 CSV 始终为服务端全列完整版）；首列勾选框标记行 → 整行橙色高亮（仅前端定位用，不写库），表头复选框可全标/全清；「添加记录」表单：波段可输入+下拉建议（滤光片 id 按波长排序+本源已有波段）、单位下拉（mJy/uJy/Jy/cgs/keV 系/mag）、时间与时间误差各配乘积因子下拉（×86400/×3600/×60/×1，前端换算为秒入库）；添加记录后停留在数据表页（批量删除等整页刷新同样不再跳回概览） |
+| 光变曲线 | Chart.js 多波段光变曲线，Y 轴切换 mJy/绝对星等，X 轴切换线性/对数，顶部 day/MJD 副轴，静止系选项，误差棒显示开关（勾选时有 time_err 的探测点同绘水平时间误差棒），数据点 tooltip 含波段与望远镜（v2.20），波段勾选面板（全选/全不选），原始/银消改正数据切换，经验函数拟合叠加（pl/bpl/sbpl/fred，结果显示每参数 ±1σ 与 1σ 置信带，v2.20 起置信带由 emcee 后验样本分位给出），「复制光变图」按钮（PNG 复制到剪贴板，剪贴板不可用时回退下载），「显示当前时刻」红色竖虚线开关（默认关，无 T0 禁用），时间轴刻度科学计数法，缩放/重置/导出 |
+| 数据表 | 全部 24 列光变数据（含银消后 AB 星等及误差、来源 source、存入/修改时间），支持行内编辑 + 添加记录（v2.20 起添加后自动滚动到底部新行） + 多选批量删除 + 上传数据表（CSV 列映射导入）+ 单点银消改正（删除/银消仅管理员；行内编辑管理员任意记录、普通用户仅自己录入的记录（source=本账户），其余记录可扣点）；「列显示」面板勾选要展示的列（localStorage 持久化，默认紧凑子集：时间/时间误差/波段/流量/误差/单位/星等系统/银消/上限/银消量/望远镜/仪器/引用/备注；仅影响页面显示，导出 CSV 始终为服务端全列完整版）；首列勾选框标记行 → 整行橙色高亮（仅前端定位用，不写库），表头复选框可全标/全清；「添加记录」表单：波段可输入+下拉建议（滤光片 id 按波长排序+本源已有波段）、单位下拉（mJy/uJy/Jy/cgs/keV 系/mag）、时间与时间误差各配乘积因子下拉（×86400/×3600/×60/×1，前端换算为秒入库）；添加记录后停留在数据表页（批量删除等整页刷新同样不再跳回概览） |
 | 余辉拟合 | VegasAfterglow 正向激波拟合：配置/提交任务/状态轮询/结果展示（见 §8.14） |
-| 光谱数据 | 光谱列表（多选对比/逐条偏移/删除）+ 波长-流量图；观测者系横轴 + 有红移时静止系副轴（λ/(1+z)，逐帧同步）；绝对/相对流量模式（相对模式按中值归一+用户偏移）；误差条可开关；**横纵轴各自可切线性/对数**（对数 Y 自动滤除非正流量点）；坐标范围设置（数字输入 xmin/xmax/ymin/ymax + 图上拖拽框选缩放 + 恢复默认）；TNS 风格谱线标记面板（30 组常见谱线 H/He/C/N/O/…+自定义波长+Tellurics+星系线+WR 线，逐组 z 与 v_exp 可调，λ=λ₀(1+z)(1−v/c)，详见 §6.5）；上传光谱（登录后）；每行下载按钮（`/api/spectra/<id>/download`，公开）；v2.19 起列表按父子分组展示银消改正二级谱（子行缩进+「银消改正」徽标，父子独立勾选绘图；管理员可对父行执行/覆盖银消改正，见 §8.28） |
+| 光谱数据 | 光谱列表（多选对比/逐条偏移/删除）+ 波长-流量图；观测者系横轴 + 有红移时静止系副轴（λ/(1+z)，逐帧同步）；绝对/相对流量模式（相对模式按中值归一+用户偏移）；误差条可开关；**横纵轴各自可切线性/对数**（对数 Y 自动滤除非正流量点）；坐标范围设置（数字输入 xmin/xmax/ymin/ymax + 图上拖拽框选缩放 + 恢复默认）；TNS 风格谱线标记面板（30 组常见谱线 H/He/C/N/O/…+自定义波长+Tellurics+星系线+WR 线，逐组 z 与 v_exp 可调，λ=λ₀(1+z)(1−v/c)，详见 §6.5）；上传光谱（登录后）；每行下载按钮（`/api/spectra/<id>/download`，公开）；v2.19 起列表按父子分组展示银消改正二级谱（子行缩进+「银消改正」徽标，父子独立勾选绘图；v2.20 起登录用户即可对父行执行/覆盖银消改正，见 §8.28） |
 | 余辉SED分析（开发中） | 预留 |
 
 ### 6.3 鉴权行为
@@ -1164,23 +1164,36 @@ TNS 对象网页执行同步：
 
 ### 8.19 经验函数光变拟合与绘图增强（v2.12 新增）
 
-**经验函数拟合**（`POST /api/lightcurves/fit_model`，无需登录，同步最小二乘，结果不落库）：
+**经验函数拟合**（`POST /api/lightcurves/fit_model`，无需登录，同步求解（v2.20 起多起点最小二乘 + emcee 后验采样），结果不落库）：
 
 - 请求体：`{"model": "pl"|"bpl"|"sbpl"|"fred", "points": [{"t","f","ferr"}...], "bounds": {"tb": [lo, hi]}}`
   （`bounds` 可选，bpl/sbpl 拐点 tb 的预设范围（秒），与数据范围取交集）
-- 函数形式（前端 `detail.js fitModelFlux` 为严格镜像）：
-  - `pl`：`F = A·t^(−alpha)`，最少 3 点
-  - `bpl`：分段幂律，tb 处连续，`A = Fb·tb^alpha1`，最少 5 点
+- 函数形式（前端 `detail.js fitModelFlux` 为严格镜像；v2.20 起最少点数统一放宽为参数数
+  ——pl=2 / bpl=4 / sbpl=5 / fred=4，N==参数数时走退化拟合，见下）：
+  - `pl`：`F = A·t^(−alpha)`
+  - `bpl`：分段幂律，tb 处连续，`A = Fb·tb^alpha1`
   - `sbpl`（v2.12）：平滑断裂幂律 `F = Fb·[(t/tb)^(n·alpha1)+(t/tb)^(n·alpha2)]^(−1/n)`，
-    平滑因子 n>0（越大越尖锐，n→∞ 退化为 bpl），最少 6 点；后端用 logaddexp 数值稳定实现
+    平滑因子 n>0（越大越尖锐，n→∞ 退化为 bpl）；后端用 logaddexp 数值稳定实现
   - `fred`（v2.18）：Norris+2005 脉冲模型 `F = A·exp(2μ)·exp(−τ1/u−u/τ2)`，
     u = x+μ−x1 > 0，μ = (τ1/τ2)^{1/2}（此归一化使 A 即峰值强度；峰值位于
-    x = x1+(τ1τ2)^{1/2}−μ），参数 A/τ1/τ2/x1，最少 5 点
-- 内部以拐点/参考时刻锚定再参数化（Fb/tb），`scipy.optimize.least_squares` 带界求解，
-  参数误差由 Jacobian SVD 近似协方差 + 链式法则变换给出；v2.18 起响应新增
-  `param_cov`（`{keys, matrix}`，输出参数基的完整协方差，拟合失败时为 null），
-  前端据此在拟合结果列表显示每参数 ±1σ，并在图上叠加 1σ 半透明置信带
-  （由 param_cov 经数值 Jacobian 传播 σ(t)）
+    x = x1+(τ1τ2)^{1/2}−μ），参数 A/τ1/τ2/x1
+- 内部以拐点/参考时刻锚定再参数化（Fb/tb）。v2.20 起引擎升级：核心抽为纯函数
+  `fit_lightcurve_model(model, t, f, sig, req_bounds)`（不依赖 Flask，route 只做参数解析）；
+  最少点数放宽为参数数（`LC_FIT_NPAR`：pl=2 / bpl=4 / sbpl=5 / fred=4），N==参数数为
+  **退化拟合**（仅 least_squares，`param_errors`/`param_cov`/`samples` 为 null，返回
+  `degenerate: true` + 中文 note）；fred/bpl/sbpl 用**多起点** least_squares 取 cost 最小
+  （tb 种子=峰值时刻 + 对数时间 25/50/75% 分位；fred 的 τ1/τ2 四组启发组合）；非退化
+  拟合再加 **emcee 第二阶段**（16 walkers，burn 400 + 采样 600，log-prior=bounds 内均匀，
+  logL=−χ²/2，种子固定 20260918——注意 emcee 3.1.6 用
+  `sampler.random_state=np.random.RandomState(...)` 而非构造器 seed）；emcee 失败回退
+  SVD 协方差且 `sampler` 字段注明 fallback。单次拟合实测 <0.8s
+- 返回（v2.20）：`param_errors`=后验 16/84 分位半宽、`param_cov`=样本协方差
+  （`{keys, matrix}`，形状不变向后兼容，求解失败为 null）、新增 `samples`
+  （~200 个输出参数基 dict 列表）与 `sampler` 字段；前端据此在拟合结果列表显示
+  每参数 ±1σ，置信带优先走 samples 路径（120 点网格逐样本求值取 16/84 分位带，
+  修复 bpl 置信带断点不连续 / sbpl 连接处奇异值 / fred 多模），samples 缺失回退
+  param_cov 经数值 Jacobian 传播 σ(t) 的旧路径；前端点数预检同步放宽、
+  退化拟合弹 toast 提示
 - 前端入口：详情页光变曲线标签下方「添加拟合」行（选 bpl/sbpl 时出现 tb∈[min,max] 预设范围输入）
 
 **距离模数**：`Transient.to_dict()` 新增 `distmod` 字段（astropy Planck18 宇宙学，
@@ -1337,7 +1350,9 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
 - **下游统一使用改正后数据**：`backend/extinction.py` 新增 `correct_host_phot(sess, ra, dec, phot_rows)`
   （复用 CSFD 尘埃图查询与 P92 曲线，只算不写库；A_λ 是星等加性量，直接在原星等系统上减，
   与 Vega→AB / ST→mJy 换算可交换）。坐标取宿主 ra/dec，缺省回退暂现源坐标，
-  两者都缺或依赖不可用时回退原始值并注明。
+  两者都缺或依赖不可用时回退原始值并注明。波段波长超出光学窗口（1000 Å–1 mm）
+  或 P92 计算失败的行不改正（reason=not_optical，与 band_no_wavelength 等并列，
+  调用方按原始值处理）。
   - `/api/stats/hosts` 的 `abs_mag_points`：gext_corr 非真的行先减 A_λ 再算 M，
     返回点新增 `gext_applied` / `gext_Alambda` 字段（前端 tooltip 标注「已银消改正」）。
   - hostfit 拟合（`hostfit/runner.py` 与 `runner_prospector.py`）：job config 中 gext_corr 非真的行先改正再转 mJy，
@@ -1524,13 +1539,14 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
     原始谱是唯一可信源，改正谱可从原始谱重新生成覆盖（幂等）；删除原始谱
     级联删除改正谱（DB FK + 文件手动逐个删）；PUT spec_type 传播到全部子行
     （DB+文件同步写）。
-  - 端点：`POST /api/spectra/<id>/gext_correct`（管理员，幂等）返回
+  - 端点：`POST /api/spectra/<id>/gext_correct`（登录用户，幂等）返回
     `{spectrum, ebv, warnings}`；子谱/无坐标 400、文件缺失 404；删除改正谱
     用现有 `DELETE /<id>`。列表接口 `spectra_count` 只计原始谱
     （parent_id IS NULL）。
   - 前端：光谱列表父子分组（子行缩进 +「银消改正」徽标，title 显示
-    E(B-V)/Rv/CSFD），父子各自独立勾选绘图；父行（管理员）加「银消改正」
-    按钮（已有子谱时 confirm 重新生成覆盖）；删除父行 confirm 提示级联删除。
+    E(B-V)/Rv/CSFD），父子各自独立勾选绘图；父行（v2.20 起登录用户，此前管理员）
+    加「银消改正」按钮（已有子谱时 confirm 重新生成覆盖）；删除父行 confirm
+    提示级联删除。
   - 验证：合成谱逐点 f_corr/f_obs = 10^(+0.4·A_λ) 偏差 <1e-9；真实谱
     （GRB030329A）改正 E(B-V)=0.0247（CSFD 口径，与测光一致）、级联删除 /
     幂等覆盖 / spec_type 传播均 E2E 通过。
@@ -1582,6 +1598,29 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 
 ## 十一、版本历史
 
+### v2.20（2026-09-18）— 拟合引擎升级（多起点+emcee）/ 银消护栏 / 列表默认 T0 倒序 / 多项 UI 优化
+
+- 经验函数拟合引擎升级（详见 §8.19）：核心抽为纯函数 `fit_lightcurve_model()`；最少点数
+  放宽为参数数（N==参数数走退化拟合，返回 `degenerate: true`，无误差字段）；fred/bpl/sbpl
+  多起点最小二乘取 cost 最小，非退化加 emcee 第二阶段（16 walkers，种子固定）；响应新增
+  `samples`（~200 后验样本）与 `sampler`，param_errors 改后验 16/84 分位半宽、param_cov
+  改样本协方差；前端置信带优先走 samples 逐样本分位带（修复 bpl 带不连续、sbpl 奇异值、
+  fred 多模），缺失回退 Jacobian 路径
+- 银河系消光护栏（仅光学，见 §四）：光学窗口 1000 Å–1 mm + 统一判定 `_optical_alambda()`，
+  波段超窗/P92 报错按跳过处理不再 500；run 统计新增 `skipped_not_optical`，run/clear
+  响应附中文 `note`；光谱改正 P92 越界 → 400；宿主测光超窗行 `reason='not_optical'`
+  按未改正处理
+- 事件列表默认按 T0 倒序（前端初始状态/下拉/表头箭头 + 后端缺省 `sort='t0'`/`order='desc'`，
+  T0 为 NULL 排最后）
+- 光谱银消改正 `POST /api/spectra/<id>/gext_correct` 放开登录用户（此前仅管理员；
+  删除/spec_type 仍管理员）
+- 数据表「添加记录」后自动滚动到底部新行（requestAnimationFrame 包裹 scrollTop）；
+  光变点 tooltip 增加波段与望远镜信息；GCN 阅读工具测光录入的时间单位下拉框遮挡修复
+  （select 宽度 64px→88px + padding-right 调整）
+- 验证：退化/多模/样本带连续性 E2E 通过，extinction/run 响应含 note 与
+  skipped_not_optical，匿名 gext_correct 401 / 普通用户 200，列表默认 T0 倒序；
+  浏览器冒烟（GCN 下拉、tooltip、添加记录滚动、SBPL UI 拟合置信带）全过
+
 ### v2.19（2026-09-18）— 光谱数据下载 + 光谱银河系消光改正
 
 - 新增 `GET /api/spectra/<id>/download`（公开）：`#` 注释头元数据 + 两/三列
@@ -1590,7 +1629,7 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
   （CSFD + P92 + Rv=3.1，复用 extinction.py），改正为乘性因子
   `f_corr = f_obs × 10^(+0.4·A_λ)`、不做 (1+z) 换算；spectra 表新增 `parent_id`
   自引用外键（级联删除），改正谱文件 `<原名>_gextcor.json` 与原始谱同目录、
-  可幂等重新生成；新端点 `POST /api/spectra/<id>/gext_correct`（管理员，幂等）；
+  可幂等重新生成；新端点 `POST /api/spectra/<id>/gext_correct`（登录用户，幂等）；
   前端列表父子分组 + 「银消改正」按钮/徽标；合成谱逐点偏差 <1e-9、真实谱
   （GRB030329A，E(B-V)=0.0247）E2E 通过
 

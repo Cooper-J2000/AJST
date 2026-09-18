@@ -205,7 +205,9 @@ window.runGextSource = async () => {
   try {
     const st = await runExtinction({ transient_id: currentTid });
     showToast(`银消改正完成: ${st.corrected}/${st.total} 点已改正 (E(B-V)=${st.ebv != null ? st.ebv.toFixed(4) : '?'})` +
-      (st.skipped_band ? `, ${st.skipped_band} 点波段不支持` : ''), 'success');
+      (st.skipped_band ? `, ${st.skipped_band} 点波段不支持` : '') +
+      (st.skipped_not_optical ? `, ${st.skipped_not_optical} 点非光学波段跳过` : '') +
+      (st.note ? `。${st.note}` : ''), 'success');
     render(currentTid);
   } catch (err) {
     showToast(`银消改正失败: ${err.message}`, 'danger');

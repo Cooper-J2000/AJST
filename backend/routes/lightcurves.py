@@ -19,62 +19,33 @@ LC_SORTABLE = {'id', 'time', 'time_err', 'band', 'flux_density', 'flux_density_e
                'telescope', 'instrument', 'created_at', 'updated_at'}
 
 
-@lightcurves_bp.route('/fit_model', methods=['POST'])
-@require_auth
-def fit_model():
-    """光变曲线时变函数拟合（线性 mJy 空间加权最小二乘）
+# 各经验模型的自由参数数（最少点数 = 参数数；N == 参数数时为退化拟合：只给参数、不给误差）
+LC_FIT_NPAR = {'pl': 2, 'bpl': 4, 'sbpl': 5, 'fred': 4}
 
-    请求体: {"model": "pl"|"bpl"|"sbpl"|"fred", "points": [{"t":.., "f":.., "ferr":..|null}, ...],
-             "bounds": {"tb": [lo, hi]}  — 可选，bpl/sbpl 拐点预设范围（秒，与数据范围取交集）}
-      pl : F(t) = A * t^(-alpha)
-      bpl: F(t) = A * t^(-alpha1)                (t <= tb)
-                  A * tb^(alpha2-alpha1) * t^(-alpha2)  (t > tb)，tb 处连续
-      sbpl: F(t) = Fb * [ (t/tb)^(n*alpha1) + (t/tb)^(n*alpha2) ]^(-1/n)
-                  平滑断裂幂律，n>0 为平滑因子（越大越尖锐；n→∞ 退化为 bpl），
-                  A = Fb * tb^alpha1 与 bpl 归一化约定一致
-      fred: F(x) = A * exp(2μ) * exp(-τ1/(x+μ-x1) - (x+μ-x1)/τ2)，μ=(τ1/τ2)^(1/2)
-                  Norris et al. 2005 脉冲形（A 即峰值强度，峰值位于 x = x1+(τ1τ2)^(1/2)-μ）；
-                  定义域 x+μ-x1>0，域外取 0；A 为振幅，τ1/τ2 为上升/下降时标，x1 为起始时间（秒）
-    返回: {"params": {...}, "param_errors": {...}|null,
-           "param_cov": {"keys": [...], "matrix": [[...]]}|null, "N": n}
-      param_cov 为输出参数基下的完整协方差（键序见 keys），供前端传播 1σ 置信带
+
+def fit_lightcurve_model(model, t, f, sig, req_bounds=None):
+    """光变时变函数拟合核心（纯函数，不依赖 Flask，可独立测试）。
+
+    输入 t/f/sig 为等长一维数组（t>0, f>0, sig>0），req_bounds 可带 {'tb': [lo, hi]}。
+    多起点 least_squares 取 cost 最小者；非退化（N > 参数数）时再用 emcee MCMC
+    估计后验（param_errors 取样本 16/84 分位半宽、param_cov 取样本协方差、
+    samples 为稀释到 ~200 个的输出参数基后验样本）；emcee 不可用/失败时回退
+    Jacobian SVD 协方差并在 sampler 中注明 fallback。失败返回含 'error' 键的 dict。
     """
     import numpy as np
     from scipy.optimize import least_squares
 
-    body = request.get_json(force=True) or {}
-    model = body.get('model')
-    if model not in ('pl', 'bpl', 'sbpl', 'fred'):
-        return {'error': 'model must be "pl", "bpl", "sbpl" or "fred"'}, 400
-    raw_points = body.get('points') or []
-    t, f, sig = [], [], []
-    for p in raw_points:
-        try:
-            ti = float(p.get('t'))
-            fi = float(p.get('f'))
-        except (TypeError, ValueError, AttributeError):
-            continue
-        if not (np.isfinite(ti) and np.isfinite(fi)) or ti <= 0 or fi <= 0:
-            continue
-        fe = p.get('ferr')
-        try:
-            fe = float(fe) if fe is not None else None
-        except (TypeError, ValueError):
-            fe = None
-        t.append(ti)
-        f.append(fi)
-        # 有 ferr 的点按 1/ferr 加权，无 ferr 的点 sigma=1（不加权）
-        sig.append(fe if (fe is not None and np.isfinite(fe) and fe > 0) else 1.0)
-    need = 3 if model == 'pl' else (6 if model == 'sbpl' else 5)
-    if len(t) < need:
-        return {'error': 'insufficient'}, 400
-    t = np.asarray(t)
-    f = np.asarray(f)
-    sig = np.asarray(sig)
+    if model not in LC_FIT_NPAR:
+        return {'error': 'model must be "pl", "bpl", "sbpl" or "fred"'}
+    t = np.asarray(t, dtype=float)
+    f = np.asarray(f, dtype=float)
+    sig = np.asarray(sig, dtype=float)
+    npar = LC_FIT_NPAR[model]
+    if len(t) < npar:
+        return {'error': 'insufficient'}
 
     # 拐点 tb 的预设范围（可选），与数据范围取交集
     tb_lo, tb_hi = float(t.min()), float(t.max())
-    req_bounds = body.get('bounds') or {}
     if model in ('bpl', 'sbpl') and isinstance(req_bounds, dict):
         tb_rng = req_bounds.get('tb')
         if isinstance(tb_rng, (list, tuple)) and len(tb_rng) == 2:
@@ -129,103 +100,248 @@ def fit_model():
         # 探索过程中产生的 inf/nan 残差替换为大有限值并钳幅，避免求解器卡死/协方差溢出
         return np.clip(np.where(np.isfinite(r), r, 1e60), -1e60, 1e60)
 
+    def to_output(p):
+        # 内部再参数化 → 前端约定的输出参数基：F = A * t^(-alpha)；
+        # bpl/sbpl 为 A = Fb * tb^a1；fred 无需换算
+        if model == 'pl':
+            Fref, alpha = p
+            return [Fref * tref ** alpha, alpha]
+        if model == 'bpl':
+            Fb, a1, a2, tb = p
+            return [Fb * tb ** a1, a1, a2, tb]
+        if model == 'sbpl':
+            Fb, a1, a2, tb, n = p
+            return [Fb * tb ** a1, a1, a2, tb, n]
+        return list(p)
+
+    order = np.argsort(t)
+    lnt_sorted = np.log(t[order])
+    f_sorted = f[order]
+
+    def flux_at(tq):
+        return max(float(np.interp(np.log(tq), lnt_sorted, f_sorted)), 1e-300)
+
     if model == 'pl':
-        fref0 = float(np.interp(np.log(tref), np.log(np.sort(t)), f[np.argsort(t)]))
-        x0 = [max(fref0, 1e-300), 1.0]
+        starts = [[flux_at(tref), 1.0]]
         bounds = ([1e-300, -30.0], [np.inf, 30.0])
         keys = ('A', 'alpha')
-    elif model == 'bpl':
+    elif model in ('bpl', 'sbpl'):
         ipeak = int(np.argmax(f))
-        tb0 = min(max(float(t[ipeak]), tb_lo), tb_hi)
-        x0 = [float(f[ipeak]), -1.0, 1.0, tb0]
-        bounds = ([1e-300, -30.0, -30.0, tb_lo],
-                  [np.inf, 30.0, 30.0, tb_hi])
-        keys = ('A', 'alpha1', 'alpha2', 'tb')
-    elif model == 'sbpl':
-        ipeak = int(np.argmax(f))
-        tb0 = min(max(float(t[ipeak]), tb_lo), tb_hi)
-        x0 = [float(f[ipeak]), -1.0, 1.0, tb0, 3.0]
-        bounds = ([1e-300, -30.0, -30.0, tb_lo, 0.05],
-                  [np.inf, 30.0, 30.0, tb_hi, 100.0])
-        keys = ('A', 'alpha1', 'alpha2', 'tb', 'n')
+        # 多起点：tb0 取峰值时刻与数据对数时间的 25/50/75% 分位（近重复者去重）
+        cand = [float(t[ipeak])] + [float(v) for v in np.exp(np.quantile(lnt_sorted, [0.25, 0.5, 0.75]))]
+        tb0s = []
+        for tb0 in cand:
+            tb0 = min(max(tb0, tb_lo), tb_hi)
+            if all(abs(np.log(tb0 / v)) > 1e-3 for v in tb0s):
+                tb0s.append(tb0)
+        starts = []
+        for tb0 in tb0s:
+            x0 = [flux_at(tb0), -1.0, 1.0, tb0]
+            if model == 'sbpl':
+                x0.append(3.0)
+            starts.append(x0)
+        if model == 'bpl':
+            bounds = ([1e-300, -30.0, -30.0, tb_lo],
+                      [np.inf, 30.0, 30.0, tb_hi])
+            keys = ('A', 'alpha1', 'alpha2', 'tb')
+        else:
+            bounds = ([1e-300, -30.0, -30.0, tb_lo, 0.05],
+                      [np.inf, 30.0, 30.0, tb_hi, 100.0])
+            keys = ('A', 'alpha1', 'alpha2', 'tb', 'n')
     else:
-        # fred 初值启发：A≈最大流量（A 即峰值强度），x1 使峰值落在流量最大点，
-        # τ1/τ2 取峰前/峰后时间跨度的 1/2 量级
+        # fred 多起点：A≈最大流量（A 即峰值强度），x1 使峰值落在流量最大点；
+        # τ1/τ2 除峰前/峰后跨度启发外，再取对称/上升快/上升慢几种比例组合
         span = max(float(t.max() - t.min()), 1e-6)
         tau_hi = max(100.0 * span, 10.0)
         ipeak = int(np.argmax(f))
         tpeak = float(t[ipeak])
-        tau1_0 = min(max((tpeak - float(t.min())) / 2.0, 1e-6), tau_hi)
-        tau2_0 = min(max((float(t.max()) - tpeak) / 2.0, 1e-6), tau_hi)
-        # 峰值位于 x = x1 + (τ1τ2)^(1/2) - (τ1/τ2)^(1/2)，反推 x1 使峰值=t_peak
-        x1_0 = tpeak - (float(np.sqrt(tau1_0 * tau2_0)) - float(np.sqrt(tau1_0 / tau2_0)))
-        x0 = [float(f[ipeak]), tau1_0, tau2_0, x1_0]
+        tau1_h = min(max((tpeak - float(t.min())) / 2.0, 1e-6), tau_hi)
+        tau2_h = min(max((float(t.max()) - tpeak) / 2.0, 1e-6), tau_hi)
+        pairs = [(tau1_h, tau2_h), (span / 4.0, span / 4.0),
+                 (span / 8.0, span / 2.0), (span / 2.0, span / 8.0)]
+        starts = []
+        for tau1_0, tau2_0 in pairs:
+            tau1_0 = min(max(tau1_0, 1e-6), tau_hi)
+            tau2_0 = min(max(tau2_0, 1e-6), tau_hi)
+            # 峰值位于 x = x1 + (τ1τ2)^(1/2) - (τ1/τ2)^(1/2)，反推 x1 使峰值=t_peak
+            x1_0 = tpeak - (float(np.sqrt(tau1_0 * tau2_0)) - float(np.sqrt(tau1_0 / tau2_0)))
+            starts.append([float(f[ipeak]), tau1_0, tau2_0, x1_0])
         bounds = ([1e-300, 1e-6, 1e-6, float(t.min()) - 10.0 * span],
                   [np.inf, tau_hi, tau_hi, float(t.max())])
         keys = ('A', 'tau1', 'tau2', 'x1')
-    try:
-        res = least_squares(resid, x0, bounds=bounds, max_nfev=20000, x_scale='jac')
-    except Exception as e:
-        return {'error': f'fit failed: {e}'}, 400
-    if not res.success:
-        return {'error': f'fit failed: {res.message}'}, 400
 
-    # 换算回前端约定的形式：F = A * t^(-alpha)；bpl/sbpl 为 A = Fb * tb^a1；fred 无需换算
-    if model == 'pl':
-        Fref, alpha = res.x
-        conv = [Fref * tref ** alpha, alpha]
-    elif model == 'bpl':
-        Fb, a1, a2, tb = res.x
-        conv = [Fb * tb ** a1, a1, a2, tb]
-    elif model == 'sbpl':
-        Fb, a1, a2, tb, n = res.x
-        conv = [Fb * tb ** a1, a1, a2, tb, n]
-    else:
-        conv = list(res.x)  # fred：内部参数即输出参数
+    best, last_err = None, 'all starts failed'
+    for x0 in starts:
+        try:
+            r = least_squares(resid, x0, bounds=bounds, max_nfev=20000, x_scale='jac')
+        except Exception as e:
+            last_err = str(e)
+            continue
+        if not r.success:
+            last_err = str(r.message)
+            continue
+        if best is None or r.cost < best.cost:
+            best = r
+    if best is None:
+        return {'error': f'fit failed: {last_err}'}
+
+    conv = to_output(best.x)
     params = dict(zip(keys, (float(v) for v in conv)))
-    # Jacobian 近似协方差：cov = (J^T J)^-1 * chi2/dof，再经链式法则变换到输出参数
-    errors = None
-    param_cov = None
-    try:
-        J = np.atleast_2d(res.jac)
+
+    # 退化拟合（N == 参数数）：只做 least_squares，无法估计误差
+    if len(t) == npar:
+        return {'params': params, 'param_errors': None, 'param_cov': None,
+                'samples': None, 'sampler': None, 'degenerate': True,
+                'note': '点数仅够确定参数，无法估计误差', 'N': int(len(t))}
+
+    # Jacobian 近似协方差（emcee 不可用/失败时的回退路径）：cov = (J^T J)^-1 * chi2/dof，
+    # 再经链式法则变换到输出参数基
+    def svd_cov():
+        J = np.atleast_2d(best.jac)
         _, svals, VT = np.linalg.svd(J, full_matrices=False)
-        if svals.size and svals[0] > 0:
-            threshold = np.finfo(float).eps * max(J.shape) * svals[0]
-            good = svals > threshold
-            if good.all():
-                cov = np.dot(VT.T / svals ** 2, VT)
-                dof = max(1, len(res.fun) - len(res.x))
-                cov = cov * (2.0 * res.cost / dof)
-                # 内部参数 → 输出参数 的变换 Jacobian G：cov_out = G·cov·Gᵀ
-                if model == 'pl':
-                    A_out = conv[0]
-                    G = np.array([[tref ** alpha, A_out * np.log(tref)],
-                                  [0.0, 1.0]])
-                elif model == 'bpl':
-                    A_out, a1_, a2_, tb_ = conv
-                    G = np.array([[tb_ ** a1_, A_out * np.log(tb_), 0.0, Fb * a1_ * tb_ ** (a1_ - 1.0)],
-                                  [0.0, 1.0, 0.0, 0.0],
-                                  [0.0, 0.0, 1.0, 0.0],
-                                  [0.0, 0.0, 0.0, 1.0]])
-                elif model == 'sbpl':
-                    A_out, a1_, a2_, tb_, n_ = conv
-                    G = np.array([[tb_ ** a1_, A_out * np.log(tb_), 0.0, Fb * a1_ * tb_ ** (a1_ - 1.0), 0.0],
-                                  [0.0, 1.0, 0.0, 0.0, 0.0],
-                                  [0.0, 0.0, 1.0, 0.0, 0.0],
-                                  [0.0, 0.0, 0.0, 1.0, 0.0],
-                                  [0.0, 0.0, 0.0, 0.0, 1.0]])
-                else:
-                    G = np.eye(4)  # fred：无再参数化
-                cov_out = G @ cov @ G.T
-                if np.isfinite(cov_out).all():
-                    param_cov = {'keys': list(keys), 'matrix': cov_out.tolist()}
-                errs = np.sqrt(np.diag(cov_out))
-                if np.isfinite(errs).all():
-                    errors = dict(zip(keys, (float(v) for v in errs)))
-    except Exception:
-        errors = None
-        param_cov = None
-    return jsonify({'params': params, 'param_errors': errors, 'param_cov': param_cov, 'N': int(len(t))})
+        if not (svals.size and svals[0] > 0):
+            return None, None
+        threshold = np.finfo(float).eps * max(J.shape) * svals[0]
+        if not (svals > threshold).all():
+            return None, None
+        cov = np.dot(VT.T / svals ** 2, VT)
+        dof = max(1, len(best.fun) - len(best.x))
+        cov = cov * (2.0 * best.cost / dof)
+        # 内部参数 → 输出参数 的变换 Jacobian G：cov_out = G·cov·Gᵀ
+        if model == 'pl':
+            A_out = conv[0]
+            alpha = best.x[1]
+            G = np.array([[tref ** alpha, A_out * np.log(tref)],
+                          [0.0, 1.0]])
+        elif model == 'bpl':
+            Fb = best.x[0]
+            A_out, a1_, a2_, tb_ = conv
+            G = np.array([[tb_ ** a1_, A_out * np.log(tb_), 0.0, Fb * a1_ * tb_ ** (a1_ - 1.0)],
+                          [0.0, 1.0, 0.0, 0.0],
+                          [0.0, 0.0, 1.0, 0.0],
+                          [0.0, 0.0, 0.0, 1.0]])
+        elif model == 'sbpl':
+            Fb = best.x[0]
+            A_out, a1_, a2_, tb_, n_ = conv
+            G = np.array([[tb_ ** a1_, A_out * np.log(tb_), 0.0, Fb * a1_ * tb_ ** (a1_ - 1.0), 0.0],
+                          [0.0, 1.0, 0.0, 0.0, 0.0],
+                          [0.0, 0.0, 1.0, 0.0, 0.0],
+                          [0.0, 0.0, 0.0, 1.0, 0.0],
+                          [0.0, 0.0, 0.0, 0.0, 1.0]])
+        else:
+            G = np.eye(4)  # fred：无再参数化
+        cov_out = G @ cov @ G.T
+        errs_out = cov_dict = None
+        if np.isfinite(cov_out).all():
+            cov_dict = {'keys': list(keys), 'matrix': cov_out.tolist()}
+        errs = np.sqrt(np.diag(cov_out))
+        if np.isfinite(errs).all():
+            errs_out = dict(zip(keys, (float(v) for v in errs)))
+        return errs_out, cov_dict
+
+    # MCMC 第二阶段：log-prior = bounds 内均匀，log-likelihood = -χ²/2（复用 resid 防护）
+    errors = param_cov = samples = sampler_info = None
+    try:
+        import emcee
+        rng = np.random.default_rng(20260918)
+        blo = np.asarray(bounds[0], dtype=float)
+        bhi = np.asarray(bounds[1], dtype=float)
+
+        def log_prob(p):
+            p = np.asarray(p, dtype=float)
+            if not np.all(np.isfinite(p)) or np.any(p < blo) or np.any(p > bhi):
+                return -np.inf
+            r = resid(p)
+            return -0.5 * float(np.dot(r, r))
+
+        ndim = len(best.x)
+        nwalkers, nburn, nsteps = 16, 400, 600
+        # 以最优解为中心的小高斯球初始化（尺度取 |参数|×1e-3 与有限边界宽度×1e-6 的较大者）
+        width = np.where(np.isfinite(bhi - blo), bhi - blo, np.abs(best.x) + 1.0)
+        step = np.maximum(np.abs(best.x) * 1e-3, width * 1e-6)
+        p0 = np.clip(best.x + step * rng.standard_normal((nwalkers, ndim)), blo, bhi)
+        sampler = emcee.EnsembleSampler(nwalkers, ndim, log_prob)
+        sampler.random_state = np.random.RandomState(20260918)  # 固定种子保证可复现
+        sampler.run_mcmc(p0, nburn + nsteps, progress=False)
+        chain = sampler.get_chain(discard=nburn, flat=True)
+        out_chain = np.array([to_output(row) for row in chain])
+        if len(out_chain) < 50 or not np.isfinite(out_chain).all():
+            raise RuntimeError('mcmc chain invalid')
+        q16, q84 = np.percentile(out_chain, [16, 84], axis=0)
+        errors = dict(zip(keys, (float(v) for v in 0.5 * (q84 - q16))))
+        cov_out = np.atleast_2d(np.cov(out_chain.T))
+        if np.isfinite(cov_out).all():
+            param_cov = {'keys': list(keys), 'matrix': cov_out.tolist()}
+        thin = np.linspace(0, len(out_chain) - 1, min(200, len(out_chain))).astype(int)
+        samples = [dict(zip(keys, (float(v) for v in out_chain[i]))) for i in thin]
+        sampler_info = {'engine': 'emcee', 'nwalkers': nwalkers, 'nburn': nburn,
+                        'nsteps': nsteps,
+                        'accept_frac': float(np.mean(sampler.acceptance_fraction))}
+    except Exception as e:
+        errors = param_cov = samples = None
+        try:
+            errors, param_cov = svd_cov()
+        except Exception:
+            errors = param_cov = None
+        sampler_info = {'engine': 'svd', 'fallback': True, 'reason': str(e)}
+    return {'params': params, 'param_errors': errors, 'param_cov': param_cov,
+            'samples': samples, 'sampler': sampler_info, 'degenerate': False,
+            'N': int(len(t))}
+
+
+@lightcurves_bp.route('/fit_model', methods=['POST'])
+@require_auth
+def fit_model():
+    """光变曲线时变函数拟合（多起点加权最小二乘 + emcee MCMC 后验，线性 mJy 空间）
+
+    请求体: {"model": "pl"|"bpl"|"sbpl"|"fred", "points": [{"t":.., "f":.., "ferr":..|null}, ...],
+             "bounds": {"tb": [lo, hi]}  — 可选，bpl/sbpl 拐点预设范围（秒，与数据范围取交集）}
+      pl : F(t) = A * t^(-alpha)                                          （≥2 点）
+      bpl: F(t) = A * t^(-alpha1)                (t <= tb)
+                  A * tb^(alpha2-alpha1) * t^(-alpha2)  (t > tb)，tb 处连续 （≥4 点）
+      sbpl: F(t) = Fb * [ (t/tb)^(n*alpha1) + (t/tb)^(n*alpha2) ]^(-1/n)
+                  平滑断裂幂律，n>0 为平滑因子（越大越尖锐；n→∞ 退化为 bpl），
+                  A = Fb * tb^alpha1 与 bpl 归一化约定一致                  （≥5 点）
+      fred: F(x) = A * exp(2μ) * exp(-τ1/(x+μ-x1) - (x+μ-x1)/τ2)，μ=(τ1/τ2)^(1/2)
+                  Norris et al. 2005 脉冲形（A 即峰值强度，峰值位于 x = x1+(τ1τ2)^(1/2)-μ）；
+                  定义域 x+μ-x1>0，域外取 0；τ1/τ2 为上升/下降时标，x1 为起始时间（秒）（≥4 点）
+    返回: {"params": {...}, "param_errors": {...}|null,
+           "param_cov": {"keys": [...], "matrix": [[...]]}|null,
+           "samples": [{...}, ...]|null, "sampler": {...}|null,
+           "degenerate": bool, "note": str（仅退化时）, "N": n}
+      param_errors 为 MCMC 后验 16/84 分位半宽；param_cov 为后验样本协方差
+      （输出参数基，键序见 keys），供前端传播置信带；samples 为稀释到 ~200 个的
+      输出参数基后验样本；N == 参数数（退化）时误差/协方差/样本均为 null 并附中文 note；
+      emcee 不可用/失败时回退 Jacobian SVD 协方差，sampler 中注明 fallback
+    """
+    import numpy as np
+
+    body = request.get_json(force=True) or {}
+    raw_points = body.get('points') or []
+    t, f, sig = [], [], []
+    for p in raw_points:
+        try:
+            ti = float(p.get('t'))
+            fi = float(p.get('f'))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if not (np.isfinite(ti) and np.isfinite(fi)) or ti <= 0 or fi <= 0:
+            continue
+        fe = p.get('ferr')
+        try:
+            fe = float(fe) if fe is not None else None
+        except (TypeError, ValueError):
+            fe = None
+        t.append(ti)
+        f.append(fi)
+        # 有 ferr 的点按 1/ferr 加权，无 ferr 的点 sigma=1（不加权）
+        sig.append(fe if (fe is not None and np.isfinite(fe) and fe > 0) else 1.0)
+
+    result = fit_lightcurve_model(model=body.get('model'), t=t, f=f, sig=sig,
+                                  req_bounds=body.get('bounds'))
+    if 'error' in result:
+        return result, 400
+    return jsonify(result)
 
 
 @lightcurves_bp.route('', methods=['GET'])

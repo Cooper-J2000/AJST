@@ -90,6 +90,26 @@ def compute_alambda(ebv, wavelength_a):
     return float(av * _p92_model(wavelength_a * u.Angstrom))
 
 
+# 光学/紫外/红外波长窗口（Å）：排除 P92 曲线不覆盖的射电与 X 射线波段
+OPTICAL_WL_MIN_A = 1000.0
+OPTICAL_WL_MAX_A = 1.0e7
+
+
+def _optical_alambda(filt, ebv):
+    """
+    统一光学窗口判定 + A_λ 计算：
+    filt 缺失 / 波长无效 / 波长超窗 / P92 计算报错 → 返回 None，否则返回 A_λ。
+    """
+    if filt is None or filt.wavelength is None or filt.wavelength <= 0:
+        return None
+    if not (OPTICAL_WL_MIN_A <= filt.wavelength <= OPTICAL_WL_MAX_A):
+        return None
+    try:
+        return compute_alambda(ebv, filt.wavelength)
+    except ValueError:
+        return None
+
+
 # ─── 单点改正 ───
 
 def obs_mag(lc):
@@ -187,6 +207,7 @@ def run(sess, transient_id=None, lightcurve_id=None):
         'corrected': 0,
         'skipped_no_coords': 0,
         'skipped_band': 0,
+        'skipped_not_optical': 0,
         'skipped_flux': 0,
     }
     ebv_cache = {}   # transient_id → E(B-V)
@@ -218,7 +239,10 @@ def run(sess, transient_id=None, lightcurve_id=None):
         if key not in alam_cache:
             if lc.transient_id not in ebv_cache:
                 ebv_cache[lc.transient_id] = get_ebv(t.ra, t.dec)
-            alam_cache[key] = compute_alambda(ebv_cache[lc.transient_id], filt.wavelength)
+            alam_cache[key] = _optical_alambda(filt, ebv_cache[lc.transient_id])
+        if alam_cache[key] is None:
+            stats['skipped_not_optical'] += 1
+            continue
 
         if correct_point(lc, alam_cache[key], filt.vega2ab):
             stats['corrected'] += 1
@@ -243,7 +267,8 @@ def correct_host_phot(sess, ra, dec, phot_rows):
       applied   — True 表示该行标记为未改正（gext_corr 非真）且已成功计算
       A_lambda  — 该行波段的银消量（mag）
       mag_corr  — 改正后星等（float(mag) − A_λ）
-      reason    — 未改正的原因（already_corrected / bad_mag / band_no_wavelength / not_dict）
+      reason    — 未改正的原因（already_corrected / bad_mag / band_no_wavelength /
+                  not_optical（波长超出光学窗口或 P92 计算失败）/ not_dict）
     无坐标或依赖不可用（尘埃图缺失等）时整体 ok=False，调用方应回退原始值并注明。
     """
     def _fail(msg):
@@ -281,7 +306,10 @@ def correct_host_phot(sess, ra, dec, phot_rows):
             item['reason'] = 'band_no_wavelength'
             continue
         if band not in alam_cache:
-            alam_cache[band] = compute_alambda(ebv, filt.wavelength)
+            alam_cache[band] = _optical_alambda(filt, ebv)
+        if alam_cache[band] is None:
+            item['reason'] = 'not_optical'
+            continue
         item['A_lambda'] = alam_cache[band]
         item['mag_corr'] = mag - alam_cache[band]
         item['applied'] = True
@@ -301,13 +329,15 @@ def recompute_point(sess, lc):
     t = sess.query(Transient).filter(Transient.id == lc.transient_id).first()
     filt = sess.query(FilterDef).filter(FilterDef.id == lc.band).first()
     if (t is None or t.ra is None or t.dec is None
-            or filt is None or filt.wavelength is None or filt.wavelength <= 0
             or obs_mag(lc) is None):
         clear_point(lc)
         return
     if not _load():
         return  # 依赖不可用时保留旧值，不破坏数据
-    alambda = compute_alambda(get_ebv(t.ra, t.dec), filt.wavelength)
+    alambda = _optical_alambda(filt, get_ebv(t.ra, t.dec))
+    if alambda is None:
+        clear_point(lc)
+        return
     correct_point(lc, alambda, filt.vega2ab)
 
 
@@ -332,12 +362,14 @@ def recompute_transient(sess, transient_id):
     alam_cache = {}
     for lc in rows:
         filt = filters.get(lc.band)
-        if filt is None or filt.wavelength is None or filt.wavelength <= 0 \
-                or obs_mag(lc) is None:
+        if obs_mag(lc) is None:
             clear_point(lc)
             continue
         if lc.band not in alam_cache:
-            alam_cache[lc.band] = compute_alambda(ebv, filt.wavelength)
+            alam_cache[lc.band] = _optical_alambda(filt, ebv)
+        if alam_cache[lc.band] is None:
+            clear_point(lc)
+            continue
         correct_point(lc, alam_cache[lc.band], filt.vega2ab)
 
 
@@ -372,8 +404,11 @@ def recompute_band(sess, band):
             continue
         if lc.transient_id not in ebv_cache:
             ebv_cache[lc.transient_id] = get_ebv(t.ra, t.dec)
-        correct_point(lc, compute_alambda(ebv_cache[lc.transient_id], filt.wavelength),
-                       filt.vega2ab)
+        alambda = _optical_alambda(filt, ebv_cache[lc.transient_id])
+        if alambda is None:
+            clear_point(lc)
+            continue
+        correct_point(lc, alambda, filt.vega2ab)
 
 
 # ─── 光谱银河系消光改正（二级产物） ───
@@ -439,7 +474,12 @@ def correct_spectrum(sess, spectrum_row):
 
     wavs = [p[0] for p in points]
     # P92().extinguish(x, Av) 返回剩余流量比例 10^(-0.4·A_λ)
-    factors = _p92_model.extinguish(u.Quantity(wavs, u.Angstrom), Av=RV * ebv)
+    try:
+        factors = _p92_model.extinguish(u.Quantity(wavs, u.Angstrom), Av=RV * ebv)
+    except ValueError:
+        raise SpectrumGextError(
+            f'光谱波长范围（{min(wavs):.4g}–{max(wavs):.4g} Å）超出 P92 消光曲线有效范围'
+            '（10 Å–1 mm），无法执行银河系消光改正')
     corrected = []
     for p, fac in zip(points, factors):
         row = [p[0], p[1] / fac]

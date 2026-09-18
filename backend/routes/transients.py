@@ -95,10 +95,10 @@ def list_transients():
             q = q.filter(Transient.id.notin_(
                 sess.query(HostGalaxy.transient_id)))
         # --- 排序 ---
-        sort = request.args.get('sort', 'id')
+        sort = request.args.get('sort', 't0')
         if sort not in SORTABLE:
-            sort = 'id'
-        order = request.args.get('order', 'asc')
+            sort = 't0'
+        order = request.args.get('order', 'desc')
         sort_col = getattr(Transient, sort)
         if order == 'desc':
             sort_col = sort_col.desc().nullslast()  # NULL 值排最后

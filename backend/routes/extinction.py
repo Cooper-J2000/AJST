@@ -12,6 +12,9 @@ import extinction
 
 extinction_bp = Blueprint('extinction', __name__)
 
+# 光学窗口说明（run/clear 响应固定附带）
+NOTE_OPTICAL = '银河系消光改正仅对光学/紫外/红外波段（1000 Å–1 mm）生效，射电与 X 射线数据点不参与改正'
+
 
 @extinction_bp.route('/status', methods=['GET'])
 def get_status():
@@ -45,6 +48,7 @@ def run_extinction():
         if not stats.get('ok'):
             return {'error': stats.get('error', 'unknown error')}, 500
         sess.commit()
+        stats['note'] = NOTE_OPTICAL
         return jsonify(stats)
     except Exception as e:
         sess.rollback()
@@ -70,7 +74,7 @@ def clear_extinction():
         for lc in rows:
             extinction.clear_point(lc)
         sess.commit()
-        return jsonify({'ok': True, 'cleared': len(rows)})
+        return jsonify({'ok': True, 'cleared': len(rows), 'note': NOTE_OPTICAL})
     except Exception as e:
         sess.rollback()
         return {'error': str(e)}, 500

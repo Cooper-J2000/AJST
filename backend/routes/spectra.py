@@ -6,7 +6,7 @@ GET  /api/spectra/<id>/download   — 下载为两/三列文本（# 头元数据
 POST /api/spectra/upload          — 上传光谱（需登录），支持两种格式：
   1) 两列/三列文本：波长(Å) 流量 [流量误差]，# 注释行可带 key=value 头
   2) OpenSNSpectra 风格 JSON: {"<名称>": {"spectra": {..., "data": [[wl, flux], ...]}}}
-POST /api/spectra/<id>/gext_correct — 生成/覆盖该原始谱的银河系消光改正谱（管理员）
+POST /api/spectra/<id>/gext_correct — 生成/覆盖该原始谱的银河系消光改正谱（登录用户）
   服务端校验后统一规范化为 JSON 存储（波长 Å，流量 erg/s/cm^2/Å）
   改正谱为依附原始谱的二级产物（parent_id），原始谱删除时级联删除
 """
@@ -389,7 +389,7 @@ def update_spectrum(spec_id):
 
 
 @spectra_bp.route('/<int:spec_id>/gext_correct', methods=['POST'])
-@require_admin
+@require_auth
 def gext_correct_spectrum(spec_id):
     """生成/重新生成（覆盖）该原始光谱的银河系消光改正谱（CSFD + P92 + Rv=3.1）"""
     sess = get_session()

@@ -5,7 +5,7 @@ import {
 } from '../api.js';
 import { esc } from '../utils.js';
 
-let currentState = { page: 1, sort: 'id', order: 'asc' };
+let currentState = { page: 1, sort: 't0', order: 'desc' };
 let _listReqId = 0;     // 异步请求令牌（竞态防护）
 let _applyTimer = null; // 筛选输入防抖
 
@@ -73,7 +73,7 @@ export async function render() {
               <option value="id|desc">ID ↓</option>
               <option value="redshift|desc">红移 ↓</option>
               <option value="redshift|asc">红移 ↑</option>
-              <option value="t0|desc">T0 ↓</option>
+              <option value="t0|desc" selected>T0 ↓</option>
               <option value="t0|asc">T0 ↑</option>
             </select>
           </div>
@@ -100,11 +100,11 @@ export async function render() {
           <table class="table table-hover table-sm mb-0" id="transientTable">
             <thead>
               <tr>
-                <th class="sort-header sort-asc" data-sort="id">ID</th>
+                <th class="sort-header" data-sort="id">ID</th>
                 <th class="sort-header" data-sort="ra">RA</th>
                 <th class="sort-header" data-sort="dec">Dec</th>
                 <th class="sort-header" data-sort="redshift">z</th>
-                <th class="sort-header" data-sort="t0">T0</th>
+                <th class="sort-header sort-desc" data-sort="t0">T0</th>
                 <th>标签</th>
                 <th>别名</th>
                 <th>触发仪器</th>
@@ -143,7 +143,7 @@ export async function render() {
     document.getElementById('fHasZ').checked = false;
     document.getElementById('fHasHost').checked = false;
     document.getElementById('fTag').value = '';
-    document.getElementById('fSort').value = 'id|asc';
+    document.getElementById('fSort').value = 't0|desc';
     currentState.page = 1;
     loadData();
   };
@@ -174,7 +174,9 @@ export async function render() {
       const st = await runExtinction({});
       showToast(`全局银消改正完成: ${st.corrected}/${st.total} 点已改正` +
         (st.skipped_no_coords ? `, ${st.skipped_no_coords} 点无坐标跳过` : '') +
-        (st.skipped_band ? `, ${st.skipped_band} 点波段不支持` : ''), 'success');
+        (st.skipped_band ? `, ${st.skipped_band} 点波段不支持` : '') +
+        (st.skipped_not_optical ? `, ${st.skipped_not_optical} 点非光学波段跳过` : '') +
+        (st.note ? `。${st.note}` : ''), 'success');
     } catch (err) {
       showToast(`全局银消改正失败: ${err.message}`, 'danger');
     } finally {
