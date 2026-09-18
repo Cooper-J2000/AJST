@@ -306,10 +306,10 @@ window.lcEditSave = async (id) => {
 
 // ─── 添加新光变记录 ───
 const LC_NEW_EDITABLE = new Set(['time','time_err','band','flux_density','flux_density_err','flux_density_unit','mag_system','gext_corr','upperlimit','host_subtracted','gext_Alambda','mag_gextcor','mag_gextcor_err','flux_density_gextcor','flux_density_gextcor_err','weights','discard','telescope','instrument','reference','comment']);
-// 单位下拉候选（对齐 bands.js toMJy/pointToMJy 支持的单位；mag 配合 mag_system 列）
-const LC_NEW_UNITS = ['mJy', 'uJy', 'Jy', 'cgs(erg/cm2/s/Hz)', 'erg/cm2/s/keV', 'mag', 'magnitude'];
+// 单位下拉候选（对齐 bands.js toMJy/pointToMJy 支持的单位；magnitude 配合 mag_system 列）
+const LC_NEW_UNITS = ['mJy', 'uJy', 'Jy', 'cgs(erg/cm2/s/Hz)', 'erg/cm2/s/keV', 'magnitude'];
 // 时间/时间误差乘积因子（提交时前端乘好以秒入库，time_unit 保持 's'）
-const LC_NEW_TFACS = [[86400, '×86400 天'], [3600, '×3600 小时'], [60, '×60 分'], [1, '×1 秒']];
+const LC_NEW_TFACS = [[1, '秒 x1'], [60, '分 x60'], [3600, '小时 x3600'], [86400, '天 x86400']];
 window.lcAddNewRow = () => {
   // 检查是否已有新增行
   if (document.getElementById('lcNewRow')) return;
