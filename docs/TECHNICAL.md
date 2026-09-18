@@ -574,7 +574,7 @@ drupal-settings `objectFlot.*.params.markings`），全部在前端实现，无�
 | `PORT` | `backend/start.sh` 监听端口 | `27101` |
 | `FLASK_ENV` | 运行环境 | `production` |
 | `AJST_SECRET_KEY` | Flask 会话签名密钥 | 未设置时每次启动随机生成（重启即全体登出），生产建议显式设置 |
-| `AJST_CORS_ORIGINS` | CORS 允许来源白名单（逗号分隔；会话基于 cookie，不支持通配） | `localhost/127.0.0.1` 的 `$PORT`（默认 27101）/8000/8080 端口；显式设为 `'*'` 恢复旧通配行为（不推荐） |
+| `AJST_CORS_ORIGINS` | CORS 允许来源白名单（逗号分隔；会话基于 cookie，不支持通配） | `localhost/127.0.0.1` 的 `$PORT`（默认 27101）/8080 端口；显式设为 `'*'` 恢复旧通配行为（不推荐） |
 | `AJST_PCIGALE_BIN` | hostfit 使用的 pcigale 可执行文件路径 | 未设置时按 `shutil.which('pcigale')` → 内置回退路径查找；实际选用路径记录在任务 run.log |
 | `AJST_PCIGALE_FILTER_DIR` | pcigale 滤光片库目录覆盖项（网页端滤光片曲线注册与 `scripts/fetch_svo_filters.py` 共用） | 未设置时按已安装 pcigale 包路径 → which('pcigale') 推导 |
 | `SPS_HOME` | hostfit prospector 引擎所需的 FSPS 数据目录 | 未设置时回退读 `AJST_SPS_HOME`；prospector 为可选依赖（runner 惰性导入），未安装/未配置不影响服务启动，仅运行 prospector 任务时报错 |

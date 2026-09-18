@@ -38,7 +38,6 @@ if _cors_env == '*':
 else:
     CORS_ORIGINS = [o.strip() for o in _cors_env.split(',') if o.strip()] or [
         'http://localhost:%s' % _AJST_PORT, 'http://127.0.0.1:%s' % _AJST_PORT,
-        'http://localhost:8000', 'http://127.0.0.1:8000',
         'http://localhost:8080', 'http://127.0.0.1:8080',
     ]
 
