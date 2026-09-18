@@ -30,11 +30,14 @@ AJST_INGEST_TOKEN = os.environ.get('AJST_INGEST_TOKEN')
 # CORS 允许来源白名单：环境变量 AJST_CORS_ORIGINS（逗号分隔）覆盖；
 # 默认仅本机常见端口（本地单人部署够用）。显式设为 '*' 可恢复通配（不推荐）。
 _cors_env = os.environ.get('AJST_CORS_ORIGINS', '').strip()
+# 本服务自身端口：与 backend/start.sh 的 PORT 同一来源（默认 27101），
+# 避免改端口后这里的默认白名单变成陈旧值。
+_AJST_PORT = os.environ.get('PORT', '27101')
 if _cors_env == '*':
     CORS_ORIGINS = '*'
 else:
     CORS_ORIGINS = [o.strip() for o in _cors_env.split(',') if o.strip()] or [
-        'http://localhost:5000', 'http://127.0.0.1:5000',
+        'http://localhost:%s' % _AJST_PORT, 'http://127.0.0.1:%s' % _AJST_PORT,
         'http://localhost:8000', 'http://127.0.0.1:8000',
         'http://localhost:8080', 'http://127.0.0.1:8080',
     ]

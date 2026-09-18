@@ -19,7 +19,7 @@
 │  前端 SPA (ESM)   │ ◄─── JSON ────────► │  Flask 后端 (Python)  │
 │  /frontend/       │                     │  /backend/            │
 │  index.html       │                     │  app.py + routes/     │
-│  js/pages/*.js    │                     │  port 5000            │
+│  js/pages/*.js    │                     │  port 27101           │
 └──────────────────┘                     └───────┬──────────────┘
                                                  │ SQLAlchemy
                                                  ▼
@@ -410,17 +410,17 @@ GET /api/transients?search=EP24
 
 ```bash
 # 登录（用户名 + 密码；管理员账户为 admin）
-curl -X POST http://localhost:5000/api/auth/login \
+curl -X POST http://localhost:27101/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"你的密码"}'
 
 # 检查状态
-curl http://localhost:5000/api/auth/status
+curl http://localhost:27101/api/auth/status
 # → {"authenticated": true, "username": "admin", "role": "admin"}
 ```
 
 - 账户存于 `users` 表（密码经 werkzeug 哈希存储），首次启动自动创建管理员 `admin`，密码必须通过环境变量 `AJST_CATALOG_PASSWORD` 显式设置；未设置时每次启动随机生成。
-- 管理员维护后台：`http://localhost:5000/admin`（仅 admin 可登录），可新增/修改/删除普通用户。
+- 管理员维护后台：`http://localhost:27101/admin`（仅 admin 可登录），可新增/修改/删除普通用户。
 - 权限两级：**管理员**全部操作；**普通用户**可新增/上传数据、扣点（discard）、提交拟合任务、修改自己录入的光变记录（`source`=本账户），其余删除/修改已有数据返回 403。
 - 光变表 `source` 列自动记录提交账户（ingest API 记为 `ingest-api` 或 body 指定的 `source`），`created_at`/`updated_at` 自动记录存入/最近修改时间（naive UTC）。
 
@@ -570,10 +570,11 @@ drupal-settings `objectFlot.*.params.markings`），全部在前端实现，无�
 | `DATABASE_URL` | PostgreSQL 连接串 | `postgresql+psycopg2:///ajst_catalog`（本机 Unix socket + peer 认证，以当前 OS 用户连接，无硬编码用户名） |
 | `AJST_DATA_DIR` | 数据目录（info/lc/filters/spectra/gcn 等，将数据仓库克隆/放置到该位置即可） | `<项目根>/catadata` |
 | `AJST_PYTHON` | `backend/start.sh` 使用的 Python 解释器 | `python3` |
-| `PORT` | `backend/start.sh` 监听端口 | `5000` |
+| `AJST_HOST` | `backend/start.sh` 监听地址；**非 loopback 值会被拒绝并报错退出**（本机约定只监听 127.0.0.1） | `127.0.0.1` |
+| `PORT` | `backend/start.sh` 监听端口 | `27101` |
 | `FLASK_ENV` | 运行环境 | `production` |
 | `AJST_SECRET_KEY` | Flask 会话签名密钥 | 未设置时每次启动随机生成（重启即全体登出），生产建议显式设置 |
-| `AJST_CORS_ORIGINS` | CORS 允许来源白名单（逗号分隔；会话基于 cookie，不支持通配） | `localhost/127.0.0.1` 的 5000/8000/8080 端口；显式设为 `'*'` 恢复旧通配行为（不推荐） |
+| `AJST_CORS_ORIGINS` | CORS 允许来源白名单（逗号分隔；会话基于 cookie，不支持通配） | `localhost/127.0.0.1` 的 `$PORT`（默认 27101）/8000/8080 端口；显式设为 `'*'` 恢复旧通配行为（不推荐） |
 | `AJST_PCIGALE_BIN` | hostfit 使用的 pcigale 可执行文件路径 | 未设置时按 `shutil.which('pcigale')` → 内置回退路径查找；实际选用路径记录在任务 run.log |
 | `AJST_PCIGALE_FILTER_DIR` | pcigale 滤光片库目录覆盖项（网页端滤光片曲线注册与 `scripts/fetch_svo_filters.py` 共用） | 未设置时按已安装 pcigale 包路径 → which('pcigale') 推导 |
 | `SPS_HOME` | hostfit prospector 引擎所需的 FSPS 数据目录 | 未设置时回退读 `AJST_SPS_HOME`；prospector 为可选依赖（runner 惰性导入），未安装/未配置不影响服务启动，仅运行 prospector 任务时报错 |
@@ -593,7 +594,9 @@ drupal-settings `objectFlot.*.params.markings`），全部在前端实现，无�
 - 单元文件中用 `%h` 表示家目录（systemd 用户服务占位符），启动命令指向
   `<AJST>/backend/start.sh`（`<AJST>` 为项目根目录）
 - 启动脚本：`backend/start.sh` 为通用脚本——`cd` 到脚本所在目录后以
-  `${AJST_PYTHON:-python3}` 启动 Flask，监听 `0.0.0.0:${PORT:-5000}`；
+  `${AJST_PYTHON:-python3}` 启动 Flask，监听 `${AJST_HOST:-127.0.0.1}:${PORT:-27101}`；
+  非 loopback 的 `AJST_HOST` 会被脚本拒绝并报错退出（本机约定：服务只监听 127.0.0.1，
+  需要外部可达请走 ssh 隧道，不要改成 0.0.0.0）；
   其余配置（`DATABASE_URL` / `AJST_DATA_DIR` / `AJST_CATALOG_PASSWORD` /
   `AJST_INGEST_TOKEN`）全部从进程环境变量读取，需在 systemd 单元（`Environment=`）
   或启动环境中显式提供。**注意：`AJST_CATALOG_PASSWORD` 不显式设置时每次启动都会
@@ -614,7 +617,7 @@ cd <AJST>/backend
 AJST_CATALOG_PASSWORD='你的密码' python3 -c "
 import sys; sys.path.insert(0, '.')
 from app import create_app
-create_app().run(host='0.0.0.0', port=5000, debug=False)
+create_app().run(host='127.0.0.1', port=27101, debug=False)
 "
 ```
 
@@ -664,7 +667,7 @@ psql -d ajst_catalog -c \
   "UPDATE users SET password_hash='上一步输出' WHERE username='admin';"
 ```
 
-普通用户的增删改在 `http://localhost:5000/admin` 后台操作。
+普通用户的增删改在 `http://localhost:27101/admin` 后台操作。
 
 ---
 
@@ -673,7 +676,7 @@ psql -d ajst_catalog -c \
 ### 8.1 添加新属性（推荐：extra_data JSONB）
 
 ```bash
-curl -X PUT http://localhost:5000/api/transients/EP240315a \
+curl -X PUT http://localhost:27101/api/transients/EP240315a \
   -H 'Content-Type: application/json' \
   -d '{"extra_data": {"peak_flux": 0.85, "photon_index": 1.95}}'
 ```

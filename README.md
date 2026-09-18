@@ -169,7 +169,7 @@ git clone https://github.com/Cooper-J2000/AJST-Data.git catadata
 cd backend && python3 etl.py && cd ..
 
 # run
-./backend/start.sh        # listens on 0.0.0.0:5000
+./backend/start.sh        # listens on 127.0.0.1:27101 (loopback only)
 ```
 
 Without `catadata/`, the app still starts with an empty database; you can add
@@ -185,7 +185,8 @@ your own transients through the UI or the APIs.
 | `AJST_DATA_DIR` | `<repo>/catadata` | data directory location |
 | `SPS_HOME` | unset | FSPS data directory (prospector engine only) |
 | `AJST_PYTHON` | `python3` | interpreter used by `start.sh` |
-| `PORT` | `5000` | listen port |
+| `AJST_HOST` | `127.0.0.1` | listen address; loopback only — a non-loopback value makes `start.sh` refuse to start |
+| `PORT` | `27101` | listen port |
 
 ### GCN circular archive
 
