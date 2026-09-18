@@ -1231,6 +1231,12 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
   （`backend/hostfit/pcigale.ini.spec`）按启用模块逐任务裁剪生成——pcigale 2025.0 要求 ini
   覆盖 spec 声明的所有段，缺整段报 "parameter None: False" 且 exit 0、不产出 out/（2026-09-04
   修复，runner 对该情形有防御性识别，校验失败与拟合失败分开报错）。
+  2026-09-18 排查补充：pcigale 的模型归一（scaling）按**绝对误差**加权做解析
+  最小二乘，网格若全是年轻模型（age_main 上限 ≪ 宇宙年龄），最暗波段会钉死缩放，
+  best m_star 可差几个数量级而任务状态仍是 done——默认 age_main 网格已扩展至
+  13000 Myr（超宇宙年龄的模型 pcigale 自动置 NaN），且 runner 在 reduced χ²>10 时
+  向 warnings 与 run.log 写"参数不可信、请扩大网格"的显式告警；评估历史
+  pcigale_host 结果时以各自 χ²_red 与 warnings 为准。
 - **prospector 引擎**（`runner_prospector.py`，v2.18 新增）：
   - 惰性 import prospect / sedpy / fsps——可选依赖（requirements.txt 有对应注释段：
     astro-prospector / astro-sedpy / python-fsps / dynesty / emcee / h5py / corner /

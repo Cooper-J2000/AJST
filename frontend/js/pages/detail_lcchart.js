@@ -34,6 +34,7 @@ let _lcZfac = 1;   // 静止系因子（buildLCChart 每轮重建同步）
 let lcBandVisible = {};  // band → bool
 // ─── 光变图顶部副轴配置（null = 不画） ───
 let _lcTopAxis = null;   // { mode: 'day'|'mjd' }
+let _lcTopAxisSuppress = false;  // 复制合成时插件暂停绘制（副轴改画在离屏插入带）
 // ─── 当前图数据源（wireLCChartGlobals 每轮 render 登记，供数据表行内编辑后同步） ───
 let _bands = null, _bandNames = null, _spectralColors = null;
 
@@ -65,6 +66,7 @@ export function resetLCChart() {
   _lcShowNow = false;
   _lcZfac = 1;
   _lcTopAxis = null;
+  _lcTopAxisSuppress = false;
   _lcRedshift = null;
   _lcT0MJD = null;
   _lcDistmod = null;
@@ -162,46 +164,71 @@ function _niceTicks(lo, hi, target) {
   return { ticks, step };
 }
 
+// 顶部副轴刻度计算（插件手绘与复制合成共用；返回 null = 不画）
+function _lcTopAxisTicks(chart) {
+  const cfg = _lcTopAxis;
+  if (!cfg || !cfg.mode) return null;
+  const x = chart.scales.x;
+  if (!x) return null;
+  // day = t/86400；mjd = T0(MJD) + t/86400
+  const toDisp = cfg.mode === 'mjd' ? (t) => cfg.t0mjd + t / 86400 : (t) => t / 86400;
+  const fromDisp = cfg.mode === 'mjd' ? (d) => (d - cfg.t0mjd) * 86400 : (d) => d * 86400;
+  const lo = toDisp(x.min), hi = toDisp(x.max);
+  let ticks, fmt;
+  if (cfg.mode !== 'mjd' && x.type === 'logarithmic' && hi / Math.max(lo, 1e-12) > 30) {
+    // 对数主轴+大动态范围：线性规整刻度会簇聚在右端，改用每十倍程 1/2/5 对数刻度
+    ticks = [];
+    for (let e = Math.floor(Math.log10(Math.max(lo, 1e-12))); e <= Math.ceil(Math.log10(hi)); e++)
+      for (const m of [1, 2, 5]) { const v = m * 10 ** e; if (v >= lo && v <= hi) ticks.push(v); }
+    fmt = (v) => String(parseFloat(v.toPrecision(6)));
+  } else {
+    const r = _niceTicks(lo, hi, 8);
+    ticks = r.ticks;
+    const dec = r.step >= 1 ? 0 : Math.min(6, Math.ceil(-Math.log10(r.step)));
+    fmt = cfg.mode === 'mjd'
+      ? (v) => v.toFixed(Math.max(dec, 1))
+      : (v) => String(parseFloat(v.toFixed(Math.max(dec, 2))));
+  }
+  return { mode: cfg.mode, ticks, fmt, toPx: (d) => x.getPixelForValue(fromDisp(d)) };
+}
+
+// 顶部副轴带内容绘制（插件画在 chartArea 上方；复制合成画在离屏插入带 yTop 处，带高 46）
+function _drawTopAxisBand(ctx, chart, yLine, titleY) {
+  const info = _lcTopAxisTicks(chart);
+  const area = chart.chartArea;
+  if (!info || !area) return;
+  const cc = chartColors();
+  ctx.save();
+  ctx.strokeStyle = cc.tick;
+  ctx.fillStyle = cc.tick;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(area.left, yLine);
+  ctx.lineTo(area.right, yLine);
+  ctx.stroke();
+  ctx.font = `11px ${ACADEMIC_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  for (const d of info.ticks) {
+    const px = info.toPx(d);
+    if (px < area.left + 2 || px > area.right - 2) continue;
+    ctx.beginPath();
+    ctx.moveTo(px, yLine);
+    ctx.lineTo(px, yLine - 5);
+    ctx.stroke();
+    ctx.fillText(info.fmt(d), px, yLine - 7);
+  }
+  ctx.fillText(info.mode === 'mjd' ? 'MJD' : 'time since T0 (day)', (area.left + area.right) / 2, titleY);
+  ctx.restore();
+}
+
 const lcTopAxisPlugin = {
   id: 'lcTopAxis',
   afterDraw(chart) {
-    const cfg = _lcTopAxis;
-    if (!cfg || !cfg.mode) return;
-    const x = chart.scales.x;
+    if (_lcTopAxisSuppress) return;
     const area = chart.chartArea;
-    if (!x || !area) return;
-    // day = t/86400；mjd = T0(MJD) + t/86400
-    const toDisp = cfg.mode === 'mjd' ? (t) => cfg.t0mjd + t / 86400 : (t) => t / 86400;
-    const fromDisp = cfg.mode === 'mjd' ? (d) => (d - cfg.t0mjd) * 86400 : (d) => d * 86400;
-    const { ticks, step } = _niceTicks(toDisp(x.min), toDisp(x.max), 5);
-    const dec = step >= 1 ? 0 : Math.min(6, Math.ceil(-Math.log10(step)));
-    const fmt = cfg.mode === 'mjd'
-      ? (v) => v.toFixed(Math.max(dec, 1))
-      : (v) => String(parseFloat(v.toFixed(Math.max(dec, 2))));
-    const cc = chartColors();
-    const ctx = chart.ctx;
-    ctx.save();
-    ctx.strokeStyle = cc.tick;
-    ctx.fillStyle = cc.tick;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(area.left, area.top);
-    ctx.lineTo(area.right, area.top);
-    ctx.stroke();
-    ctx.font = `11px ${ACADEMIC_FONT}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
-    for (const d of ticks) {
-      const px = x.getPixelForValue(fromDisp(d));
-      if (px < area.left + 2 || px > area.right - 2) continue;
-      ctx.beginPath();
-      ctx.moveTo(px, area.top);
-      ctx.lineTo(px, area.top - 5);
-      ctx.stroke();
-      ctx.fillText(fmt(d), px, area.top - 7);
-    }
-    ctx.fillText(cfg.mode === 'mjd' ? 'MJD' : 'time since T0 (day)', (area.left + area.right) / 2, area.top - 24);
-    ctx.restore();
+    if (!area) return;
+    _drawTopAxisBand(chart.ctx, chart, area.top, area.top - 24);
   },
 };
 
@@ -471,30 +498,59 @@ window.copyLCChart = async () => {
   const cc = chartColors();
   const plg = chart.options.plugins;
   const legend = plg.legend, title = plg.title || (plg.title = {});
-  const prev = { lg: legend.display, ti: title.display, text: title.text };
+  const layout = chart.options.layout || (chart.options.layout = {});
+  const prev = { lg: legend.display, ti: title.display, text: title.text, pad: layout.padding };
   legend.display = true;
   legend.position = 'top';
-  legend.labels = { color: cc.legend, font: academicFonts().legend, filter: (item) => item.text !== '' };
+  // 图例只列当前可见的数据集（未勾选的波段不进图例；置信带等空 label 数据集始终排除）
+  legend.labels = {
+    color: cc.legend, font: academicFonts().legend,
+    filter: (item) => item.text !== '' &&
+      (item.datasetIndex == null || chart.isDatasetVisible(item.datasetIndex)),
+  };
   title.display = true;
   title.text = `${_lcName || ''} 光变曲线`;
   title.color = cc.legend;
   title.font = academicFonts().title;
+  // 顶部留白给图例上方留出边距；手绘顶部副轴在合成时改画进离屏插入带（见下），
+  // 因为 layout.padding 位于所有 dock 组件（含图例）之外，无法用它隔开图例与副轴
+  layout.padding = { ...(typeof prev.pad === 'object' && prev.pad ? prev.pad : {}), top: 40 };
+  _lcTopAxisSuppress = true;
   chart.update('none');
   const restore = () => {
     legend.display = prev.lg;
     title.display = prev.ti;
     title.text = prev.text;
+    layout.padding = prev.pad;
+    _lcTopAxisSuppress = false;
     chart.update('none');
   };
   try {
     const src = chart.canvas;
+    const area = chart.chartArea;
+    const dpr = chart.currentDevicePixelRatio || 1;
+    // 有顶部副轴时在图例/标题与绘图区之间插入 46px 高的副轴带，彻底避免与图例重叠
+    const band = _lcTopAxis ? 46 : 0;
+    const bandPx = Math.round(band * dpr);
+    // 切割线抬高 10px：最顶端一行 y 轴刻度标签（跨越 chartArea 顶边）整体划入下半部分，
+    // 避免被水平切成两半（其网格线随下半部分同步下移，对齐保持）
+    const cutY = Math.round(Math.max(0, (area ? area.top : 0) - (band ? 10 : 0)) * dpr);
     const off = document.createElement('canvas');
     off.width = src.width;
-    off.height = src.height;
+    off.height = src.height + bandPx;
     const octx = off.getContext('2d');
     octx.fillStyle = cc.canvasBg;
     octx.fillRect(0, 0, off.width, off.height);
-    octx.drawImage(src, 0, 0);
+    // 上半（标题+图例）原样；下半（绘图区）整体下移一个带高
+    octx.drawImage(src, 0, 0, src.width, cutY, 0, 0, src.width, cutY);
+    octx.drawImage(src, 0, cutY, src.width, src.height - cutY,
+      0, cutY + bandPx, src.width, src.height - cutY);
+    if (band && area) {
+      octx.save();
+      octx.scale(dpr, dpr);
+      _drawTopAxisBand(octx, chart, area.top + band - 8, area.top + 13);
+      octx.restore();
+    }
     const blob = await new Promise(r => off.toBlob(r, 'image/png'));
     if (!blob) throw new Error('图像导出失败');
     if (navigator.clipboard && window.isSecureContext && typeof ClipboardItem !== 'undefined') {

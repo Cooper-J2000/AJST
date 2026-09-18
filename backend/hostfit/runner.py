@@ -507,6 +507,15 @@ def run(job_id, config, log, workdir=None, filters=None):
     outdir = os.path.join(workdir, 'out')
     params, chi2 = parse_results(results_txt)
     log(f'reduced_chi2 = {chi2}; best = {params["best"]}')
+    # 拟合质量护栏：pcigale 的 χ² 归一按绝对误差加权，网格不覆盖宿主真实
+    # 星族（如 age_main 全是年轻模型）时最暗波段会钉死缩放，best 参数可以
+    # 差几个数量级而任务状态仍是 done——必须显式告警（hostfit_32 教训）
+    if chi2 is not None and chi2 > 10.0:
+        msg = (f'reduced χ²={chi2:.1f} 过大，best/bayes 参数不可信：常见原因是'
+               '参数网格未覆盖宿主星族（如 age_main 上限远小于该红移处宇宙年龄），'
+               '请扩大网格（尤其 age_main）后重跑')
+        warnings.append(msg)
+        log('警告: ' + msg)
 
     # 4. SED 图
     best_fits = os.path.join(outdir, 'host_best_model.fits')
