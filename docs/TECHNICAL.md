@@ -598,8 +598,10 @@ drupal-settings `objectFlot.*.params.markings`），全部在前端实现，无�
   非 loopback 的 `AJST_HOST` 会被脚本拒绝并报错退出（本机约定：服务只监听 127.0.0.1，
   需要外部可达请走 ssh 隧道，不要改成 0.0.0.0）；
   其余配置（`DATABASE_URL` / `AJST_DATA_DIR` / `AJST_CATALOG_PASSWORD` /
-  `AJST_INGEST_TOKEN`）全部从进程环境变量读取，需在 systemd 单元（`Environment=`）
-  或启动环境中显式提供。**注意：`AJST_CATALOG_PASSWORD` 不显式设置时每次启动都会
+  `AJST_INGEST_TOKEN` / `AJST_SECRET_KEY`）全部从进程环境变量读取，需显式提供——
+  **本机做法**：凭据放 `~/.config/ajst.env`（`chmod 600`），单元文件用
+  `EnvironmentFile=-%h/.config/ajst.env` 注入（systemd 不读 `~/.bashrc`，只写在 shell 配置里的
+  凭据对服务等于没配，2026-09-18 踩过）。**注意：`AJST_CATALOG_PASSWORD` 不显式设置时每次启动都会
   随机生成新密码，导致无法登录**
 - 常用命令：
   ```bash
@@ -1077,8 +1079,9 @@ TNS 对象网页执行同步：
 - 响应：`{transient_id, created_transient, resolved, inserted, skipped_duplicates, warnings, points}`
 - 错误码（JSON `{"error": ...}`）：400 参数/校验错误；401 token 错误；404 源未找到；
   422 源缺 t0（不做隐式猜测）；503 ingest 未启用
-- token 配置：`export AJST_INGEST_TOKEN='xxx'` 加入服务运行环境（如 systemd 单元的
-  `Environment=` 或 shell 配置文件），重启服务生效（与 `AJST_CATALOG_PASSWORD` 同机制，见 §7.1/§7.2）
+- token 配置：写入 `~/.config/ajst.env`（`chmod 600`），由单元文件的
+  `EnvironmentFile=-%h/.config/ajst.env` 注入，重启服务生效（与 `AJST_CATALOG_PASSWORD`
+  同机制，见 §7.1/§7.2）。**只写 `~/.bashrc` 对服务无效**（systemd 不读 shell 配置）
 
 ### 8.17 GCN 阅读工具（工具箱，v2.10 新增）
 
