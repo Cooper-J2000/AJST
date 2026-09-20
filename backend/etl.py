@@ -511,7 +511,7 @@ def from_dump(sess):
         # ── 写入 lc CSV ──
         lcs = sess.query(Lightcurve).filter(
             Lightcurve.transient_id == t.id
-        ).order_by(Lightcurve.time).all()
+        ).order_by(Lightcurve.time, Lightcurve.id).all()
 
         if lcs:
             fields = [
