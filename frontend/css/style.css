@@ -143,6 +143,19 @@ body {
 .sort-header:hover {
   color: var(--accent-blue);
 }
+
+/* 千位分隔逗号：仅用于显示——user-select:none 使其不进入选中/复制的文本 */
+.sep-thousands {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 波长列：内容框按最长数字实测定宽，框内数字右对齐、框整体在列内居中（框本身不可见） */
+.wl-num {
+  display: inline-block;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .sort-header::after {
   content: ' ↕';
   opacity: 0.3;

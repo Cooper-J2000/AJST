@@ -2,7 +2,7 @@
 import { app, showLoading, showError } from './layout.js';
 import { api, isAuthed, isAdmin, showToast, deleteFilter } from '../api.js';
 import { chartColors } from '../theme.js';
-import { esc } from '../utils.js';
+import { esc, sciTickSup, minOf, maxOf } from '../utils.js';
 
 let _sort = 'wavelength', _order = 'asc';
 let _filters = [];                  // 最近一次加载的滤光片列表
@@ -14,6 +14,68 @@ const _colorRank = new Map();       // id -> 序号
 let _colorCount = 0;
 // 总图横轴范围（留空 = 自动全范围）
 let _xMin = null, _xMax = null;
+// 波长列内容框宽度：用离屏 DOM 实测最长数字的像素宽（贴合、框不可见），
+// 实测失败时回退为字符数（ch）
+let _wlCh = 12;        // 回退值（ch）
+let _wlPx = null;      // 显示用实测值（px，已含两端亚像素余量）
+let _wlInpPx = null;   // 编辑输入框内文本宽度（px）
+let _inputExtra = 20;  // 编辑输入框的左右内边距 + 边框（px）
+// 量文本像素宽：离屏 <span> 复制参考元素的计算字体，并强制 tabular-nums。
+// 不能用 canvas.measureText——它的 font 简写无法表达 font-variant-numeric，
+// 且表格字体栈含 -apple-system/BlinkMacSystemFont 等，canvas 解析失败时会静默
+// 退回默认 10px 字体；而 .table 用的是 tabular-nums，数字宽度与比例数字不同，
+// 都会让量出的宽度偏小。
+// 逐个候选实测取最宽者：tabular-nums 下数字等宽，而分隔符（逗号/小数点）更窄，
+// 所以“字符最多”不等于“最宽”，必须按实际像素比较。
+function _widestText(refEl, texts) {
+  try {
+    const cs = getComputedStyle(refEl);
+    const span = document.createElement('span');
+    span.style.position = 'absolute';
+    span.style.left = '-9999px';
+    span.style.top = '0';
+    span.style.visibility = 'hidden';
+    span.style.whiteSpace = 'pre';
+    span.style.fontFamily = cs.fontFamily;
+    span.style.fontSize = cs.fontSize;
+    span.style.fontWeight = cs.fontWeight;
+    span.style.fontStyle = cs.fontStyle;
+    span.style.fontVariantNumeric = 'tabular-nums';
+    span.textContent = texts[0] ?? '';
+    document.body.appendChild(span);
+    let best = null, bestW = -1;
+    for (const t of texts) {
+      span.textContent = t;
+      const w = span.getBoundingClientRect().width;
+      if (w > bestW) { bestW = w; best = t; }
+    }
+    span.remove();
+    return isFinite(bestW) && bestW > 0 ? { text: best, width: bestW } : null;
+  } catch (e) {
+    return null;
+  }
+}
+// 编辑输入框（.form-control-sm）的字号比表格单元格大（14px vs 0.85rem），
+// 且按 box-sizing:border-box 计宽，故用同款离屏探针单独量文本宽与内边距+边框。
+// 返回 { el, extra }；用完需 el.remove()。
+function _inputProbe() {
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.className = 'form-control form-control-sm';
+  inp.style.position = 'absolute';
+  inp.style.left = '-9999px';
+  inp.style.top = '0';
+  inp.style.visibility = 'hidden';
+  document.body.appendChild(inp);
+  let extra = 20;
+  try {
+    const cs = getComputedStyle(inp);
+    const v = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
+            + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+    if (isFinite(v)) extra = v;
+  } catch (e) { /* 用默认值 */ }
+  return { el: inp, extra };
+}
 
 // ─── 新增弹窗的透过率曲线状态 ───
 let _afSvoSelected = null;          // 选定的 SVO filter id
@@ -241,7 +303,71 @@ function hasCurve(f) {
   return f.extra_data && f.extra_data.transmission && f.extra_data.transmission.wl;
 }
 
-// ─── 透过率总图（显示由行首勾选驱动；点击图例或表格 ID 加粗突出） ───
+// 透过率总图（显示由行首勾选驱动；点击图例或表格 ID 加粗突出） ───
+
+// ── 总览图横轴设置 ──
+// 波长跨度过大时用对数轴；跨度不大（max/min < LINEAR_AXIS_RATIO）时用线性轴。
+const LINEAR_AXIS_RATIO = 100;
+// 对数轴的刻度标注规则（记为对数轴的标准设置）：
+//   从 XTICK_MANTISSAS 里取第一个能让可见刻度标注数 ≥5 的尾数集合
+//   （对数轴惯用：先只标十进倍数 1×10ⁿ，不够再补 2×10ⁿ、5×10ⁿ…），
+//   范围极窄、连整数尾数都凑不到 5 个时直接标注所有可见刻度（保底 ≥5 个）。
+//   Chart.js 默认规则（尾数 1/2/3/5/10/15 + 最右 20% 全标）会把右侧标得拥挤，故覆盖之。
+// 刻度值 ≥1e6 Å 一律用书面科学计数法（10⁶ / 2×10⁶ / 1.2×10⁷），两种轴一致。
+const XTICK_MANTISSAS = [[1], [1, 2], [1, 2, 5], [1, 2, 3, 5],
+                         [1, 2, 3, 4, 5, 6, 7, 8, 9]];
+const _mantissa = (v) => v / Math.pow(10, Math.floor(Math.log10(v)));
+const _inMantissaSet = (v, set) => set.some(k => Math.abs(_mantissa(v) - k) < 1e-6);
+const _wlFmt = (v) => (v >= 1e6 ? sciTickSup(v) : v.toLocaleString());
+// 波长列的测量用纯文本（en-US 固定分组，保证长度与 wlHtml 的实际渲染一致）
+const _wlText = (v) => (v == null ? '-'
+  : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+
+// 列表里波长按千位分组显示，但逗号用不可选中的 <span> 包住：
+// 显示有逗号，而浏览器复制纯文本时会跳过 user-select:none 的内容 → 复制出来不带逗号，
+// 因此不需要再单独拦截 copy 事件。（注意：textContent 仍含逗号，编辑回填/保存需去逗号）
+const _wlGroup = (int) => int.replace(/\B(?=(\d{3})+(?!\d))/g,
+  '<span class="sep-thousands">,</span>');
+function wlHtml(v) {
+  if (v == null) return '-';
+  const [int, dec] = Number(v).toFixed(2).split('.');
+  return `${int.startsWith('-') ? '-' + _wlGroup(int.slice(1)) : _wlGroup(int)}.${dec}`;
+}
+
+// 对数横轴（多数量级跨度）：标注数保底 5 个
+function logXAxis(cc) {
+  return {
+    type: 'logarithmic',
+    title: { display: true, text: '波长 (Å，对数)', color: cc.tick },
+    ticks: {
+      color: cc.tick,
+      callback(value, index, ticks) {
+        const x = Number(value);
+        if (!isFinite(x) || x <= 0) return '';
+        const vals = ticks.map(t => Number(t.value)).filter(v => isFinite(v) && v > 0);
+        let set = XTICK_MANTISSAS[XTICK_MANTISSAS.length - 1];
+        for (const s of XTICK_MANTISSAS) {
+          if (vals.filter(v => _inMantissaSet(v, s)).length >= 5) { set = s; break; }
+        }
+        const labelAll = vals.filter(v => _inMantissaSet(v, set)).length < 5;
+        if (labelAll || _inMantissaSet(x, set)) return _wlFmt(x);
+        return '';
+      },
+    },
+    grid: { color: cc.grid },
+  };
+}
+
+// 线性横轴（跨度 max/min < LINEAR_AXIS_RATIO）：刻度沿用 Chart.js 默认，仅沿用 ≥1e6 的书面写法
+function linearXAxis(cc) {
+  return {
+    type: 'linear',
+    title: { display: true, text: '波长 (Å)', color: cc.tick },
+    ticks: { color: cc.tick, callback: (v) => _wlFmt(Number(v)) },
+    grid: { color: cc.grid },
+  };
+}
+
 function rebuildOverview() {
   const canvas = document.getElementById('filterOverviewChart');
   if (!canvas) return;
@@ -249,6 +375,12 @@ function rebuildOverview() {
   if (typeof Chart === 'undefined') return;
   const cc = chartColors();
   const shown = _filters.filter(f => hasCurve(f) && !_unchecked.has(f.id));
+  // 可见波长跨度（手动设定的横轴范围优先）→ 决定用线性还是对数轴
+  const shownWl = [];
+  for (const f of shown) for (const v of f.extra_data.transmission.wl) shownWl.push(v);
+  const lo = _xMin ?? minOf(shownWl);
+  const hi = _xMax ?? maxOf(shownWl);
+  const useLog = !(lo > 0 && hi > 0 && hi / lo < LINEAR_AXIS_RATIO);
   const mk = f => {
     const color = wlColor(f);
     const hl = _highlight.has(f.id);
@@ -302,12 +434,11 @@ function rebuildOverview() {
       },
       scales: {
         x: {
-          type: 'linear',
           min: _xMin ?? undefined, max: _xMax ?? undefined,   // 留空 = 自动全范围
-          title: { display: true, text: '波长 (Å)', color: cc.tick },
-          ticks: { color: cc.tick }, grid: { color: cc.grid },
+          ...(useLog ? logXAxis(cc) : linearXAxis(cc)),
         },
-        y: { min: 0, suggestedMax: 1, title: { display: true, text: '透过率', color: cc.tick }, ticks: { color: cc.tick }, grid: { color: cc.grid } },
+        // 纵轴恒为 0–1（透过率），不随框选改变
+        y: { min: 0, max: 1, title: { display: true, text: '透过率', color: cc.tick }, ticks: { color: cc.tick }, grid: { color: cc.grid } },
       },
     },
   });
@@ -316,6 +447,88 @@ function rebuildOverview() {
 function toggleHighlight(id) {
   if (_highlight.has(id)) _highlight.delete(id); else _highlight.add(id);
   rebuildOverview();
+}
+
+// ── 总览图框选放大：只改横轴范围，纵轴恒为 0–1 ──
+// 在绘图区内按下拖动 → 显示选框 → 松开后把横轴设为选中的波长范围。选框的纵向
+// 范围只是视觉反馈，不参与换算，所以放大永远不会改变纵轴。拖动距离过小视为
+// 点击（保留图例点击与悬浮提示）。
+const OV_ZOOM_MIN_PX = 5;
+function setupOverviewZoom() {
+  const canvas = document.getElementById('filterOverviewChart');
+  const box = canvas && canvas.parentElement;
+  const marquee = document.getElementById('ovMarquee');
+  if (!canvas || !box || !marquee || box.dataset.zoomBound) return;
+  box.dataset.zoomBound = '1';   // 每次 render() 重建 DOM，故按元素标记避免重复绑定
+
+  const area = () => _overviewChart && _overviewChart.chartArea;
+  const relPos = e => {
+    const r = box.getBoundingClientRect();   // 容器无内边距，与 canvas 同原点
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+  const inPlot = p => {
+    const a = area();
+    return !!a && p.x >= a.left && p.x <= a.right && p.y >= a.top && p.y <= a.bottom;
+  };
+  const pxToX = px => {
+    const sc = _overviewChart && _overviewChart.scales && _overviewChart.scales.x;
+    const v = sc ? sc.getValueForPixel(px) : null;   // 对数轴也返回正确插值
+    return Number.isFinite(v) ? v : null;
+  };
+
+  let drag = null;   // { x0, y0, x1, y1 }，相对容器像素
+  const paint = () => {
+    if (!drag) return;
+    marquee.style.display = 'block';
+    marquee.style.left = Math.min(drag.x0, drag.x1) + 'px';
+    marquee.style.top = Math.min(drag.y0, drag.y1) + 'px';
+    marquee.style.width = Math.abs(drag.x1 - drag.x0) + 'px';
+    marquee.style.height = Math.abs(drag.y1 - drag.y0) + 'px';
+  };
+  const onMove = e => {
+    const a = area();
+    const p = relPos(e);
+    drag.x1 = a ? Math.min(Math.max(p.x, a.left), a.right) : p.x;
+    drag.y1 = a ? Math.min(Math.max(p.y, a.top), a.bottom) : p.y;
+    paint();
+    e.preventDefault();
+  };
+  const onUp = () => {
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+    const d = drag;
+    drag = null;
+    marquee.style.display = 'none';
+    if (!d) return;
+    const a = area();
+    const x0 = a ? Math.max(Math.min(d.x0, d.x1), a.left) : Math.min(d.x0, d.x1);
+    const x1 = a ? Math.min(Math.max(d.x0, d.x1), a.right) : Math.max(d.x0, d.x1);
+    if (x1 - x0 < OV_ZOOM_MIN_PX) return;   // 视作点击
+    const v0 = pxToX(x0), v1 = pxToX(x1);
+    if (v0 == null || v1 == null || v0 <= 0 || v1 <= 0) return;
+    const mn = Math.min(v0, v1), mx = Math.max(v0, v1);
+    if (!(mx > mn)) return;
+    _xMin = mn;
+    _xMax = mx;
+    const im = document.getElementById('ovXMin'), ix = document.getElementById('ovXMax');
+    if (im) im.value = mn;
+    if (ix) ix.value = mx;
+    rebuildOverview();
+  };
+
+  box.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    const p = relPos(e);
+    if (!inPlot(p)) return;   // 图例/坐标轴区域不触发
+    drag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+    paint();
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    e.preventDefault();
+  });
+  box.addEventListener('mousemove', e => {
+    if (!drag) box.style.cursor = inPlot(relPos(e)) ? 'crosshair' : '';
+  });
 }
 
 function applyXRange() {
@@ -356,10 +569,10 @@ export async function render() {
     <div class="card mb-3">
       <div class="card-header d-flex justify-content-between align-items-center">
         <span><i class="bi bi-graph-up"></i> 透过率总览</span>
-        <small class="text-secondary">行首勾选控制显示；点击图例或表格 ID 加粗突出</small>
+        <small class="text-secondary">行首勾选控制显示；点击图例或表格 ID 加粗突出；在图上拖动框选可放大横轴</small>
       </div>
       <div class="card-body">
-        <div class="chart-container" style="height:240px"><canvas id="filterOverviewChart"></canvas></div>
+        <div class="chart-container" style="height:240px"><canvas id="filterOverviewChart"></canvas><div id="ovMarquee" style="position:absolute;display:none;pointer-events:none;z-index:5;border:1px solid var(--accent-blue);background:var(--accent-blue-soft)"></div></div>
         <div class="d-flex flex-wrap align-items-center gap-1 mt-2 small">
           <span class="text-secondary">横轴范围 (Å):</span>
           <input type="number" step="any" class="form-control form-control-sm" style="width:110px" id="ovXMin" placeholder="最小（自动）">
@@ -379,7 +592,7 @@ export async function render() {
               <tr>
                 <th style="width:30px"><input type="checkbox" id="filterCheckAll" checked title="全选/全不选（同步总图显示）"></th>
                 <th class="f-sort" data-sort="id" style="cursor:pointer">ID <span class="sort-icon"></span></th>
-                <th class="f-sort" data-sort="wavelength" style="cursor:pointer">波长 (Å) <span class="sort-icon"></span></th>
+                <th class="f-sort text-center" data-sort="wavelength" style="cursor:pointer">波长 (Å) <span class="sort-icon"></span></th>
                 <th class="f-sort" data-sort="filter_type" style="cursor:pointer">类型 <span class="sort-icon"></span></th>
                 <th class="f-sort" data-sort="vega2ab" style="cursor:pointer">Vega→AB <span class="sort-icon"></span></th>
                 <th>透过率</th>
@@ -585,6 +798,7 @@ export async function render() {
   // 已设置的范围回填输入框（重渲染后保留）
   if (_xMin != null) document.getElementById('ovXMin').value = _xMin;
   if (_xMax != null) document.getElementById('ovXMax').value = _xMax;
+  setupOverviewZoom();
 
   // 曲线弹窗：下载数据表按钮（打开时绑定当前滤光片）；关闭时销毁图表
   document.getElementById('curveModal').addEventListener('hidden.bs.modal', () => {
@@ -694,12 +908,25 @@ async function loadFilters() {
     _colorCount = curved.length;
 
     document.getElementById('filterCount').textContent = `共 ${filters.length} 个`;
+    // 波长列：内容框宽 = 当前列表里**最宽**数字的实际像素宽（贴合、框不可见），
+    // 框内右对齐、框整体在列内居中
     const tbody = document.getElementById('filterBody');
+    const wlTexts = filters.map(f => _wlText(f.wavelength));
+    _wlCh = Math.max(12, ...wlTexts.map(t => t.length));
+    // 数字两端各留 2px 余量：框贴合数字，但不让其紧贴框边（亚像素/浏览器差异）
+    const widest = _widestText(tbody, wlTexts);
+    _wlPx = widest != null ? Math.ceil(widest.width) + 4 : null;
+    const probe = _inputProbe();
+    _inputExtra = probe.extra;
+    const widestInp = _widestText(probe.el, wlTexts);
+    _wlInpPx = widestInp != null ? Math.ceil(widestInp.width) + 4 : null;
+    probe.el.remove();
+    const wlBoxW = _wlPx != null ? `${_wlPx}px` : `${_wlCh}ch`;
     tbody.innerHTML = filters.map(f => `
       <tr id="filterRow_${esc(f.id)}">
         <td><input type="checkbox" class="filter-check" data-id="${esc(f.id)}" ${_unchecked.has(f.id) ? '' : 'checked'}></td>
         <td><strong style="cursor:pointer;color:${wlColor(f)}" title="点击在总图中加粗/取消加粗" data-hl="${esc(f.id)}">${esc(f.id)}</strong></td>
-        <td class="fv" data-field="wavelength">${f.wavelength != null ? f.wavelength.toFixed(2) : '-'}</td>
+        <td class="fv text-center" data-field="wavelength"><span class="wl-num" style="width:${wlBoxW}">${wlHtml(f.wavelength)}</span></td>
         <td class="fv" data-field="filter_type">${esc(f.filter_type) || '-'}</td>
         <td class="fv" data-field="vega2ab">${f.vega2ab != null ? f.vega2ab.toFixed(3) : '0.000'}</td>
         <td>${hasCurve(f)
@@ -832,6 +1059,9 @@ async function loadFilters() {
       cells.forEach(cell => {
         const field = cell.dataset.field;
         const val = cell.textContent.trim();
+        // 波长列显示时带千位分隔符（3 位一逗号），编辑框必须回填纯数字，
+        // 否则 parseFloat 会在逗号处截断（如 "11,103,424.37" → 11）
+        const editVal = field === 'wavelength' ? val.replace(/,/g, '') : val;
         if (field === 'filter_type') {
           cell.innerHTML = `<select class="form-select form-select-sm fi" data-field="filter_type" style="width:90px">
             <option value="mean" ${val === 'mean' ? 'selected' : ''}>mean</option>
@@ -841,7 +1071,12 @@ async function loadFilters() {
             <option value="" ${val === '-' ? 'selected' : ''}>-</option>
           </select>`;
         } else {
-          cell.innerHTML = `<input type="text" class="form-control form-control-sm fi" data-field="${field}" value="${esc(val === '-' ? '' : val)}" style="width:${field === 'description' ? 280 : 120}px">`;
+          // 波长输入框：与内容框同宽（额外留出 form-control 的内边距/边框，避免最长数字被裁切）
+          const w = field === 'wavelength'
+            ? (_wlInpPx != null ? `${_wlInpPx + _inputExtra}px` : `${_wlCh}ch`)
+            : (field === 'description' ? '280px' : '120px');
+          const align = field === 'wavelength' ? ';text-align:right' : '';
+          cell.innerHTML = `<input type="text" class="form-control form-control-sm fi" data-field="${field}" value="${esc(editVal === '-' ? '' : editVal)}" style="width:${w}${align}">`;
         }
       });
       const editCell = row.querySelector('.filter-edit-cell');
@@ -867,7 +1102,8 @@ async function loadFilters() {
         const field = inp.dataset.field;
         let val = inp.value.trim();
         if (field === 'wavelength') {
-          body[field] = val ? parseFloat(val) : null;
+          // 容错：若输入里带了千位分隔逗号（手动粘贴），先去掉再解析
+          body[field] = val ? parseFloat(val.replace(/,/g, '')) : null;
         } else if (field === 'vega2ab') {
           body[field] = val !== '' ? parseFloat(val) : 0;
         } else {
