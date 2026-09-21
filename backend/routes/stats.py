@@ -70,15 +70,22 @@ def band_coverage():
 def _hosts_data_etag(sess):
     """宿主统计的数据版本 token（ETag）。
 
-    由宿主/暂现源的 updated_at 极值与行数、滤波器数与系数和拼成（3 条廉价聚合查询），
-    任何影响 /api/stats/hosts 输出的写入都会改变它；浏览器重复请求可拿 304。
+    由宿主/暂现源的 updated_at 极值与行数、滤波器条数与各影响输出的属性拼成
+    （3 条廉价聚合查询），任何影响 /api/stats/hosts 输出的写入都会改变它；
+    浏览器重复请求可拿 304。
     """
     a = sess.execute(select(func.count(HostGalaxy.id),
                             func.max(HostGalaxy.updated_at))).one()
     b = sess.execute(select(func.count(Transient.id),
                             func.max(Transient.updated_at))).one()
+    # filters 表没有 updated_at，凡参与输出的列都要逐项进 token：
+    #   条数（增删）、gext_coeff（A_λ）、vega2ab（Vega→AB 换算）、wavelength
+    #   （gext_coeff 为 NULL 时 A_λ 由波长现算）。漏项会让客户端拿到陈旧 304——
+    #   实测改 vega2ab 后响应体变了而 ETag 不变。
     c = sess.execute(select(func.count(FilterDef.id),
-                            func.sum(FilterDef.gext_coeff))).one()
+                            func.sum(FilterDef.gext_coeff),
+                            func.sum(FilterDef.vega2ab),
+                            func.sum(FilterDef.wavelength))).one()
     return hashlib.sha1('|'.join(str(x) for x in (*a, *b, *c)).encode()).hexdigest()
 
 

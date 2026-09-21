@@ -4,10 +4,13 @@
   filters.gext_coeff      = A_λ/E(B-V) = Rv·P92(λ)（P92 域外波段，如射电/毫米，为 0）
   transients.gext_ebv     = 该坐标 CSFD 尘图 E(B-V)
   host_galaxies.gext_ebv  = 同上（宿主自身坐标）
+  transients.gext_distmod / host_galaxies.gext_distmod = 红移对应的距离模数 μ（Planck18）
 
 各写入口（filters/transients/hosts API、ETL 导入）已自动维护这些列，
 本脚本用于存量数据或直接改库后的重新同步。用法（仓库根）：
     python3 scripts/backfill_gext_cache.py
+
+前四项需要 dustmaps（不可用则跳过，见下）；μ 只依赖 astropy，总是会回填。
 """
 import os
 import sys
@@ -20,7 +23,7 @@ while d != os.path.dirname(d) and not os.path.isdir(os.path.join(d, 'backend')):
 sys.path.insert(0, os.path.join(d, 'backend'))
 
 import app  # noqa: E402
-from models import FilterDef, Transient, HostGalaxy  # noqa: E402
+from models import FilterDef, Transient, HostGalaxy, refresh_distmod  # noqa: E402
 import extinction  # noqa: E402
 
 
@@ -28,11 +31,25 @@ def main():
     sess = app.get_session()
     t0 = time.time()
 
-    # 依赖不可用时直接放弃：dust_coeff 会因算不出系数而返回 None，
+    # 距离模数 μ：不依赖 dustmaps，先做（下面 dustmaps 不可用时也能完成）
+    for label, model in (('transients.gext_distmod', Transient),
+                         ('hosts.gext_distmod     ', HostGalaxy)):
+        rows = sess.query(model).all()
+        n, t1 = 0, time.time()
+        for r in rows:
+            before = r.gext_distmod
+            refresh_distmod(r)
+            if r.gext_distmod != before:
+                n += 1
+        sess.commit()
+        print('%s: %d/%d updated (%.2fs)'
+              % (label, n, len(rows), time.time() - t1))
+
+    # dustmaps 不可用时跳过消光相关列：dust_coeff 会因算不出系数而返回 None，
     # 继续跑会把已有的 filters.gext_coeff 清成 NULL（写坏缓存）
     if not extinction._load():
         print('!! dustmaps 依赖不可用:', extinction._import_error)
-        print('   跳过回填，未修改任何缓存列')
+        print('   跳过 gext_coeff / gext_ebv 回填（不写坏已有缓存），距离模数已完成')
         return
 
     # 1) filters → 消光系数 k
