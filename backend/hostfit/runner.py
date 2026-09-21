@@ -35,11 +35,12 @@ _MJY_PER_CGS_FNU = 1e26          # 1 erg/s/cm²/Hz = 1e26 mJy
 
 # pcigale 二进制解析优先级：AJST_PCIGALE_BIN 环境变量 > PATH 中的 pcigale
 # > 本机常见环境回退（换机器/换 conda env 时必须设环境变量；按存在性依次回退）
+# 候选路径用 ~ 展开，不在公开仓库里硬编码某个家目录；机器专属位置一律走 AJST_PCIGALE_BIN。
 _PCIGALE_BIN_ENV = os.environ.get('AJST_PCIGALE_BIN')
-_PCIGALE_BIN_FALLBACKS = (
-    '/home/ajst/ajst/bin/pcigale',
-    '/home/ajst/miniconda3/envs/burst_advocate/bin/pcigale',
-)
+_PCIGALE_BIN_FALLBACKS = tuple(os.path.expanduser(p) for p in (
+    '~/ajst/bin/pcigale',
+    '~/miniconda3/envs/burst_advocate/bin/pcigale',
+))
 
 
 def _find_pcigale():
