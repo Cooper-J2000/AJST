@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 from app import get_engine, get_session
 from models import Base, Transient, Lightcurve, FilterDef, Tag, Spectrum, Article, HostGalaxy, utcnow
+from models import refresh_distmod
 import extinction
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -188,6 +189,7 @@ def import_one_transient(sess, tid):
             t.extra_data = data['extra_data']
         t.updated_at = utcnow()
         extinction.refresh_ebv(t)      # 坐标建立/变更 → 刷新 E(B-V) 缓存
+        refresh_distmod(t)             # 红移建立/变更 → 刷新距离模数缓存
     else:
         t = Transient(
             id=tid, ra=parse_float(data.get('ra')), dec=parse_float(data.get('dec')),
@@ -203,6 +205,7 @@ def import_one_transient(sess, tid):
         )
         sess.add(t)
         extinction.refresh_ebv(t)      # 坐标建立 → 计算 E(B-V) 缓存
+        refresh_distmod(t)             # 红移 → 距离模数缓存
     sess.flush()
 
     # 研究文章：info JSON 含 articles 字段时对该源做全量替换（与光变一致；
@@ -238,6 +241,7 @@ def import_one_transient(sess, tid):
             )
             sess.add(host)
             extinction.refresh_ebv(host)   # 坐标建立 → 计算 E(B-V) 缓存
+            refresh_distmod(host)          # 红移 → 距离模数缓存
         sess.flush()
     return True
 

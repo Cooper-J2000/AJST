@@ -6,11 +6,13 @@ GET /api/stats/bands       — 波段覆盖统计
 GET /api/stats/tags        — 标签 / 子标签目标数
 GET /api/stats/hosts       — 宿主星系覆盖与参数分布
 """
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 from sqlalchemy import func, distinct, text, select
 from app import get_session
-from models import Transient, Lightcurve, HostGalaxy, distance_modulus
+from models import (Transient, Lightcurve, FilterDef, HostGalaxy,
+                    distance_modulus, prewarm_distance_modulus)
 from extinction import correct_host_phot, filter_meta
+import hashlib
 
 stats_bp = Blueprint('stats', __name__)
 
@@ -65,13 +67,29 @@ def band_coverage():
         sess.close()
 
 
+def _hosts_data_etag(sess):
+    """宿主统计的数据版本 token（ETag）。
+
+    由宿主/暂现源的 updated_at 极值与行数、滤波器数与系数和拼成（3 条廉价聚合查询），
+    任何影响 /api/stats/hosts 输出的写入都会改变它；浏览器重复请求可拿 304。
+    """
+    a = sess.execute(select(func.count(HostGalaxy.id),
+                            func.max(HostGalaxy.updated_at))).one()
+    b = sess.execute(select(func.count(Transient.id),
+                            func.max(Transient.updated_at))).one()
+    c = sess.execute(select(func.count(FilterDef.id),
+                            func.sum(FilterDef.gext_coeff))).one()
+    return hashlib.sha1('|'.join(str(x) for x in (*a, *b, *c)).encode()).hexdigest()
+
+
 @stats_bp.route('/hosts', methods=['GET'])
 def host_stats():
     """宿主星系统计：覆盖率、红移类型计数、M*/SFR 分布、宿主测光绝对星等点。
 
     abs_mag_points: [{tid, band, z, mag(AB), abs_mag, mag_err, err_assumed, upperlimit,
                       gext_applied, gext_Alambda, mag_raw, mag_corr, mag_sys, gext_corr}]
-      M = m_AB − μ(z_host)，μ 由 models.distance_modulus（astropy Planck18）计算；
+      M = m_AB − μ(z_host)，μ 取 `host_galaxies.gext_distmod`（v2.19.3 起持久化），
+      缺值时回退 `models.distance_modulus`（astropy Planck18，批量预热）；
       Vega 星等先按 filters 表 vega2ab 转 AB；非上限且缺误差的点按 0.2 mag（err_assumed 标记，不落库）。
       银河系消光：gext_corr 非真的行先按 CSFD+Rv3.1+P92 改正（mag −= A_λ，与光变表逻辑一致，
       extinction.correct_host_phot 只算不写）再算 M；gext_applied 标记该行是否应用了改正，
@@ -84,6 +102,10 @@ def host_stats():
     """
     sess = get_session()
     try:
+        etag = _hosts_data_etag(sess)
+        if request.if_none_match.contains(etag):
+            # 数据未变：直接 304，不做任何计算/序列化
+            return '', 304, {'ETag': '"%s"' % etag, 'Cache-Control': 'no-cache'}
         # 显式 ORDER BY：宿主是无序查询时返回的行序会随堆内物理序变化（一次写入就变），
         # 导致同一份数据两次请求的 abs_mag_points / m_star_points 数组顺序不同（前端导出 CSV 会抖）
         hosts = sess.query(HostGalaxy).order_by(HostGalaxy.transient_id).all()
@@ -134,11 +156,13 @@ def host_stats():
             return None if t is None else t.gext_ebv
 
         abs_mag_points = []
+        # 距离模数批量预热（未命中的 z 一次向量化），随后逐行查询全部命中缓存
+        prewarm_distance_modulus([h.redshift for h in hosts])
         for h in hosts:
             z = h.redshift
             if z is None or z <= 0:
                 continue
-            dm = distance_modulus(z)
+            dm = h.gext_distmod if h.gext_distmod is not None else distance_modulus(z)
             if dm is None:
                 continue
             phot = h.photometry or []
@@ -192,7 +216,7 @@ def host_stats():
                     'mag_raw': round(mag_raw, 4), 'mag_corr': round(mag_corr, 4),
                     'mag_sys': row_mag_sys, 'gext_corr': row_gext_corr,
                 })
-        return jsonify({
+        resp = jsonify({
             'n_hosts': n_hosts,
             'n_transients': n_transients,
             'coverage': (n_hosts / n_transients) if n_transients else 0,
@@ -204,6 +228,9 @@ def host_stats():
             'sfr_points': sfr_points,
             'abs_mag_points': abs_mag_points,
         })
+        resp.set_etag(etag)
+        resp.cache_control.no_cache = True   # 每次带 If-None-Match 复验，命中即 304
+        return resp
     finally:
         sess.close()
 

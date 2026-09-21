@@ -11,7 +11,7 @@ from sqlalchemy import cast, String, or_, func, select, text
 from sqlalchemy.orm import defer
 from app import get_session, require_auth, require_admin
 from models import (Transient, HostGalaxy, Lightcurve, Spectrum, utcnow,
-                    distance_modulus)
+                    prewarm_distance_modulus, refresh_distmod, distance_modulus)
 from coords import parse_ra, parse_dec
 from datetime import datetime
 import re
@@ -136,6 +136,8 @@ def list_transients():
                       'has_host': tid in host_ids}
                 for tid in ids
             }
+        # 距离模数批量预热：to_dict 的 distmod 随后全部命中进程内缓存（免逐行 astropy 调用）
+        prewarm_distance_modulus([t.redshift for t in items])
         return jsonify({
             'total': total,
             'page': page,
@@ -160,8 +162,10 @@ def list_transients_meta():
     try:
         rows = sess.execute(
             select(Transient.id, Transient.ra, Transient.dec, Transient.redshift,
-                   Transient.tags, Transient.aliases)
+                   Transient.tags, Transient.aliases, Transient.gext_distmod)
             .order_by(Transient.id)).all()
+        # 距离模数批量预热（未命中的 z 一次向量化），逐行只命中持久化值/缓存
+        prewarm_distance_modulus([t.redshift for t in rows])
         items = [{
             'id': t.id,
             'ra': t.ra,
@@ -169,7 +173,8 @@ def list_transients_meta():
             'redshift': t.redshift,
             'tags': t.tags or [],
             'aliases': t.aliases or [],
-            'distmod': distance_modulus(t.redshift),
+            'distmod': (t.gext_distmod if t.gext_distmod is not None
+                        else distance_modulus(t.redshift)),
         } for t in rows]
         return jsonify({'items': items})
     finally:
@@ -243,8 +248,12 @@ def update_transient(tid):
         if not t:
             return {'error': 'Not found'}, 404
         old_ra, old_dec = t.ra, t.dec
+        old_z = t.redshift
         _apply_transient_fields(t, body)
         t.updated_at = utcnow()
+        # 红移变动 → 刷新距离模数缓存
+        if t.redshift != old_z:
+            refresh_distmod(t)
         # 坐标变动 → 刷新 E(B-V) 缓存 + 该源所有已银消改正的数据点自动重算
         # （坐标被清除则清除改正）
         if t.ra != old_ra or t.dec != old_dec:
