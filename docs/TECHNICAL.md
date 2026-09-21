@@ -340,7 +340,7 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | GET | `/api/transients/<id>` | 单源详情 | 否 |
 | PUT | `/api/transients/<id>` | 更新基本信息（`ra`/`dec` 同上支持时分秒） | 管理员 |
 | DELETE | `/api/transients/<id>` | 删除事件（级联删除） | 管理员 |
-| GET | `/api/lightcurves/<tid>` | 某源的全部光变数据 | 否 |
+| GET | `/api/lightcurves?transient_id=<tid>` | 光变数据列表（可选 `band` / `telescope` 过滤，`sort` / `order` 排序，`page` / `per_page` 分页） | 否 |
 | POST | `/api/lightcurves/batch` | 批量新增光变点（自动记录 `source`=当前账户） | 登录 |
 | POST | `/api/lightcurves/fit_model` | 时变函数拟合（pl/bpl/sbpl/fred + tb 预设范围 + 多起点最小二乘与 emcee 后验，返回 param_cov/samples，不落库，见 §8.19） | 否 |
 | PUT | `/api/lightcurves/<id>` | 更新单个光变点（普通用户可改自己录入的记录，即 `source`=本账户；他人记录仅可改 `discard` 扣点） | 登录 |
