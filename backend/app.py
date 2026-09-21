@@ -49,6 +49,9 @@ def init_db():
             "ALTER TABLE spectra ADD COLUMN IF NOT EXISTS parent_id BIGINT"
             " REFERENCES spectra(id) ON DELETE CASCADE"))
         conn.execute(text(
+            "ALTER TABLE spectra ADD COLUMN IF NOT EXISTS spec_type VARCHAR(16)"
+            " NOT NULL DEFAULT 'transient'"))
+        conn.execute(text(
             "ALTER TABLE filters ADD COLUMN IF NOT EXISTS gext_coeff DOUBLE PRECISION"))
         conn.execute(text(
             "ALTER TABLE transients ADD COLUMN IF NOT EXISTS gext_ebv DOUBLE PRECISION"))
