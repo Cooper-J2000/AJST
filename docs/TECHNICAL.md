@@ -78,6 +78,7 @@
 | `pos_error_unit` | VARCHAR(16) | 缺省 `arcsec` |
 | `pos_ref` | TEXT | 位置引用 |
 | `gext_ebv` | FLOAT | 该源坐标处 CSFD 尘图 E(B-V) 的**派生缓存**（2026-09-21 起，见 §四）；坐标写入时刷新，不随文件落盘，为 NULL 时改为现查尘图 |
+| `gext_distmod` | FLOAT | 红移对应距离模数 μ（Planck18）的**派生缓存**（2026-09-21 起，见 §四）；红移写入时刷新，为 NULL 时现算 |
 | `comment` | TEXT | 用户备注 |
 | `sub_tag` | JSONB | 子标签数组，如 `["L","S","X"]` |
 | `tags` | JSONB | 标签数组，如 `["fxt","grb"]` |
@@ -173,6 +174,7 @@ BibTeX 可能很长，前端不整段展示，仅提供「复制到剪贴板」�
 | `transient_id` | VARCHAR(32) FK→transients CASCADE, UNIQUE | |
 | `ra` / `dec` | FLOAT | 宿主坐标（度；v2.14 起 API 写入支持十进制度或时分秒字符串，入库统一转度） |
 | `gext_ebv` | FLOAT | 宿主**自身坐标**处 CSFD 尘图 E(B-V) 的派生缓存（2026-09-21 起，见 §四）；坐标写入时刷新，为 NULL 时改为现查尘图 |
+| `gext_distmod` | FLOAT | 宿主红移对应距离模数 μ 的派生缓存（2026-09-21 起，见 §四）；红移写入时刷新，为 NULL 时现算 |
 | `redshift` / `redshift_err` | FLOAT | 宿主红移；光谱红移 err=0，测光红移有误差 |
 | `redshift_type` | VARCHAR(16) | `spec` / `phot` |
 | `photometry` | JSONB | `[{band, mag, mag_err, mag_sys(AB/Vega/ST), source, upperlimit, gext_corr}]`（v2.14 起支持 `upperlimit`；`mag_err` 可空——非上限且误差为空时后续处理按 σ=0.2 mag 计，0.2 不落库；v2.15 起 `gext_corr` **必填**——该行是否已做银河系消光改正，缺失时 PUT 返回 400，缺键的存量行下游按 false 对待，见 §8.24） |
@@ -313,6 +315,7 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | `filters.gext_coeff` | `filters` 表 | k_λ = A_λ/E(B-V) = Rv·P92(λ)（P92 定义域 10 Å–1e7 Å 之外写 `0`＝不做改正；波长缺失/非法写 NULL） |
 | `transients.gext_ebv` | `transients` 表 | 该源坐标处的 CSFD E(B-V) |
 | `host_galaxies.gext_ebv` | `host_galaxies` 表 | 宿主**自身坐标**处的 CSFD E(B-V) |
+| `transients.gext_distmod` / `host_galaxies.gext_distmod` | 两张表 | 红移对应距离模数 μ（Planck18），2026-09-21 起 |
 
 - 三者都是**派生缓存**，不是权威数据：`gext_coeff` 随滤波器新建/改波长自动维护；`gext_ebv` 在坐标写入时刷新
   （transients PUT、hosts PUT、ingest 新建源、`POST /api/transients`、ETL 导入）。
@@ -325,8 +328,11 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 - `extinction.filter_meta()` 是滤波器元数据的**进程内缓存**（只取 id/wavelength/vega2ab/gext_coeff 四列，
   60 s TTL + 滤波器写入口显式失效），避免宿主统计里每个宿主都重查整张 `filters` 表（含 transmission JSONB 解码）。
   经 `/api/filters` 写接口修改会立即失效；**直接 SQL 改库**最多 60 s 后生效，也可重启服务或跑回填脚本。
-- **不随文件落盘**：`--dump` 不导出这三列（`catadata/` 文件里没有它们），全量重建后全部为 NULL——功能正常
+- **不随文件落盘**：`--dump` 不导出这些列（`catadata/` 文件里没有它们），全量重建后全部为 NULL——功能正常
   （读路径回退现算），要恢复缓存与查询速度跑一次回填脚本（见 §7.3）。
+- **距离模数 μ**：`gext_distmod` 只依赖 astropy（Planck18），与 dustmaps 无关；`models.distance_modulus()` 是
+  进程内按 z 分桶缓存的字典，`prewarm_distance_modulus([z…])` 对未命中的 z 一次向量化求值（列表/统计接口先批量预热，
+  避免逐行标量调用 astropy）。实测 763 个真实红移下，向量化实现与逐行标量实现结果完全一致。
 
 ## 五、REST API
 
@@ -357,6 +363,7 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | POST | `/api/filters/svo_fetch` | 预览抓取指定 SVO ID 的透过率曲线（不落库不注册） | 登录 |
 | GET | `/api/tags` | 标签列表 | 否 |
 | GET | `/api/stats/overview` | 汇总统计 | 否 |
+| GET | `/api/stats/hosts` | 宿主星系统计（覆盖率 / M*/SFR 分布 / 宿主绝对星等点；带 `ETag` + `Cache-Control: no-cache`，数据未变时返回 304，见 §8.30） | 否 |
 | GET | `/api/relations` | 统计关系定义列表 + 各关系当前可用来源目录（见 §8.13） | 否 |
 | GET | `/api/relations/<name>/data` | 取某关系统计数点（`?source=best` 或目录短名） | 否 |
 | GET | `/api/extinction/status` | 银消功能可用性 + 覆盖统计 | 否 |
@@ -679,11 +686,16 @@ ALTER TABLE transients ADD COLUMN IF NOT EXISTS my_new_col FLOAT;
 ```bash
 cd <AJST> && python3 scripts/backfill_gext_cache.py
 # 输出示例：
-#   filters.gext_coeff   : 81/81 updated (1.02s)
+#   transients.gext_distmod: 963/2794 updated (1.03s)
+#   hosts.gext_distmod     : 31/32 updated (0.00s)
+#   filters.gext_coeff   : 0/81 updated (1.64s)
 #   coordless NULLs      : 126 rows
-#   transients.gext_ebv  : 2738/2738 updated (2.85s)
-#   hosts.gext_ebv       : 25/25 updated (0.02s)
+#   transients.gext_ebv  : 0/2738 updated (2.89s)
+#   hosts.gext_ebv       : 0/25 updated (0.02s)
 ```
+
+距离模数 μ 只依赖 astropy，故这一步放在 dustmaps 可用性检查**之前**：dustmaps 缺失时仍会回填
+`gext_distmod`，只跳过 `gext_coeff` / `gext_ebv`（避免把已有系数写坏）。
 
 > **新版本部署顺序**：改完后端代码 → `systemctl --user restart ajst-catalog`（启动时跑幂等列迁移、
 > 补出新列）→ **再**跑 ETL / 回填脚本。顺序反过来会因列不存在而报错。
@@ -1614,6 +1626,33 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
   暂现源行缓存（`/api/stats/hosts`、`/api/export/host_photometry`、`hostfit` 的银消改正统一此口径）；
   否则宿主测光会拿到源位置的 E(B-V)，实测 72″ 偏移处 g 波段偏差可达 0.07 mag。
 
+### 8.30 距离模数缓存 + ETag / 迁移与口径修复 / pcigale 回退 / 滤光片总览前端（2026-09-21，v2.22）
+
+四项互相独立的改动（同一批合并）：
+
+1. **距离模数持久化 + ETag**：新增 `transients.gext_distmod` / `host_galaxies.gext_distmod`（红移写入时刷新，
+   见 §四）；`models` 的距离模数缓存改为「进程内 z 分桶字典 + 向量化批量预热」（`prewarm_distance_modulus()`，
+   实测 763 个真实红移下与旧的逐行标量实现结果完全一致）；`/api/transients` 列表、`/api/transients/meta`、
+   `/api/stats/hosts` 优先用持久化值，NULL 时回退现算。
+   `GET /api/stats/hosts` 新增 `ETag`（由宿主/暂现源 `updated_at` 极值 + 行数 + 滤波器条数/系数/vega2ab/波长
+   派生）+ `Cache-Control: no-cache`，数据未变时直接 304（零计算零序列化）。
+   ⚠️ token 必须覆盖**所有**影响输出的输入：`filters` 表没有 `updated_at`，最初只放了条数与 `sum(gext_coeff)`，
+   实测「PUT `/api/filters/<id>` 改 vega2ab」会让响应体变而 ETag 不变（客户端拿到陈旧 304），已补
+   `sum(vega2ab)` 与 `sum(wavelength)`。
+2. **迁移/口径修复**：`init_db()` 补 `ALTER TABLE spectra ADD COLUMN IF NOT EXISTS spec_type …` —— 此前
+   早于该列入库的旧库查询 spectra 全部 500（`UndefinedColumn`）；`POST /api/ingest/photometry` 写入单位由
+   `mag` 改为 `magnitude`（与库内统一口径一致）；宿主统计图 tooltip 把「录入时已改正」与「本页实时改正」
+   统一标注为「已银消改正」。
+3. **hostfit 的 pcigale 二进制回退**：`_find_pcigale()` 改为 `AJST_PCIGALE_BIN` → `PATH` → 一组已知位置中
+   **第一个存在者**（原来只回退一个写死的 conda 路径，换机器即失败）；nebular 可选模块段补 `line_list =`
+   （2025.x 需要该键；空值在本机 2025.0 的 nebular 模块里被显式容忍——`line_list` 的解析带 `if name.strip()`，
+   且本机 spec 模板已声明 `line_list = string()`）。
+4. **滤光片总览前端**：横轴按可见波长跨度自适应（`max/min ≥ 100` 用对数轴，否则线性）；对数轴用显式
+   尾数集合保证 ≥5 个刻度；≥1e6 Å 用书面科学计数法（`utils.js` 新增 `sciTickSup()`）；波长列千位分组
+   （逗号包在 `user-select:none` 的 span 内，复制出来不带逗号，编辑/保存时统一 `replace(/,/g, '')`）；
+   列宽按真实 DOM 度量（`font-variant-numeric: tabular-nums`，canvas `measureText` 量不准）；总览图支持
+   **框选放大**（只改 x 轴，y 恒 0–1，拖动不足 5 px 视为点击）。
+
 ## 九、关键技术依赖
 
 | 组件 | 版本 | 用途 |
@@ -1658,6 +1697,20 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 ---
 
 ## 十一、版本历史
+
+### v2.22（2026-09-21）— 距离模数缓存 + 宿主统计 ETag / 迁移与口径修复 / pcigale 回退 / 滤光片总览前端
+
+- 新增 `transients.gext_distmod` / `host_galaxies.gext_distmod` 派生缓存列（见 §四、§8.30）；
+  `models` 距离模数改「z 分桶字典 + 向量化预热」，`/api/transients` 列表与 meta 批量预热后再取值。
+- `GET /api/stats/hosts` 加 `ETag` + `Cache-Control: no-cache`，数据未变时 304（零计算）；token 覆盖
+  宿主/暂现源 `updated_at`、行数，以及滤波器条数与 `gext_coeff` / `vega2ab` / `wavelength`。
+- 修复 `init_db()` 漏迁 `spectra.spec_type`（旧库查询 spectra 返回 500）；ingest 写入单位统一为 `magnitude`。
+- hostfit 的 pcigale 二进制改为有序存在性回退；nebular 段补 `line_list`。
+- 滤光片总览：自适应对数/线性横轴、显式刻度规则、千分位波长列（复制不带逗号）、框选放大（只改 x 轴）。
+- 验收证据：763 个真实红移下 μ 新旧实现 0 差异；持久化 μ 前后 `/api/stats/hosts` 响应逐字节一致；
+  ETag 审计三种写入（宿主测光 / 宿主红移 / 滤波器 vega2ab）均触发新 token 且 304 语义正确（无 body）；
+  `spec_type` 迁移在缺列的库上复现 500 → 迁移后 200；回填脚本扩展覆盖 μ 且幂等（第二次全 0）；
+  前端在真实浏览器验证（对数轴与标题、y 固定 0–1、千分位波长列、框选放大后 x 范围与轴型切换）。
 
 ### v2.21（2026-09-21）— 消光派生量缓存 / 宿主统计提速
 
