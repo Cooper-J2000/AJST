@@ -77,6 +77,7 @@
 | `pos_error` | FLOAT | 位置误差 |
 | `pos_error_unit` | VARCHAR(16) | 缺省 `arcsec` |
 | `pos_ref` | TEXT | 位置引用 |
+| `gext_ebv` | FLOAT | 该源坐标处 CSFD 尘图 E(B-V) 的**派生缓存**（2026-09-21 起，见 §四）；坐标写入时刷新，不随文件落盘，为 NULL 时改为现查尘图 |
 | `comment` | TEXT | 用户备注 |
 | `sub_tag` | JSONB | 子标签数组，如 `["L","S","X"]` |
 | `tags` | JSONB | 标签数组，如 `["fxt","grb"]` |
@@ -129,6 +130,7 @@
 | `wavelength` | FLOAT | 有效波长（Å） |
 | `filter_type` | VARCHAR(16) | `mean` / `ref` / `eff` / `guess` |
 | `vega2ab` | FLOAT | Vega→AB 转换 |
+| `gext_coeff` | FLOAT | 银河系消光系数 k_λ = A_λ/E(B-V) = Rv·P92(λ) 的**派生缓存**（2026-09-21 起，见 §四）；P92 定义域（10 Å–1e7 Å）之外为 `0`（不做改正），波长缺失/非法为 NULL |
 | `description` | TEXT | 说明（望远镜/巡天名称） |
 | `extra_data` | JSONB | 扩展字段 |
 
@@ -170,6 +172,7 @@ BibTeX 可能很长，前端不整段展示，仅提供「复制到剪贴板」�
 | `id` | BIGINT PK auto | |
 | `transient_id` | VARCHAR(32) FK→transients CASCADE, UNIQUE | |
 | `ra` / `dec` | FLOAT | 宿主坐标（度；v2.14 起 API 写入支持十进制度或时分秒字符串，入库统一转度） |
+| `gext_ebv` | FLOAT | 宿主**自身坐标**处 CSFD 尘图 E(B-V) 的派生缓存（2026-09-21 起，见 §四）；坐标写入时刷新，为 NULL 时改为现查尘图 |
 | `redshift` / `redshift_err` | FLOAT | 宿主红移；光谱红移 err=0，测光红移有误差 |
 | `redshift_type` | VARCHAR(16) | `spec` / `phot` |
 | `photometry` | JSONB | `[{band, mag, mag_err, mag_sys(AB/Vega/ST), source, upperlimit, gext_corr}]`（v2.14 起支持 `upperlimit`；`mag_err` 可空——非上限且误差为空时后续处理按 σ=0.2 mag 计，0.2 不落库；v2.15 起 `gext_corr` **必填**——该行是否已做银河系消光改正，缺失时 PUT 返回 400，缺键的存量行下游按 false 对待，见 §8.24） |
@@ -300,6 +303,30 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 - **自动重算**：数据点被修改（流量/波段等）、源坐标变动、滤波器波长或 Vega2AB 变动时，已改正的数据点自动重算；条件不再满足（如坐标被清空）时自动清除改正结果
 - **清除**：`POST /api/extinction/clear`（参数同 run）
 - ETL `--dump` 导出的 CSV 含 `mag_Gextcor` / `mag_Gextcor_err` 列，可随文件回导
+
+### 派生量缓存（2026-09-21，v2.21）
+
+消光改正里有两类与"源"无关、却被反复重算的量，现已落库缓存，避免每次请求重算：
+
+| 缓存 | 位置 | 含义 |
+|---|---|---|
+| `filters.gext_coeff` | `filters` 表 | k_λ = A_λ/E(B-V) = Rv·P92(λ)（P92 定义域 10 Å–1e7 Å 之外写 `0`＝不做改正；波长缺失/非法写 NULL） |
+| `transients.gext_ebv` | `transients` 表 | 该源坐标处的 CSFD E(B-V) |
+| `host_galaxies.gext_ebv` | `host_galaxies` 表 | 宿主**自身坐标**处的 CSFD E(B-V) |
+
+- 三者都是**派生缓存**，不是权威数据：`gext_coeff` 随滤波器新建/改波长自动维护；`gext_ebv` 在坐标写入时刷新
+  （transients PUT、hosts PUT、ingest 新建源、`POST /api/transients`、ETL 导入）。
+- **读路径对 NULL 一律回退现算**：`gext_coeff` 为 NULL → 按波长现查 P92；`gext_ebv` 为 NULL → 按坐标现查 CSFD 尘图。
+  因此**不跑回填脚本也永远正确，只是慢**（宿主统计会逐宿主重查尘图与滤波器表）。
+- **不变式（务必遵守）**：`gext_ebv` 的取值坐标必须与测光改正所用坐标**同源**——宿主有自身 ra/dec 时用
+  `host_galaxies.gext_ebv`（为 NULL 则按宿主坐标现查），只有坐标确实回退到暂现源时才用 `transients.gext_ebv`。
+  宿主位置与源位置可相差角分量级、E(B-V) 不同，混用会取到错位置的尘柱（实测 72″ 偏移处 g 波段 ΔA_g 可达 0.07 mag）。
+  `hostfit` 的银消改正同此口径。
+- `extinction.filter_meta()` 是滤波器元数据的**进程内缓存**（只取 id/wavelength/vega2ab/gext_coeff 四列，
+  60 s TTL + 滤波器写入口显式失效），避免宿主统计里每个宿主都重查整张 `filters` 表（含 transmission JSONB 解码）。
+  经 `/api/filters` 写接口修改会立即失效；**直接 SQL 改库**最多 60 s 后生效，也可重启服务或跑回填脚本。
+- **不随文件落盘**：`--dump` 不导出这三列（`catadata/` 文件里没有它们），全量重建后全部为 NULL——功能正常
+  （读路径回退现算），要恢复缓存与查询速度跑一次回填脚本（见 §7.3）。
 
 ## 五、REST API
 
@@ -645,6 +672,21 @@ psql -d ajst_catalog < backup.sql
 # 添加新列
 ALTER TABLE transients ADD COLUMN IF NOT EXISTS my_new_col FLOAT;
 ```
+
+**消光派生缓存回填（2026-09-21 起）**：全量重建或直接 SQL 改库之后，把派生缓存补齐
+（幂等、可随时重跑；缺失只影响速度不影响正确性，见 §四）：
+
+```bash
+cd <AJST> && python3 scripts/backfill_gext_cache.py
+# 输出示例：
+#   filters.gext_coeff   : 81/81 updated (1.02s)
+#   coordless NULLs      : 126 rows
+#   transients.gext_ebv  : 2738/2738 updated (2.85s)
+#   hosts.gext_ebv       : 25/25 updated (0.02s)
+```
+
+> **新版本部署顺序**：改完后端代码 → `systemctl --user restart ajst-catalog`（启动时跑幂等列迁移、
+> 补出新列）→ **再**跑 ETL / 回填脚本。顺序反过来会因列不存在而报错。
 
 ### 7.4 数据文件同步
 
@@ -1559,6 +1601,19 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
 
 ---
 
+### 8.29 消光派生量缓存（2026-09-21，v2.21）
+
+- 新增三个**派生缓存列**：`filters.gext_coeff`（k_λ = Rv·P92(λ)）、`transients.gext_ebv`、
+  `host_galaxies.gext_ebv`（各自坐标处的 CSFD E(B-V)），详见 §四；由 `init_db()` 的
+  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 自动补出，无需手工迁移。
+- `extinction.filter_meta()`：滤波器元数据**进程内缓存**（4 列 + 60 s TTL + 写入口显式失效），
+  宿主统计的宿主循环不再每宿主重查整张 `filters` 表（原每次约 76 ms 的 transmission JSONB 解码）。
+- 新增幂等回填脚本 `scripts/backfill_gext_cache.py`（存量数据 / 直接改库后同步；先检查依赖，不可用则直接退出不改库）。
+- 效果（本机实测，30 个宿主规模）：`GET /api/stats/hosts` 约 0.15 s → 0.005 s，响应逐字节不变。
+- **缓存读路径必须与坐标同源**：`gext_ebv` 仅在"宿主有自身 ra/dec"时取宿主行缓存，坐标回退暂现源时才取
+  暂现源行缓存（`/api/stats/hosts`、`/api/export/host_photometry`、`hostfit` 的银消改正统一此口径）；
+  否则宿主测光会拿到源位置的 E(B-V)，实测 72″ 偏移处 g 波段偏差可达 0.07 mag。
+
 ## 九、关键技术依赖
 
 | 组件 | 版本 | 用途 |
@@ -1603,6 +1658,18 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 ---
 
 ## 十一、版本历史
+
+### v2.21（2026-09-21）— 消光派生量缓存 / 宿主统计提速
+
+- 新增三个**派生缓存列**：`filters.gext_coeff`（k_λ = Rv·P92(λ)）、`transients.gext_ebv`、
+  `host_galaxies.gext_ebv`（见 §四、§8.29）；读路径对 NULL 一律回退现算，不跑回填也正确。
+- `extinction.filter_meta()` 进程内滤波器元数据缓存（60 s TTL + 写入口失效）；
+  `/api/stats/hosts` 的宿主循环改为一次性预取 `(id, ra, dec, gext_ebv)`。
+- 新增幂等回填脚本 `scripts/backfill_gext_cache.py`；`--dump` 不导出这三列，全量重建后需回填（仅影响速度）。
+- 收口修复：E(B-V) 缓存与测光改正坐标必须**同源**（宿主有自身坐标时不得回退到暂现源缓存，`hostfit` 同）；
+  ETL 导入宿主、`POST /api/transients` 新建源时补填 `gext_ebv`；回填脚本先检查 dustmaps 依赖再写库。
+- 效果（本机实测，30 个宿主）：`GET /api/stats/hosts` 约 0.15 s → 0.005 s，响应逐字节不变；
+  全量 `extinction.run()`（257391 行）改正结果与旧实现逐行等价（仅 2 ULP 级浮点末位差异）。
 
 ### v2.20（2026-09-18）— 拟合引擎升级（多起点+emcee）/ 银消护栏 / 列表默认 T0 倒序 / 多项 UI 优化
 
