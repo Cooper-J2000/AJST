@@ -28,6 +28,13 @@ def main():
     sess = app.get_session()
     t0 = time.time()
 
+    # 依赖不可用时直接放弃：dust_coeff 会因算不出系数而返回 None，
+    # 继续跑会把已有的 filters.gext_coeff 清成 NULL（写坏缓存）
+    if not extinction._load():
+        print('!! dustmaps 依赖不可用:', extinction._import_error)
+        print('   跳过回填，未修改任何缓存列')
+        return
+
     # 1) filters → 消光系数 k
     n = 0
     for f in sess.query(FilterDef).all():
@@ -47,10 +54,6 @@ def main():
                 {model.gext_ebv: None}, synchronize_session=False)
     sess.commit()
     print('coordless NULLs      : %d rows' % k)
-
-    if not extinction._load():
-        print('!! dustmaps 依赖不可用:', extinction._import_error)
-        return
 
     # 3) E(B-V) 缓存
     for label, model in (('transients.gext_ebv  ', Transient),

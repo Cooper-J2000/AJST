@@ -121,8 +121,12 @@ def host_stats():
             return (t.ra, t.dec) if t is not None else (None, None)
 
         def _ebv(h):
-            """E(B-V) 缓存：宿主行优先，回退暂现源行；都无则 None（由函数查尘图）。"""
-            if h.gext_ebv is not None:
+            """E(B-V) 缓存：必须与 _coords(h) 返回的坐标同源，避免跨坐标系取值。
+
+            宿主 ra/dec 齐全 → 宿主行缓存（NULL 时由 correct_host_phot 按宿主
+            坐标现查尘图）；坐标回退暂现源 → 才用暂现源行缓存。
+            """
+            if h.ra is not None and h.dec is not None:
                 return h.gext_ebv
             t = t_rows.get(h.transient_id)
             return None if t is None else t.gext_ebv

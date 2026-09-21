@@ -226,7 +226,7 @@ def import_one_transient(sess, tid):
         hg = data['host_galaxy']
         sess.query(HostGalaxy).filter(HostGalaxy.transient_id == tid).delete()
         if hg:
-            sess.add(HostGalaxy(
+            host = HostGalaxy(
                 transient_id=tid,
                 ra=parse_float(hg.get('ra')), dec=parse_float(hg.get('dec')),
                 redshift=parse_float(hg.get('redshift')),
@@ -235,7 +235,9 @@ def import_one_transient(sess, tid):
                 photometry=hg.get('photometry') or [],
                 derived=hg.get('derived') or {},
                 comment=hg.get('comment'), source=hg.get('source'),
-            ))
+            )
+            sess.add(host)
+            extinction.refresh_ebv(host)   # 坐标建立 → 计算 E(B-V) 缓存
         sess.flush()
     return True
 

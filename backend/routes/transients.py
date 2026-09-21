@@ -222,6 +222,7 @@ def create_transient():
         t = Transient(id=body['id'])
         _apply_transient_fields(t, body)
         sess.add(t)
+        extinction.refresh_ebv(t)      # 坐标建立 → 计算 E(B-V) 缓存（无坐标则置 None）
         sess.commit()
         return jsonify(t.to_dict()), 201
     except Exception as e:

@@ -114,8 +114,15 @@ def _apply_gext_correction(job_id, config, log):
             else (t.ra if t is not None else None)
         dec = host.dec if (host is not None and host.dec is not None) \
             else (t.dec if t is not None else None)
-        ebv_c = host.gext_ebv if (host is not None and host.gext_ebv is not None) \
-            else (t.gext_ebv if t is not None else None)
+        # E(B-V) 缓存必须与最终使用的坐标同源：宿主坐标完整 → 宿主行缓存
+        # （NULL 时由 correct_host_phot 按宿主坐标现查尘图）；坐标完全回退到
+        # 暂现源 → 用暂现源行缓存；坐标不完整（只给了一边）→ 现查，不混用缓存
+        if host is not None and host.ra is not None and host.dec is not None:
+            ebv_c = host.gext_ebv
+        elif t is not None and (ra, dec) == (t.ra, t.dec):
+            ebv_c = t.gext_ebv
+        else:
+            ebv_c = None
         res = correct_host_phot(sess, ra, dec, phot, ebv=ebv_c)
     finally:
         sess.close()
