@@ -84,7 +84,9 @@ def host_stats():
     """
     sess = get_session()
     try:
-        hosts = sess.query(HostGalaxy).all()
+        # 显式 ORDER BY：宿主是无序查询时返回的行序会随堆内物理序变化（一次写入就变），
+        # 导致同一份数据两次请求的 abs_mag_points / m_star_points 数组顺序不同（前端导出 CSV 会抖）
+        hosts = sess.query(HostGalaxy).order_by(HostGalaxy.transient_id).all()
         n_hosts = len(hosts)
         n_transients = sess.query(func.count(Transient.id)).scalar()
         n_spec = sum(1 for h in hosts if h.redshift_type == 'spec')
