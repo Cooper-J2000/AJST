@@ -83,6 +83,22 @@ export function sciTick(v) {
   return String(parseFloat(v.toPrecision(6)));
 }
 
+// 科学计数法的书面形式（上标明刻标注用）：1e6 → "10⁶"，2.2e7 → "2.2×10⁷"，
+// 5e-3 → "5×10⁻³"。尾数为 ±1 时省略 "1×"（标准写法）；上标字符走字体逐字回退。
+const _SUP = { '-': '⁻', '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+               '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
+export function sciTickSup(v) {
+  if (v == null || !isFinite(v) || v === 0) return '0';
+  const neg = v < 0 ? '-' : '';
+  let e = Math.floor(Math.log10(Math.abs(v)));
+  let m = Math.abs(v) / Math.pow(10, e);
+  if (!Number.isInteger(m)) m = parseFloat(m.toPrecision(3));
+  if (m >= 10) { m /= 10; e += 1; }          // 尾数四舍五入到 10 时升阶
+  if (e === 0) return `${neg}${m}`;
+  const sup = String(e).split('').map(c => _SUP[c] || c).join('');
+  return `${neg}${m === 1 ? '' : m + '×'}10${sup}`;
+}
+
 // 2-3 位有效数字（拟合参数标注/宿主摘要用）
 export function sig3(v) {
   if (v == null || !isFinite(v)) return '?';
