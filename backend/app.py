@@ -54,6 +54,10 @@ def init_db():
             "ALTER TABLE transients ADD COLUMN IF NOT EXISTS gext_ebv DOUBLE PRECISION"))
         conn.execute(text(
             "ALTER TABLE host_galaxies ADD COLUMN IF NOT EXISTS gext_ebv DOUBLE PRECISION"))
+        conn.execute(text(
+            "ALTER TABLE transients ADD COLUMN IF NOT EXISTS gext_distmod DOUBLE PRECISION"))
+        conn.execute(text(
+            "ALTER TABLE host_galaxies ADD COLUMN IF NOT EXISTS gext_distmod DOUBLE PRECISION"))
     # 种子管理员：无任何 admin 账户时创建 admin，密码取 AUTH_PASSWORD
     # （环境变量 AJST_CATALOG_PASSWORD；未设置时为每次启动随机生成，
     #  请务必通过环境变量显式设置一个强密码，见 docs/TECHNICAL.md §7.1）

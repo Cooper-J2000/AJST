@@ -6,7 +6,6 @@
 时间约定：全项目所有时间字段一律为 naive UTC，不做任何时区转换。
 """
 from datetime import datetime, timezone
-from functools import lru_cache
 from sqlalchemy import (
     Column, String, Float, Boolean, Text, BigInteger,
     ForeignKey, DateTime, UniqueConstraint, Index
@@ -20,20 +19,50 @@ def utcnow():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-@lru_cache(maxsize=8192)
-def _distmod_cached(z_bucket):
+# 距离模数进程内缓存：z 按 1e-6 分桶（z≳0.01 时 dz=1e-6 引起的 μ 误差远小于
+# 返回值本身的 0.001 mag 舍入；极低 z 时桶边界误差可达数 mmag，科学上可忽略）。
+# 支持批量向量化填充：逐行标量调用 astropy 开销可观（341 个 z ≈ 0.14 s）。
+_distmod_cache = {}
+
+
+def _distmod_fill(z_buckets):
+    """对一批 z 分桶一次性向量化计算 μ，补充进进程内缓存。"""
+    import numpy as np
     from astropy.cosmology import Planck18
-    return round(float(Planck18.distmod(z_bucket).value), 3)
+    todo = [k for k in z_buckets if k not in _distmod_cache]
+    if not todo:
+        return
+    vals = Planck18.distmod(np.asarray(todo, dtype=float)).value
+    for k, v in zip(todo, vals):
+        _distmod_cache[k] = None if not np.isfinite(v) else round(float(v), 3)
+
+
+def _distmod_cached(z_bucket):
+    if z_bucket not in _distmod_cache:
+        _distmod_fill([z_bucket])
+    return _distmod_cache[z_bucket]
 
 
 def distance_modulus(redshift):
-    """由红移计算距离模数 μ (mag)，Planck18 宇宙学；无红移时返回 None。
-    astropy distmod 有可观的每行开销，z 按 1e-6 分桶做进程内缓存
-    （z≳0.01 时 dz=1e-6 引起的 μ 误差远小于返回值本身的 0.001 mag 舍入；
-    极低 z 时桶边界误差可达数 mmag，科学上可忽略）。"""
+    """由红移计算距离模数 μ (mag)，Planck18 宇宙学；无红移时返回 None。"""
     if redshift is None or redshift <= 0:
         return None
     return _distmod_cached(round(float(redshift), 6))
+
+
+def prewarm_distance_modulus(redshifts):
+    """批量预热 μ：未命中的 z 一次向量化交给 astropy（列表/统计接口用）。
+
+    冷启时逐行标量调用（341 个 z ≈ 0.14 s）由此降为单次向量化调用的开销。
+    """
+    _distmod_fill({round(float(z), 6) for z in redshifts
+                   if z is not None and z > 0})
+
+
+def refresh_distmod(row):
+    """红移建立/变更后刷新 row.gext_distmod（无红移置 None）。只赋值，不 commit。"""
+    row.gext_distmod = distance_modulus(getattr(row, 'redshift', None))
+    return row.gext_distmod
 
 
 class Base(DeclarativeBase):
@@ -83,6 +112,7 @@ class Transient(Base):
     pos_error_unit  = Column(String(16), default='arcsec')
     pos_ref         = Column(Text, nullable=True)
     gext_ebv        = Column(Float, nullable=True)   # 本坐标处 CSFD 尘图 E(B-V) 缓存（坐标变更时刷新）
+    gext_distmod    = Column(Float, nullable=True)  # 红移对应距离模数 μ 缓存（红移变更时刷新）
     comment         = Column(Text, nullable=True)
     sub_tag         = Column(JSONB, default=list)          # ["L", "S", "X"]
     tags            = Column(JSONB, default=list)          # ["fxt"]
@@ -136,7 +166,8 @@ class Transient(Base):
             'aliases': self.aliases or [],
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-            'distmod': distance_modulus(self.redshift),
+            'distmod': (self.gext_distmod if self.gext_distmod is not None
+                        else distance_modulus(self.redshift)),
         }
         if not brief:
             d['comment'] = self.comment
@@ -409,6 +440,7 @@ class HostGalaxy(Base):
     ra            = Column(Float, nullable=True)         # 宿主坐标（度）
     dec           = Column(Float, nullable=True)
     gext_ebv      = Column(Float, nullable=True)         # 本坐标处 CSFD 尘图 E(B-V) 缓存（坐标变更时刷新）
+    gext_distmod  = Column(Float, nullable=True)         # 红移对应距离模数 μ 缓存（红移变更时刷新）
     redshift      = Column(Float, nullable=True)         # 宿主红移
     redshift_err  = Column(Float, nullable=True)         # 光谱红移=0，测光红移有误差
     redshift_type = Column(String(16), nullable=True)    # 'spec' / 'phot'

@@ -8,7 +8,7 @@ import math
 from flask import Blueprint, jsonify, request, abort
 
 from app import get_session, require_auth, require_admin, current_username
-from models import Transient, HostGalaxy
+from models import Transient, HostGalaxy, refresh_distmod
 from coords import parse_ra, parse_dec
 import extinction
 
@@ -95,6 +95,8 @@ def upsert_host(transient_id):
             abort(400, description=str(e))
         if 'ra' in body or 'dec' in body:
             extinction.refresh_ebv(host)   # 坐标建立/变更 → 刷新 E(B-V) 缓存
+        if 'redshift' in body:
+            refresh_distmod(host)          # 红移建立/变更 → 刷新距离模数缓存
         if 'redshift_type' in body:
             host.redshift_type = body['redshift_type']
         if 'photometry' in body:
