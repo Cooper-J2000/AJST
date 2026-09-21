@@ -34,22 +34,33 @@ _C_AA_PER_S = 2.99792458e18      # 光速 [Å/s]
 _MJY_PER_CGS_FNU = 1e26          # 1 erg/s/cm²/Hz = 1e26 mJy
 
 # pcigale 二进制解析优先级：AJST_PCIGALE_BIN 环境变量 > PATH 中的 pcigale
-# > 本机 burst_advocate 环境硬编码回退（换机器/换 conda env 时必须设环境变量）
+# > 本机常见环境回退（换机器/换 conda env 时必须设环境变量；按存在性依次回退）
 _PCIGALE_BIN_ENV = os.environ.get('AJST_PCIGALE_BIN')
-_PCIGALE_BIN_FALLBACK = '/home/ajst/miniconda3/envs/burst_advocate/bin/pcigale'
+_PCIGALE_BIN_FALLBACKS = (
+    '/home/ajst/ajst/bin/pcigale',
+    '/home/ajst/miniconda3/envs/burst_advocate/bin/pcigale',
+)
 
 
 def _find_pcigale():
-    return _PCIGALE_BIN_ENV or shutil.which('pcigale') or _PCIGALE_BIN_FALLBACK
+    if _PCIGALE_BIN_ENV:
+        return _PCIGALE_BIN_ENV
+    found = shutil.which('pcigale')
+    if found:
+        return found
+    for cand in _PCIGALE_BIN_FALLBACKS:
+        if os.path.exists(cand):
+            return cand
+    return _PCIGALE_BIN_FALLBACKS[0]
 
 _TIMEOUT_S = 600  # pcigale run 超时 10 分钟
 
-# pcigale.ini.spec 超集模板：pcigale 2025.0 要求 ini 必须配套 spec 文件，
+# pcigale.ini.spec 超集模板：pcigale 2025.x 要求 ini 必须配套 spec 文件，
 # 否则拒绝运行。本模板覆盖基础链 + nebular + dl2014 全部模块段（由同版本
-# pcigale 的 `pcigale init` + `pcigale genconf` 生成后随代码分发）；
-# pcigale 校验要求 ini 必须包含 spec 声明的所有段，缺整段会报
-# "parameter None: False"，故每个任务写出 spec 前需按 use_nebular /
-# use_dl2014 开关剔除未启用模块的段（build_spec）。
+# pcigale 的 `pcigale init` + `pcigale genconf` 生成后随代码分发；本机
+# 2025.1 已实测通过）；pcigale 校验要求 ini 必须包含 spec 声明的所有段，
+# 缺整段会报 "parameter None: False"，故每个任务写出 spec 前需按
+# use_nebular / use_dl2014 开关剔除未启用模块的段（build_spec）。
 _SPEC_TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               'pcigale.ini.spec')
 
@@ -78,6 +89,7 @@ _OPTIONAL_MODULES = [
     f_dust = 0.0
     lines_width = 300.0
     emission = True
+    line_list =
 """),
     ('use_dl2014', 'dl2014', """\
   [[dl2014]]
