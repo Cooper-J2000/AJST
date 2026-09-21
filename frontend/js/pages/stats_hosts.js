@@ -3,8 +3,9 @@
 //   m_star: [...], sfr: [...], coverage: 0.xx,
 //   m_star_points: [{tid, z, m_star}],  sfr_points: [{tid, z, sfr}],   ← z 可为 null
 //   abs_mag_points: [{tid, band, z, mag(AB), abs_mag, mag_err, err_assumed, upperlimit,
-//     gext_applied(是否已应用银消改正), gext_Alambda,
-//     mag_raw(库中原始星等), mag_corr(银消改正后/星等系统换算前), mag_sys, gext_corr}]}
+//     gext_applied(本页实时改正), gext_Alambda,
+//     mag_raw(库中原始星等), mag_corr(银消改正后/星等系统换算前), mag_sys,
+//     gext_corr(录入时已改正)}]；gext_applied 与 gext_corr 任一为真时，图上统一标注「（已银消改正）」}
 // 字段缺失时相应卡片/图显示「暂无数据」。
 import { app, showLoading, showError, statsTabs } from './layout.js';
 import { getHostStats, getOverview, getFilters, showToast } from '../api.js';
@@ -277,7 +278,9 @@ function buildAbsMagChart() {
               const mTxt = mJyMode
                 ? `F(10pc)=${sciFmt(item.parsed.y)} mJy`
                 : `M=${p.abs_mag}${errTxt} AB`;
-              const gextTxt = p.gext_applied ? '（已银消改正）' : '';
+              // 统一标注：录入时已改正（行内 gext_corr=true）与本页实时改正（gext_applied）
+              // 都显示同一个标注，不区分来源
+              const gextTxt = (p.gext_applied || p.gext_corr) ? '（已银消改正）' : '';
               return `${ds.label} · ${p.tid}: ${mTxt}${gextTxt}, m=${p.mag}, z=${p.z}`;
             },
           },

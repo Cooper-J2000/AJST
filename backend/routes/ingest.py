@@ -297,7 +297,7 @@ def photometry():
                 'time_unit': 's',
                 'band': band,
                 'flux_density': value,
-                'flux_density_unit': 'mag',
+                'flux_density_unit': 'magnitude',
                 'upperlimit': upperlimit,
             }
             if not upperlimit and mag_err is not None:
