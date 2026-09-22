@@ -51,6 +51,9 @@ def init_db():
         conn.execute(text(
             "ALTER TABLE spectra ADD COLUMN IF NOT EXISTS spec_type VARCHAR(16)"
             " NOT NULL DEFAULT 'transient'"))
+        # 2026-09-23：spectra 新增波长类型列（vacuum/air/NULL=留空按空气波长处理）
+        conn.execute(text(
+            "ALTER TABLE spectra ADD COLUMN IF NOT EXISTS wavelength_type VARCHAR(8)"))
         conn.execute(text(
             "ALTER TABLE filters ADD COLUMN IF NOT EXISTS gext_coeff DOUBLE PRECISION"))
         conn.execute(text(

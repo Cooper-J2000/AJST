@@ -231,10 +231,14 @@ def import_one_transient(sess, tid):
             url = (item.get('url') or '').strip()
             if not name or not url:
                 continue
+            src = item.get('source')
+            # 来源归一：literature-mining / arxiv 一律写为 bot（统一显示口径）
+            if str(src or '').strip().lower() in ('literature-mining', 'arxiv'):
+                src = 'bot'
             sess.add(Article(
                 transient_id=tid, name=name, url=url,
                 title=item.get('title'), bibtex=item.get('bibtex'),
-                source=item.get('source'),
+                source=src,
             ))
         sess.flush()
 
@@ -371,6 +375,10 @@ def import_spectra(sess):
             spec_type=(sp.get('spec_type') or 'transient')
                       if sp.get('spec_type') in ('transient', 'host', 'mix')
                       else 'transient',
+            # 波长类型：vacuum/air，缺失/非法 → NULL（留空按空气波长处理）
+            wavelength_type=(sp.get('wavelength_type')
+                             if sp.get('wavelength_type') in ('vacuum', 'air')
+                             else None),
             parent_id=parent_id,
             extra_data=extra,
         )

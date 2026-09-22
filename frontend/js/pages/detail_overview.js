@@ -7,7 +7,7 @@ import {
   createArticle, updateArticle, deleteArticle, getHost, exportLightcurves,
 } from '../api.js';
 import { parseRA, parseDec, attachCoordHint } from '../coords.js';
-import { attachTagInput, ensureTagsRegistered } from '../taginput.js';
+import { attachChipInput, ensureTagsRegistered } from '../taginput.js';
 import { esc, escAttr, safeUrl, sig3 } from '../utils.js';
 import { render, currentTid } from './detail.js';
 
@@ -15,12 +15,16 @@ import { render, currentTid } from './detail.js';
 let articlesData = [];       // 当前源的研究文章条目列表
 let _transient = null;       // 当前源完整记录（编辑面板回填/银消改正坐标检查用）
 let _editActive = false;     // 编辑面板开关状态
+let _editTagsChip = null;    // 编辑面板主标签 chip 输入（taginput.js attachChipInput 句柄）
+let _editSubTagsChip = null; // 编辑面板副标签 chip 输入
 
 // render() 获取数据后调用：登记当前源与文章列表，重置编辑面板状态
 export function initOverview(transient, articles) {
   _transient = transient;
   articlesData = articles || [];
   _editActive = false;
+  _editTagsChip = null;
+  _editSubTagsChip = null;
 }
 
 // 坐标输入即时解析提示（度 ⇄ 时分秒）；模板插入后每轮 render 调用
@@ -29,10 +33,10 @@ export function attachEditCoordHints() {
   attachCoordHint(document.getElementById('editDec'), false);
 }
 
-// 主/副标签输入 datalist 自动补全；模板插入后每轮 render 调用
+// 主/副标签 chip 泡泡输入（含 datalist 自动补全）；模板插入后每轮 render 调用
 export function attachEditTagInputs() {
-  attachTagInput(document.getElementById('editTags'), 'main');
-  attachTagInput(document.getElementById('editSubTags'), 'sub');
+  _editTagsChip = attachChipInput(document.getElementById('editTags'), 'main', _transient?.tags || []);
+  _editSubTagsChip = attachChipInput(document.getElementById('editSubTags'), 'sub', _transient?.sub_tag || []);
 }
 
 // ─── 基本信息：相关研究文章条目（简称 + 标题 + 链接 + BibTeX，可多条） ───
@@ -258,12 +262,10 @@ window.saveDetailEdit = async () => {
     if (!isFinite(t0Offset)) { showToast('T0 偏移量需为数字（秒，可正可负）', 'danger'); return; }
   }
 
-  // 主/副标签保存前登记（新标签需补文字说明；返回 null = 用户中止，不保存）
-  const tags = await ensureTagsRegistered(
-    (val('editTags') || '').split(',').map(s => s.trim()).filter(Boolean), 'main');
+  // 主/副标签保存前登记（chip 输入收集名字；新标签需补文字说明；返回 null = 用户中止，不保存）
+  const tags = await ensureTagsRegistered(_editTagsChip ? _editTagsChip.getValues() : [], 'main');
   if (tags === null) return;
-  const subTags = await ensureTagsRegistered(
-    (val('editSubTags') || '').split(',').map(s => s.trim()).filter(Boolean), 'sub');
+  const subTags = await ensureTagsRegistered(_editSubTagsChip ? _editSubTagsChip.getValues() : [], 'sub');
   if (subTags === null) return;
 
   const body = {

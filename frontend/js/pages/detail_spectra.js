@@ -33,6 +33,9 @@ const _specCache = new Map();      // id → {meta, objName, sp, pts, errs}
 const _specOffsets = {};           // 相对流量模式下每条光谱的纵向偏移
 const _specListMeta = new Map();   // id → {flux_type, mjd}
 const SPEC_COLORS = ['#79b8ff', '#3fb950', '#d29922', '#f85149', '#bc8cff', '#56d4dd', '#ff7b72', '#e3b341'];
+// 波长类型显示名（null=留空，按空气波长处理但不显示为空气）
+const WAVE_TYPE_LABELS = { vacuum: '真空', air: '空气' };
+const waveTypeLabel = (wt) => WAVE_TYPE_LABELS[wt] || '-';
 
 // 光谱误差条插件（绝对流量模式 + 开关开启时）
 let _specShowErr = true;
@@ -134,7 +137,7 @@ export async function initSpectraTab(tid, redshift) {
       return;
     }
     if (!list.length) {
-      tbody.innerHTML = '<tr><td colspan="5" class="text-center text-secondary py-3">暂无光谱数据</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-secondary py-3">暂无光谱数据</td></tr>';
       document.getElementById('specTitle').textContent = '光谱';
       document.getElementById('specMeta').textContent = '';
       return;
@@ -169,6 +172,12 @@ export async function initSpectraTab(tid, redshift) {
               ${['transient','host','mix'].map(v => `<option value="${v}" ${((s.spec_type||'transient')===v)?'selected':''}>${({transient:'Transient',host:'Host',mix:'Mix'})[v]}</option>`).join('')}
             </select>`
           : (({transient:'Transient',host:'Host',mix:'Mix'})[s.spec_type] || 'Transient')}</td>
+        <td onclick="event.stopPropagation()">${admin
+          ? `<select class="form-select form-select-sm spec-wave-type-sel" style="width:auto;font-size:0.8rem;padding:1px 4px" onchange="specWaveTypeChange(${s.id}, this.value)">
+              <option value="" ${!s.wavelength_type ? 'selected' : ''}>留空</option>
+              ${['vacuum','air'].map(v => `<option value="${v}" ${s.wavelength_type===v?'selected':''}>${WAVE_TYPE_LABELS[v]}</option>`).join('')}
+            </select>`
+          : waveTypeLabel(s.wavelength_type)}</td>
         <td class="small">${esc((s.extra_data && s.extra_data.observer)) || '-'}</td>
         <td class="text-nowrap" onclick="event.stopPropagation()">
           ${remarks ? `<button class="btn btn-sm btn-outline-info py-0 px-1" title="${escAttr(remarks)}" onclick="toggleSpecRemarks(${s.id})"><i class="bi bi-info-circle"></i></button>` : ''}
@@ -182,13 +191,13 @@ export async function initSpectraTab(tid, redshift) {
         </td>
       </tr>${remarks ? `
       <tr id="specRem_${s.id}" style="display:none">
-        <td colspan="5" class="small text-secondary" style="white-space:normal"><i class="bi bi-chat-left-text"></i> ${escAttr(remarks)}</td>
+        <td colspan="6" class="small text-secondary" style="white-space:normal"><i class="bi bi-chat-left-text"></i> ${escAttr(remarks)}</td>
       </tr>` : ''}`;
     }).join('');
     const firstParent = list.find(s => !s.parent_id);
     if (firstParent) toggleSpectrum(firstParent.id);
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">加载失败: ${esc(err.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-danger py-3">加载失败: ${esc(err.message)}</td></tr>`;
   }
 }
 
@@ -239,6 +248,18 @@ window.specTypeChange = async (id, val) => {
   try {
     await updateSpectrum(id, { spec_type: val });
     showToast(`光谱类型已改为 ${({transient:'Transient',host:'Host',mix:'Mix'})[val] || val}`, 'success');
+  } catch (err) {
+    showToast(`修改失败: ${err.message}`, 'danger');
+    _spectraLoadedFor = null;   // 重载列表以还原下拉显示
+    initSpectraTab(currentTid);
+  }
+};
+
+window.specWaveTypeChange = async (id, val) => {
+  if (!isAdmin()) { showToast('仅管理员可修改波长类型', 'warning'); return; }
+  try {
+    await updateSpectrum(id, { wavelength_type: val || null });
+    showToast(`波长类型已改为 ${val ? WAVE_TYPE_LABELS[val] : '留空'}`, 'success');
   } catch (err) {
     showToast(`修改失败: ${err.message}`, 'danger');
     _spectraLoadedFor = null;   // 重载列表以还原下拉显示
@@ -470,6 +491,7 @@ window.doSpecUpload = async () => {
     return;
   }
   const content = await file.text();
+  const waveType = document.getElementById('specUploadWaveType').value;
   const btn = document.getElementById('specUpSubmit');
   btn.disabled = true;
   try {
@@ -483,6 +505,7 @@ window.doSpecUpload = async () => {
       reducer: document.getElementById('specUpReducer').value.trim() || null,
       flux_type: document.getElementById('specUpFluxType').value,
       spec_type: document.getElementById('specUpSpecType').value,
+      ...(waveType ? { wavelength_type: waveType } : {}),
     });
     bootstrap.Modal.getInstance(document.getElementById('specUploadModal')).hide();
     showToast(`光谱已上传: ${resp.filename}（${resp.n_points} 点）`, 'success');

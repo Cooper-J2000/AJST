@@ -17,6 +17,7 @@ from flask import Blueprint, jsonify, request, Response
 from app import get_session, require_auth, require_admin
 from models import Spectrum, Transient
 import extinction
+import wavconvert
 
 spectra_bp = Blueprint('spectra', __name__)
 
@@ -61,7 +62,19 @@ def get_spectrum(spec_id):
         with open(path) as f:
             data = json.load(f)
         _coerce_spec_data(data)
-        return jsonify({'meta': r.to_dict(), 'data': data})
+        # 返回前把波长列统一转真空：wavelength_type 为 'air' 或 NULL（留空）
+        # 时按空气波长处理做转换（仅 ≥2000 Å、单位 Å）；'vacuum' 不转。
+        # 库存文件与下载接口保持原始波长不动，转换只在读/处理路径。
+        converted = False
+        for obj in data.values():
+            sp = obj.get('spectra') if isinstance(obj, dict) else None
+            if sp and sp.get('data'):
+                sp['data'], c = wavconvert.to_vacuum_points(
+                    sp['data'], r.wavelength_type, sp.get('u_wavelengths'))
+                converted = converted or c
+        meta = r.to_dict()
+        meta['wavelength_converted'] = converted
+        return jsonify({'meta': meta, 'data': data})
     finally:
         sess.close()
 
@@ -114,6 +127,8 @@ def download_spectrum(spec_id):
             ('u_fluxes', sp.get('u_fluxes')),
             ('u_wavelengths', sp.get('u_wavelengths') or 'Angstrom'),
             ('spec_type', r.spec_type),
+            # 下载保持原始存储波长不动，仅在此标注波长类型供下游自行判断
+            ('wavelength_type', r.wavelength_type or 'null（按空气波长处理）'),
         ]
         if sp.get('gext_corr'):
             meta.append(('gext_corr',
@@ -285,6 +300,12 @@ def upload_spectrum():
         spec_type = (body.get('spec_type') or 'transient').strip().lower()
         if spec_type not in ('transient', 'host', 'mix'):
             return {'error': "spec_type 只能为 'transient'、'host' 或 'mix'"}, 400
+        # 波长类型：vacuum（真空）/ air（空气）/ null（留空，下游按空气处理）
+        wavelength_type = body.get('wavelength_type') or sp.get('wavelength_type')
+        if wavelength_type is not None:
+            wavelength_type = str(wavelength_type).strip().lower()
+            if wavelength_type not in ('vacuum', 'air'):
+                return {'error': "wavelength_type 只能为 'vacuum'、'air' 或 null"}, 400
         u_fluxes = sp.get('u_fluxes') or (
             'erg/s/cm^2/Angstrom' if flux_type == 'absolute' else 'normalized')
         obs_date = None
@@ -312,6 +333,8 @@ def upload_spectrum():
             'u_time': 'MJD',
             'data': sp['data'],
         }
+        if wavelength_type is not None:
+            sp_out['wavelength_type'] = wavelength_type   # null 时不写该键
         with open(store_abs, 'w') as f:
             json.dump({obj: {'spectra': sp_out}}, f)
 
@@ -320,6 +343,7 @@ def upload_spectrum():
             wavelength_min=min(wavs), wavelength_max=max(wavs),
             instrument=instrument, observation_date=obs_date,
             file_path=store_rel, file_type='json', spec_type=spec_type,
+            wavelength_type=wavelength_type,
             extra_data={'observer': observer, 'reducer': reducer,
                         'u_fluxes': sp_out['u_fluxes'], 'u_wavelengths': sp_out['u_wavelengths'],
                         'mjd': sp_out['time'], 'sn_name': obj, 'flux_type': flux_type,
@@ -347,12 +371,26 @@ def upload_spectrum():
 @spectra_bp.route('/<int:spec_id>', methods=['PUT'])
 @require_admin
 def update_spectrum(spec_id):
-    """修改光谱元数据（目前仅 spec_type）：DB 记录与库存文件同步写；
-    原始谱的改动会传播到其全部改正子谱"""
-    body = request.get_json(force=True)
-    spec_type = (body.get('spec_type') or '').strip().lower()
-    if spec_type not in ('transient', 'host', 'mix'):
-        return {'error': "spec_type 只能为 'transient'、'host' 或 'mix'"}, 400
+    """修改光谱元数据（spec_type / wavelength_type，至少提供其一）：
+    DB 记录与库存文件同步写；原始谱的改动会传播到其全部改正子谱。
+    wavelength_type 合法值 'vacuum' / 'air' / null（显式 null 或 '' = 清除，
+    文件 JSON 中对应键一并移除）"""
+    body = request.get_json(force=True) or {}
+    if 'spec_type' not in body and 'wavelength_type' not in body:
+        return {'error': '至少提供 spec_type 或 wavelength_type 之一'}, 400
+    spec_type = None
+    if 'spec_type' in body:
+        spec_type = (body.get('spec_type') or '').strip().lower()
+        if spec_type not in ('transient', 'host', 'mix'):
+            return {'error': "spec_type 只能为 'transient'、'host' 或 'mix'"}, 400
+    has_wtype = 'wavelength_type' in body
+    wavelength_type = None
+    if has_wtype:
+        raw = body.get('wavelength_type')
+        if raw not in (None, ''):
+            wavelength_type = str(raw).strip().lower()
+            if wavelength_type not in ('vacuum', 'air'):
+                return {'error': "wavelength_type 只能为 'vacuum'、'air' 或 null"}, 400
     sess = get_session()
     try:
         r = sess.query(Spectrum).filter(Spectrum.id == spec_id).first()
@@ -366,7 +404,10 @@ def update_spectrum(spec_id):
             path = os.path.normpath(os.path.join(PROJECT_ROOT, row.file_path))
             if not path.startswith(SPECTRA_DIR_PREFIX):
                 return {'error': 'invalid path'}, 400
-            row.spec_type = spec_type
+            if spec_type is not None:
+                row.spec_type = spec_type
+            if has_wtype:
+                row.wavelength_type = wavelength_type
             paths.append(path)
         sess.commit()
         # 回写库存文件 JSON，保证全量重建（import_spectra 以文件为准）不丢
@@ -377,7 +418,13 @@ def update_spectrum(spec_id):
                 for obj in data.values():
                     sp = obj.get('spectra') if isinstance(obj, dict) else None
                     if sp is not None:
-                        sp['spec_type'] = spec_type
+                        if spec_type is not None:
+                            sp['spec_type'] = spec_type
+                        if has_wtype:
+                            if wavelength_type is not None:
+                                sp['wavelength_type'] = wavelength_type
+                            else:
+                                sp.pop('wavelength_type', None)
                 with open(path, 'w') as f:
                     json.dump(data, f)
         return jsonify(r.to_dict())

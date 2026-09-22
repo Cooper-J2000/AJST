@@ -399,6 +399,8 @@ class Spectrum(Base):
     file_type      = Column(String(16), default='fits')  # fits / txt / csv / ecsv
     spec_type      = Column(String(16), nullable=False, default='transient',
                             server_default='transient')  # transient / host / mix
+    # vacuum（真空波长）/ air（空气波长）/ NULL（留空，下游按空气波长处理）
+    wavelength_type = Column(String(8), nullable=True)
     # 二级产物（如银河系消光改正谱）自引用父原始谱；父行删除时级联删除
     parent_id      = Column(BigInteger, ForeignKey('spectra.id', ondelete='CASCADE'),
                             nullable=True, index=True)
@@ -420,6 +422,7 @@ class Spectrum(Base):
             'file_path': self.file_path,
             'file_type': self.file_type,
             'spec_type': self.spec_type,
+            'wavelength_type': self.wavelength_type,
             'parent_id': self.parent_id,
             'gext_corr': bool(ex.get('gext_corr')),   # 是否银河系消光改正谱
             'gext_ebv': ex.get('gext_ebv'),

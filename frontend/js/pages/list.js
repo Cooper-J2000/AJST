@@ -9,6 +9,7 @@ let currentState = { page: 1, sort: 't0', order: 'desc' };
 let _listReqId = 0;     // 异步请求令牌（竞态防护）
 let _applyTimer = null; // 筛选输入防抖
 let _pgData = { page: 1, totalPages: 1 }; // 分页条状态（拖动/滚轮/输入跳转共用）
+let _pgOffset = 0;    // 分页条基准平移（当前页居中位），拖动时在此基础上叠加 dx
 let _pgSuppressClick = false; // 拖动翻页后抑制紧随的 click，避免误触页码
 let _wheelAcc = 0;      // 滚轮翻页：滚动量累积（节流用）
 let _wheelFlipAt = 0;   // 滚轮翻页：上次翻页时刻（节流用）
@@ -35,42 +36,11 @@ export async function render() {
     <!-- Filter panel -->
     <div id="filterPanel" class="card mb-3" style="display:none">
       <div class="card-body">
+        <!-- 第一排：搜索 / 标签 / 副标签 / 排序 -->
         <div class="row g-2 align-items-end">
           <div class="col-md-3">
             <label class="form-label small">搜索 (ID/别名/引用)</label>
             <input type="text" class="form-control form-control-sm" id="fSearch" placeholder="EP251202a / GRB..." oninput="applyFilter()">
-          </div>
-          <div class="col-md-2">
-            <label class="form-label small">红移 ≥</label>
-            <input type="number" class="form-control form-control-sm" id="fZMin" step="0.01" oninput="applyFilter()">
-          </div>
-          <div class="col-md-2">
-            <label class="form-label small">红移 ≤</label>
-            <input type="number" class="form-control form-control-sm" id="fZMax" step="0.01" oninput="applyFilter()">
-          </div>
-          <div class="col-md-2">
-            <label class="form-label small">RA ≥</label>
-            <input type="number" class="form-control form-control-sm" id="fRAMin" step="0.1" placeholder="0" oninput="applyFilter()">
-          </div>
-          <div class="col-md-2">
-            <label class="form-label small">RA ≤</label>
-            <input type="number" class="form-control form-control-sm" id="fRAMax" step="0.1" placeholder="360" oninput="applyFilter()">
-          </div>
-          <div class="col-md-2">
-            <label class="form-label small">Dec ≥</label>
-            <input type="number" class="form-control form-control-sm" id="fDecMin" step="0.1" placeholder="-90" oninput="applyFilter()">
-          </div>
-          <div class="col-md-2">
-            <label class="form-label small">Dec ≤</label>
-            <input type="number" class="form-control form-control-sm" id="fDecMax" step="0.1" placeholder="90" oninput="applyFilter()">
-          </div>
-          <div class="col-md-2">
-            <label class="form-label small">T0 起始</label>
-            <input type="date" class="form-control form-control-sm" id="fT0From" onchange="applyFilter()">
-          </div>
-          <div class="col-md-2">
-            <label class="form-label small">T0 截止（含当天）</label>
-            <input type="date" class="form-control form-control-sm" id="fT0To" onchange="applyFilter()">
           </div>
           <div class="col-md-2">
             <label class="form-label small">标签</label>
@@ -95,22 +65,64 @@ export async function render() {
               <option value="t0|asc">T0 ↑</option>
             </select>
           </div>
+        </div>
+        <!-- 第二排：数值范围（红移/RA/Dec 窄框）+ T0 起止 -->
+        <div class="row g-2 align-items-end mt-1">
+          <div class="col-md-1">
+            <label class="form-label small">红移 ≥</label>
+            <input type="number" class="form-control form-control-sm" id="fZMin" step="0.01" oninput="applyFilter()">
+          </div>
+          <div class="col-md-1">
+            <label class="form-label small">红移 ≤</label>
+            <input type="number" class="form-control form-control-sm" id="fZMax" step="0.01" oninput="applyFilter()">
+          </div>
+          <div class="col-md-1">
+            <label class="form-label small">RA ≥</label>
+            <input type="number" class="form-control form-control-sm" id="fRAMin" step="0.1" placeholder="0" oninput="applyFilter()">
+          </div>
+          <div class="col-md-1">
+            <label class="form-label small">RA ≤</label>
+            <input type="number" class="form-control form-control-sm" id="fRAMax" step="0.1" placeholder="360" oninput="applyFilter()">
+          </div>
+          <div class="col-md-1">
+            <label class="form-label small">Dec ≥</label>
+            <input type="number" class="form-control form-control-sm" id="fDecMin" step="0.1" placeholder="-90" oninput="applyFilter()">
+          </div>
+          <div class="col-md-1">
+            <label class="form-label small">Dec ≤</label>
+            <input type="number" class="form-control form-control-sm" id="fDecMax" step="0.1" placeholder="90" oninput="applyFilter()">
+          </div>
           <div class="col-md-2">
+            <label class="form-label small">T0 起始</label>
+            <input type="date" class="form-control form-control-sm" id="fT0From" onchange="applyFilter()">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small">T0 截止（含当天）</label>
+            <input type="date" class="form-control form-control-sm" id="fT0To" onchange="applyFilter()">
+          </div>
+        </div>
+        <!-- 第三排：勾选框 + 清除筛选 -->
+        <div class="row g-2 align-items-center mt-1">
+          <div class="col-auto">
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="fHasZ" onchange="applyFilter()">
               <label class="form-check-label small">仅显示有红移</label>
             </div>
+          </div>
+          <div class="col-auto">
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="fHasHost" onchange="applyFilter()">
               <label class="form-check-label small">仅显示有宿主信息</label>
             </div>
+          </div>
+          <div class="col-auto">
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="fHasSpectra" onchange="applyFilter()">
               <label class="form-check-label small">仅显示有光谱数据</label>
             </div>
           </div>
-          <div class="col-md-2">
-            <button class="btn btn-sm btn-outline-secondary w-100" onclick="clearFilter()">清除筛选</button>
+          <div class="col-auto ms-auto">
+            <button class="btn btn-sm btn-outline-secondary" onclick="clearFilter()">清除筛选</button>
           </div>
         </div>
       </div>
@@ -150,7 +162,8 @@ export async function render() {
         <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" id="pgFirst" title="第一页">«</button>
         <div id="pgViewport" title="按住左右拖动或滚动滚轮翻页"
              style="max-width:360px;overflow:hidden;margin:0 6px;user-select:none;cursor:grab;touch-action:pan-y">
-          <div id="pgTrack" class="d-flex align-items-center"></div>
+          <!-- position:relative 使 track 恒为页码的 offsetParent（否则无 transform 时 offsetLeft 相对 BODY，居中计算会错乱） -->
+          <div id="pgTrack" class="d-flex align-items-center" style="position:relative"></div>
         </div>
         <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" id="pgLast" title="最后一页">»</button>
       </div>
@@ -365,21 +378,51 @@ function renderPagination(data) {
   renderPager();
 }
 
-// 页码窗口（当前页 ±3）+ 首尾快跳按钮状态；翻页/取消输入后据此重绘
+// 页码窗口（当前页 ±10：宽窗预渲染，保证拖动时前方页码已就位）+ 首尾快跳按钮状态；翻页/取消输入后据此重绘
 function renderPager() {
   const track = document.getElementById('pgTrack');
   if (!track) return;  // 已离开列表页
   const { page, totalPages } = _pgData;
   document.getElementById('pgFirst').disabled = page <= 1;
   document.getElementById('pgLast').disabled = page >= totalPages;
-  if (totalPages <= 1) { track.innerHTML = ''; return; }
-  const start = Math.max(1, page - 3);
-  const end = Math.min(totalPages, page + 3);
+  if (totalPages <= 1) { track.innerHTML = ''; track.style.transform = ''; _pgOffset = 0; return; }
+  const start = Math.max(1, page - 10);
+  const end = Math.min(totalPages, page + 10);
   let html = '';
   for (let i = start; i <= end; i++) {
     html += `<span class="pg-num" data-page="${i}" style="${pgNumStyle(i === page)}">${i}</span>`;
   }
   track.innerHTML = html;
+  centerPager();
+}
+
+// 把当前页码平移到视口中央（窗口贴边时收敛到不露空白；内容不足一屏则整体居中），
+// 基准偏移记入 _pgOffset 供拖动时叠加
+function centerPager() {
+  const viewport = document.getElementById('pgViewport');
+  const track = document.getElementById('pgTrack');
+  if (!viewport || !track) { _pgOffset = 0; return; }
+  let off = 0;
+  if (track.scrollWidth <= viewport.clientWidth) {
+    off = (viewport.clientWidth - track.scrollWidth) / 2;
+  } else {
+    const cur = track.querySelector(`.pg-num[data-page="${_pgData.page}"]`);
+    if (cur) {
+      off = viewport.clientWidth / 2 - (cur.offsetLeft + cur.offsetWidth / 2);
+      off = Math.min(0, Math.max(viewport.clientWidth - track.scrollWidth, off));
+    }
+  }
+  _pgOffset = off;
+  track.style.transform = off ? `translateX(${off}px)` : '';
+}
+
+// 实测页码步进宽度（含间距）：取当前页与相邻页码的左边缘差，保证 transform 像素 ↔ 页码换算一致
+function pgItemWidth(track) {
+  const cur = track.querySelector(`.pg-num[data-page="${_pgData.page}"]`) || track.firstElementChild;
+  if (!cur) return 32;
+  if (cur.nextElementSibling) return cur.nextElementSibling.offsetLeft - cur.offsetLeft;
+  if (cur.previousElementSibling) return cur.offsetLeft - cur.previousElementSibling.offsetLeft;
+  return cur.getBoundingClientRect().width + 4;
 }
 
 // 页码样式（当前页高亮）；无构建步骤且不动 style.css，故用内联样式 + 主题变量
@@ -425,26 +468,47 @@ function initPager() {
     else window.goPage(p);
   });
 
-  // 按住鼠标左右拖动：滑满一个页码宽度翻一页（可连续多页），松手吸附
+  // 按住鼠标左右拖动：track 在居中基准上实时跟随（±10 宽窗已预渲染前后页码），
+  // 拖动中浮动提示将要落到的页码；松手按拖动距离换算落点翻页，未翻页则吸附回中
   viewport.addEventListener('mousedown', (e) => {
     e.preventDefault();
     _pgSuppressClick = false;
     const startX = e.clientX;
-    const itemW = (track.firstElementChild?.getBoundingClientRect().width || 28) + 4;
+    const base = _pgOffset;
+    const itemW = pgItemWidth(track);
     let dx = 0;
+    // 拖动距离 → 落点页码（浮动提示与松手翻页共用同一换算，所见即所得）
+    const targetFor = (delta) => {
+      const steps = Math.round(Math.abs(delta) / itemW);
+      return Math.max(1, Math.min(_pgData.totalPages, _pgData.page + (delta < 0 ? steps : -steps)));
+    };
+    const hint = document.createElement('div');
+    hint.style.cssText = 'position:fixed;z-index:1080;pointer-events:none;display:none;' +
+      'padding:1px 8px;font-size:0.8em;border-radius:4px;white-space:nowrap;transform:translate(-50%,-100%);' +
+      'background:var(--accent-blue-soft);color:var(--accent-blue);border:1px solid var(--accent-blue-border);';
+    document.body.appendChild(hint);
     viewport.style.cursor = 'grabbing';
     const onMove = (ev) => {
       dx = ev.clientX - startX;
-      track.style.transform = `translateX(${dx}px)`;
+      track.style.transform = `translateX(${base + dx}px)`;
+      if (Math.abs(dx) > 5) {
+        hint.textContent = `第 ${targetFor(dx)} 页`;
+        hint.style.left = ev.clientX + 'px';
+        hint.style.top = (viewport.getBoundingClientRect().top - 6) + 'px';
+        hint.style.display = '';
+      } else {
+        hint.style.display = 'none';
+      }
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      hint.remove();
       viewport.style.cursor = 'grab';
-      track.style.transform = '';
       if (Math.abs(dx) > 5) _pgSuppressClick = true;
-      const steps = Math.floor(Math.abs(dx) / itemW);
-      if (steps > 0) window.goPage(_pgData.page + (dx < 0 ? steps : -steps));
+      const target = targetFor(dx);
+      centerPager();  // 先吸附回当前页居中位；翻页响应到达后 renderPager 会重新居中
+      if (target !== _pgData.page) window.goPage(target);
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);

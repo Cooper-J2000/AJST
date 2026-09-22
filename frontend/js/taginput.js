@@ -2,8 +2,10 @@
 // 主/副标签（kind: main=主标签 / sub=副标签）的 datalist 自动补全与保存前新标签登记。
 // 每种 kind 的标签索引只拉取一次并缓存；ensureTagsRegistered 创建成功后自动并入缓存，
 // 需要强制重拉时调 invalidateTagCache()。
+// 输入形态两种：attachTagInput（逗号分隔文本框 + datalist，新建源页用）与
+// attachChipInput（chip 泡泡输入，详情页编辑面板用）。
 import { getTags, createTag, showToast } from './api.js';
-import { escAttr } from './utils.js';
+import { esc, escAttr } from './utils.js';
 
 // kind → Promise<[{id,name,kind,description,color}]>（失败时清缓存并抛错，下次重试）
 const _tagCache = { main: null, sub: null };
@@ -85,4 +87,85 @@ export async function ensureTagsRegistered(names, kind) {
     knownNames.add(name);
   }
   return list;
+}
+
+// ─── Chip（泡泡）式多值输入 ───
+// attachChipInput(container, kind, initial)：容器内渲染「已固化 chip + 待输入文本框」组合。
+// 逗号/回车/datalist 选择把当前文本固化为 chip（× 可删）；输入框为空时退格删除最后一个 chip；
+// 粘贴含逗号/换行的文本自动拆成多个 chip；自动补全复用 attachTagInput 的 datalist
+// （chip 模式下输入框只含当前段，补全天然无前缀）。× 用 mousedown+preventDefault 处理：
+// 保持在 chip DOM 重绘前完成删除，且不打断输入框焦点（click 会被 blur 时序吃掉）。
+// chip 样式沿用列表页 badge：主标签 badge-tag、副标签 badge-neutral。
+// 返回 { getValues }：去重后的名字数组（含尚未固化的待输入文本，保存时直接用）。
+export function attachChipInput(container, kind, initial = []) {
+  if (!container) return { getValues: () => [] };
+  const badgeCls = kind === 'main' ? 'badge-tag' : 'badge-neutral';
+  container.innerHTML = '';
+  container.className = 'form-control form-control-sm d-flex flex-wrap align-items-center gap-1';
+  container.style.height = 'auto';
+  container.style.minHeight = 'calc(1.5em + 0.5rem + 2px)';
+  container.style.cursor = 'text';
+
+  let chips = [];
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = '输入后回车/逗号固化';
+  input.style.cssText = 'border:none;background:transparent;outline:none;box-shadow:none;flex:1 1 90px;min-width:90px;padding:0;font-size:0.8rem;color:inherit';
+
+  function renderChips() {
+    container.querySelectorAll('.chip-item').forEach(n => n.remove());
+    chips.forEach((name, idx) => {
+      const chip = document.createElement('span');
+      chip.className = `chip-item ${badgeCls}`;
+      chip.style.cssText = 'margin-right:0;display:inline-flex;align-items:center;gap:2px;white-space:nowrap';
+      chip.innerHTML = `<span>${esc(name)}</span><i class="bi bi-x-lg" role="button" title="移除" style="cursor:pointer;font-size:0.65rem"></i>`;
+      chip.querySelector('i').addEventListener('mousedown', (e) => {
+        e.preventDefault();    // 不触发输入框 blur，× 删除不被 blur 时序吃掉
+        e.stopPropagation();
+        chips.splice(idx, 1);
+        renderChips();
+      });
+      container.insertBefore(chip, input);
+    });
+  }
+
+  // 把输入框当前文本固化为 chip（去重；空文本忽略）
+  function solidify() {
+    const v = input.value.trim().replace(/,+$/, '').trim();
+    input.value = '';
+    if (v && !chips.includes(v)) { chips.push(v); renderChips(); }
+  }
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); solidify(); }
+    else if (e.key === 'Backspace' && input.value === '' && chips.length) {
+      chips.pop();
+      renderChips();
+    }
+  });
+  // datalist 选择确认（change）时固化；未固化的待输入文本由 getValues 兜底收集
+  input.addEventListener('change', solidify);
+  input.addEventListener('paste', (e) => {
+    const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+    if (!/[,\n]/.test(text)) return;   // 单段文本走默认粘贴
+    e.preventDefault();
+    for (const part of text.split(/[,\n]+/).map(s => s.trim()).filter(Boolean)) {
+      if (!chips.includes(part)) chips.push(part);
+    }
+    renderChips();
+  });
+  container.addEventListener('click', () => input.focus());
+  container.appendChild(input);
+  attachTagInput(input, kind);
+
+  chips = [...new Set((initial || []).map(s => String(s).trim()).filter(Boolean))];
+  renderChips();
+
+  return {
+    getValues: () => {
+      const pending = input.value.trim().replace(/,+$/, '').trim();
+      const all = pending ? [...chips, pending] : [...chips];
+      return [...new Set(all.map(s => s.trim()).filter(Boolean))];
+    },
+  };
 }

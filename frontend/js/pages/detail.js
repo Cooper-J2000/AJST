@@ -86,7 +86,7 @@ export async function render(tid) {
 
     app.innerHTML = `
       <div class="mb-3">
-        <a href="#/" class="text-secondary text-decoration-none small"><i class="bi bi-arrow-left"></i> 返回列表</a>
+        <a href="#/list" class="text-secondary text-decoration-none small"><i class="bi bi-arrow-left"></i> 返回列表</a>
       </div>
 
       <!-- Header -->
@@ -176,8 +176,8 @@ export async function render(tid) {
                       <div class="col-4"><label class="form-label small">位置误差</label><input type="number" class="form-control form-control-sm" id="editPosErr" step="any" value="${transient.pos_error ?? ''}"></div>
                       <div class="col-8"><label class="form-label small">位置引用</label><input type="text" class="form-control form-control-sm" id="editPosRef" value="${escAttr(transient.pos_ref)}"></div>
                       <div class="col-12"><label class="form-label small">备注</label><textarea class="form-control form-control-sm" id="editComment" rows="2">${esc(transient.comment)}</textarea></div>
-                      <div class="col-4"><label class="form-label small">标签 (逗号分隔)</label><input type="text" class="form-control form-control-sm" id="editTags" value="${escAttr((transient.tags || []).join(', '))}"></div>
-                      <div class="col-4"><label class="form-label small">子标签 (逗号分隔)</label><input type="text" class="form-control form-control-sm" id="editSubTags" value="${escAttr((transient.sub_tag || []).join(', '))}"></div>
+                      <div class="col-4"><label class="form-label small" title="输入后按回车或逗号固化；退格删除最后一个">标签</label><div id="editTags"></div></div>
+                      <div class="col-4"><label class="form-label small" title="输入后按回车或逗号固化；退格删除最后一个">子标签</label><div id="editSubTags"></div></div>
                       <div class="col-4"><label class="form-label small">别名 (逗号分隔)</label><input type="text" class="form-control form-control-sm" id="editAliases" value="${escAttr((transient.aliases || []).join(', '))}"></div>
                     </div>
                     <div class="mt-3 d-flex gap-2">
@@ -235,40 +235,47 @@ export async function render(tid) {
           <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
               <span><i class="bi bi-graph-up"></i> 光变曲线</span>
-              <div class="d-flex gap-2 align-items-center flex-wrap">
-                <select class="form-select form-select-sm" style="width:auto" id="gextMode" onchange="rebuildLCPlot()">
-                  <option value="raw" selected>数据: 原始</option>
-                  <option value="gext">数据: 银消改正后</option>
-                </select>
-                <select class="form-select form-select-sm" style="width:auto" id="yMode" onchange="rebuildLCPlot()"
-                        ${canAbsMag ? '' : 'title="该源无红移，无法计算距离模数，绝对星等不可用"'}>
-                  <option value="flux" selected>Y: 流量密度</option>
-                  <option value="absmag" ${canAbsMag ? '' : 'disabled'}>Y: 绝对星等</option>
-                </select>
-                <select class="form-select form-select-sm" style="width:auto" id="xScale" onchange="rebuildLCPlot()">
-                  <option value="logarithmic" selected>X: 对数</option>
-                  <option value="linear">X: 线性</option>
-                </select>
-                <select class="form-select form-select-sm" style="width:auto" id="topAxis" onchange="rebuildLCPlot()"
-                        ${canMJD ? '' : 'title="该源无 T0，MJD 轴不可用"'}>
-                  <option value="day" selected>顶部轴: 天</option>
-                  <option value="mjd" ${canMJD ? '' : 'disabled'}>顶部轴: MJD</option>
-                  <option value="none">顶部轴: 无</option>
-                </select>
-                <div class="form-check form-check-inline mb-0" title="是否绘制数据点的星等/流量密度误差棒">
-                  <input class="form-check-input" type="checkbox" id="lcShowErr" checked onchange="lcShowErrToggle(this.checked)">
-                  <label class="form-check-label small" for="lcShowErr">误差棒</label>
+              <div class="d-flex flex-column gap-1">
+                <!-- 第一排：数据/Y/X/顶部轴 四个 select + 基准时刻输入（lcchart 注入 #lcRefEpochSlot） + 复制按钮（最右） -->
+                <div class="d-flex gap-2 align-items-center flex-wrap justify-content-end">
+                  <select class="form-select form-select-sm" style="width:auto" id="gextMode" onchange="rebuildLCPlot()">
+                    <option value="raw" selected>数据: 原始</option>
+                    <option value="gext">数据: 银消改正后</option>
+                  </select>
+                  <select class="form-select form-select-sm" style="width:auto" id="yMode" onchange="rebuildLCPlot()"
+                          ${canAbsMag ? '' : 'title="该源无红移，无法计算距离模数，绝对星等不可用"'}>
+                    <option value="flux" selected>Y: 流量密度</option>
+                    <option value="absmag" ${canAbsMag ? '' : 'disabled'}>Y: 绝对星等</option>
+                  </select>
+                  <select class="form-select form-select-sm" style="width:auto" id="xScale" onchange="rebuildLCPlot()">
+                    <option value="logarithmic" selected>X: 对数</option>
+                    <option value="linear">X: 线性</option>
+                  </select>
+                  <select class="form-select form-select-sm" style="width:auto" id="topAxis" onchange="rebuildLCPlot()"
+                          ${canMJD ? '' : 'title="该源无 T0，MJD 轴不可用"'}>
+                    <option value="day" selected>顶部轴: 天</option>
+                    <option value="mjd" ${canMJD ? '' : 'disabled'}>顶部轴: MJD</option>
+                    <option value="none">顶部轴: 无</option>
+                  </select>
+                  <span id="lcRefEpochSlot" class="d-inline-flex align-items-center"></span>
+                  <button class="btn btn-sm btn-outline-secondary" onclick="copyLCChart()" title="复制当前光变图（含图例与标题）到剪贴板；不支持时改为下载 PNG"><i class="bi bi-clipboard"></i> 复制光变图</button>
                 </div>
-                <div class="form-check form-check-inline mb-0" ${canMJD ? 'title="在图上画一条当前时刻对应的红色竖虚线（位置 = T0 至今的时间差）"' : 'title="该源无 T0，无法定位当前时刻"'}>
-                  <input class="form-check-input" type="checkbox" id="lcShowNow" onchange="lcShowNowToggle(this.checked)" ${canMJD ? '' : 'disabled'}>
-                  <label class="form-check-label small" for="lcShowNow">显示当前时刻</label>
+                <!-- 第二排：四个显示开关（显示光谱观测由 lcchart 注入 #lcSpecChkSlot） -->
+                <div class="d-flex gap-3 align-items-center flex-wrap justify-content-end">
+                  <div class="form-check form-check-inline mb-0" title="是否绘制数据点的星等/流量密度误差棒">
+                    <input class="form-check-input" type="checkbox" id="lcShowErr" checked onchange="lcShowErrToggle(this.checked)">
+                    <label class="form-check-label small" for="lcShowErr">误差棒</label>
+                  </div>
+                  <div class="form-check form-check-inline mb-0" ${canMJD ? 'title="在图上画一条当前时刻对应的红色竖虚线（位置 = T0 至今的时间差；越界时以红色三角指示方向）"' : 'title="该源无 T0，无法定位当前时刻"'}>
+                    <input class="form-check-input" type="checkbox" id="lcShowNow" onchange="lcShowNowToggle(this.checked)" ${canMJD ? '' : 'disabled'}>
+                    <label class="form-check-label small" for="lcShowNow">显示当前时刻</label>
+                  </div>
+                  <span id="lcSpecChkSlot" class="d-inline-flex align-items-center"></span>
+                  <div class="form-check form-check-inline mb-0" ${canRestFrame ? 'title="时间轴除以 (1+z) 改正到静止系"' : 'title="该源无红移，静止系不可用"'}>
+                    <input class="form-check-input" type="checkbox" id="lcRestFrame" onchange="rebuildLCPlot()" ${canRestFrame ? '' : 'disabled'}>
+                    <label class="form-check-label small" for="lcRestFrame">静止系 t/(1+z)</label>
+                  </div>
                 </div>
-                <button class="btn btn-sm btn-outline-secondary" onclick="copyLCChart()" title="复制当前光变图（含图例与标题）到剪贴板；不支持时改为下载 PNG"><i class="bi bi-clipboard"></i> 复制光变图</button>
-                <div class="form-check form-check-inline mb-0" ${canRestFrame ? 'title="时间轴除以 (1+z) 改正到静止系"' : 'title="该源无红移，静止系不可用"'}>
-                  <input class="form-check-input" type="checkbox" id="lcRestFrame" onchange="rebuildLCPlot()" ${canRestFrame ? '' : 'disabled'}>
-                  <label class="form-check-label small" for="lcRestFrame">静止系 t/(1+z)</label>
-                </div>
-                <button class="btn btn-sm btn-outline-secondary" onclick="resetLCZoom()"><i class="bi bi-arrows-expand"></i></button>
               </div>
             </div>
             <div class="card-body">
@@ -299,17 +306,17 @@ export async function render(tid) {
                   <select class="form-select form-select-sm" id="fitBand" style="width:auto">
                     ${bandNames.map(b => `<option value="${escAttr(b)}">${esc(b)}</option>`).join('')}
                   </select>
-                  <input type="text" class="form-control form-control-sm" id="fitTmin" placeholder="拟合 t_min (s)" title="拟合数据时间下限（留空=全范围）" style="width:100px">
-                  <input type="text" class="form-control form-control-sm" id="fitTmax" placeholder="拟合 t_max (s)" title="拟合数据时间上限（留空=全范围）" style="width:100px">
+                  <input type="text" class="form-control form-control-sm" id="fitTmin" placeholder="拟合 t_min (s)" title="拟合数据时间下限（留空=全范围）" style="width:100px;font-size:0.72rem">
+                  <input type="text" class="form-control form-control-sm" id="fitTmax" placeholder="拟合 t_max (s)" title="拟合数据时间上限（留空=全范围）" style="width:100px;font-size:0.72rem">
                   <span id="fitTbRange" class="align-items-center gap-1" style="display:none">
                     <span class="text-secondary">tb∈[</span>
-                    <input type="text" class="form-control form-control-sm" id="fitTbMin" placeholder="tb_min" title="拐点 tb 预设下限（秒，留空=数据范围）" style="width:70px">
+                    <input type="text" class="form-control form-control-sm" id="fitTbMin" placeholder="tb_min" title="拐点 tb 预设下限（秒，留空=数据范围）" style="width:70px;font-size:0.72rem">
                     <span class="text-secondary">,</span>
-                    <input type="text" class="form-control form-control-sm" id="fitTbMax" placeholder="tb_max" title="拐点 tb 预设上限（秒，留空=数据范围）" style="width:70px">
+                    <input type="text" class="form-control form-control-sm" id="fitTbMax" placeholder="tb_max" title="拐点 tb 预设上限（秒，留空=数据范围）" style="width:70px;font-size:0.72rem">
                     <span class="text-secondary">]s</span>
                   </span>
-                  <input type="text" class="form-control form-control-sm" id="fitPmin" placeholder="绘制 t_min (s)" title="拟合线绘制范围下限（外推用；留空=与拟合范围一致）" style="width:100px">
-                  <input type="text" class="form-control form-control-sm" id="fitPmax" placeholder="绘制 t_max (s)" title="拟合线绘制范围上限（外推用；留空=与拟合范围一致）" style="width:100px">
+                  <input type="text" class="form-control form-control-sm" id="fitPmin" placeholder="绘制 t_min (s)" title="拟合线绘制范围下限（外推用；留空=与拟合范围一致）" style="width:100px;font-size:0.72rem">
+                  <input type="text" class="form-control form-control-sm" id="fitPmax" placeholder="绘制 t_max (s)" title="拟合线绘制范围上限（外推用；留空=与拟合范围一致）" style="width:100px;font-size:0.72rem">
                   <button class="btn btn-sm btn-outline-primary" onclick="addLCFit()"><i class="bi bi-plus-lg"></i> 添加</button>
                 </div>
                 <div id="lcFitList" class="mt-2 small"></div>
@@ -367,11 +374,11 @@ export async function render(tid) {
                   <button class="btn btn-sm btn-outline-primary py-0" id="specUploadBtn" style="display:none" onclick="showSpecUpload()" title="上传光谱"><i class="bi bi-upload"></i> 上传</button>
                 </div>
                 <div class="card-body p-0" style="max-height:560px;overflow-y:auto">
-                  <div class="small text-secondary px-2 pt-1">点击行切换选择，可多选对比</div>
+                  <div class="small text-secondary px-2 pt-1">点击行切换选择，可多选对比；留空的光谱按空气波长处理（不自动回填），所有处理默认先转真空波长</div>
                   <table class="table table-sm table-hover mb-0" style="font-size:0.85rem">
-                    <thead><tr><th>观测时间 (MJD)</th><th>仪器</th><th>类型</th><th>观测者</th><th>纵向偏移量</th></tr></thead>
+                    <thead><tr><th>观测时间 (MJD)</th><th>仪器</th><th>类型</th><th>波长类型</th><th>观测者</th><th>纵向偏移量</th></tr></thead>
                     <tbody id="spectraListBody">
-                      <tr><td colspan="5" class="text-center text-secondary py-3">加载中...</td></tr>
+                      <tr><td colspan="6" class="text-center text-secondary py-3">加载中...</td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -480,7 +487,15 @@ export async function render(tid) {
                     <option value="mix">Mix（混合）</option>
                   </select>
                 </div>
+                <div class="col-6"><label class="form-label small">波长类型</label>
+                  <select class="form-select form-select-sm" id="specUploadWaveType">
+                    <option value="" selected>留空（默认按空气处理）</option>
+                    <option value="vacuum">真空波长</option>
+                    <option value="air">空气波长</option>
+                  </select>
+                </div>
               </div>
+              <div class="small text-secondary mt-2">留空的光谱按空气波长处理（不自动回填）；所有处理默认先转真空波长。</div>
               <div class="alert alert-dark small mt-3 mb-0" role="note">
                 <strong>格式要求：</strong>波长一律为<strong>观测者系</strong>（单位 Å）。
                 ① 两列或三列文本：<code>波长 流量 [流量误差]</code>，空格/逗号分隔，<code>#</code> 开头为注释，可用 <code># instrument: xx</code>、<code># mjd: xx</code> 声明元数据；② JSON：<code>{"名称": {"spectra": {"time": MJD, "instrument": "...", "data": [[波长, 流量, (误差)], ...]}}}</code>。

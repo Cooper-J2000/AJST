@@ -37,6 +37,8 @@ let _lcSpectra = [];   // [{mjd, instrument, observation_date}]
 let _lcShowSpec = false;
 // ─── 光变图波段可见性（勾选框面板控制，默认全显示） ───
 let lcBandVisible = {};  // band → bool
+// ─── 上限点显示开关（#lcBandPanel 勾选，默认显示；与波段勾选取交集） ───
+let _lcShowUL = true;
 // ─── 光变图顶部副轴配置（null = 不画） ───
 let _lcTopAxis = null;   // { mode: 'day'|'mjd' }
 let _lcTopAxisSuppress = false;  // 复制合成时插件暂停绘制（副轴改画在离屏插入带）
@@ -113,6 +115,7 @@ export function resetLCChart() {
   lcFits = [];
   lcAxisRange = { xmin: null, xmax: null, ymin: null, ymax: null };
   lcBandVisible = {};
+  _lcShowUL = true;
   lcShowErr = true;
   _lcShowNow = false;
   _lcZfac = 1;
@@ -165,17 +168,38 @@ function makeFitLabel(fit) {
 
 // ─── 错误条绘制插件（beforeDatasetsDraw：误差棒画在最底层，不遮挡数据点与拟合线） ───
 let lcShowErr = true;   // 是否绘制误差棒（图头「误差棒」开关）
-const errorBarPlugin = createYErrBarPlugin({
+const _lcYErrBar = createYErrBarPlugin({
   enabled: () => lcShowErr,
   errOf: (ds, raw, i) => ds._errorValues ? ds._errorValues[i] : null,
   xErrOf: (ds, raw, i) => ds._timeErrValues ? ds._timeErrValues[i] : null,
   skipDataset: ds => ds._isUpperLimit || ds._isFit,
 });
+// 包装层：手绘误差棒前把画布裁剪到 chartArea（手动坐标范围下误差棒不越界；
+// 共享实现 chart_plugins.js 不动，clip 只加在本页）
+const errorBarPlugin = {
+  id: 'lcYErrBarClip',
+  beforeDatasetsDraw(chart, args, opts) {
+    const area = chart.chartArea;
+    if (!area) return;
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(area.left, area.top, area.width, area.height);
+    ctx.clip();
+    try {
+      _lcYErrBar.beforeDatasetsDraw(chart, args, opts);
+    } finally {
+      ctx.restore();
+    }
+  },
+};
 
-// ─── 当前时刻竖线（红色虚线，贯通全图；afterDraw 手绘，不参与轴范围计算） ───
+// ─── 当前时刻竖线（红色虚线，贯通全图；越界时在对应侧上角画红色三角；afterDraw 手绘，不参与轴范围计算） ───
+const NOW_LINE_COLOR = '#f85149';
 const lcNowLinePlugin = {
   id: 'lcNowLine',
   afterDraw(chart) {
+    chart._lcNowTriSide = null;   // 记录本帧 now 越界三角占用的一侧（光谱越界三角据此错开 y 槽位）
     const refMJD = _lcEffRefMJD();   // 与横轴同一基准（默认源 T0）
     if (!_lcShowNow || refMJD == null) return;
     const xs = chart.scales.x;
@@ -184,12 +208,34 @@ const lcNowLinePlugin = {
     // 与横轴同单位同坐标系：观测系秒数 = (当前 MJD − 基准 MJD)×86400，静止系再除 (1+z)
     const nowMJD = Date.now() / 86400000 + 40587;  // Unix epoch = MJD 40587
     const tNow = (nowMJD - refMJD) * 86400 / _lcZfac;
-    if (!(tNow >= xs.min && tNow <= xs.max)) return;
+    const ctx = chart.ctx;
+    if (!(tNow >= xs.min && tNow <= xs.max)) {
+      // 越界：左越界左上角画朝左三角，右越界右上角画朝右三角（与光谱紫三角同槽位体系，now 占第 0 槽）
+      const left = tNow < xs.min;
+      const ax = left ? area.left + 6 : area.right - 6;
+      const ay = area.top + 10;
+      ctx.save();
+      ctx.fillStyle = NOW_LINE_COLOR;
+      ctx.beginPath();
+      if (left) {
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ax + 7, ay - 5);
+        ctx.lineTo(ax + 7, ay + 5);
+      } else {
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ax - 7, ay - 5);
+        ctx.lineTo(ax - 7, ay + 5);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+      chart._lcNowTriSide = left ? 'left' : 'right';
+      return;
+    }
     const px = xs.getPixelForValue(tNow);
     if (!isFinite(px)) return;
-    const ctx = chart.ctx;
     ctx.save();
-    ctx.strokeStyle = '#f85149';
+    ctx.strokeStyle = NOW_LINE_COLOR;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 4]);
     ctx.beginPath();
@@ -197,8 +243,8 @@ const lcNowLinePlugin = {
     ctx.lineTo(px, area.bottom);
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = '#f85149';
-    ctx.font = `11px ${ACADEMIC_FONT}`;
+    ctx.fillStyle = NOW_LINE_COLOR;
+    ctx.font = `14px ${ACADEMIC_FONT}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.fillText('now', px + 4, area.top + 4);
@@ -219,7 +265,9 @@ const lcSpecLinesPlugin = {
     const refMJD = _lcEffRefMJD();   // 与横轴同一基准（默认源 T0）
     if (refMJD == null) return;
     const ctx = chart.ctx;
-    let nLeft = 0, nRight = 0;
+    // 越界三角 y 槽位：若本帧 now 越界三角占用了某侧第 0 槽（lcNowLinePlugin 先画），该侧从第 1 槽起
+    let nLeft = chart._lcNowTriSide === 'left' ? 1 : 0;
+    let nRight = chart._lcNowTriSide === 'right' ? 1 : 0;
     for (const sp of _lcSpectra) {
       const xSec = (sp.mjd - refMJD) * 86400 / _lcZfac;
       if (xSec >= xs.min && xSec <= xs.max) {
@@ -237,7 +285,7 @@ const lcSpecLinesPlugin = {
         chart._lcSpecHits.push({ kind: 'line', px, sp });
       } else {
         // 越界（需求4.6）：左越界在左上角画指向左的三角，右越界在右上角画指向右的三角；
-        // 多个越界箭头纵向错开约 14px
+        // 多个越界箭头纵向错开约 14px（now 越界三角占用时相应侧已顺延，见上方槽位注释）
         const left = xSec < xs.min;
         const ax = left ? area.left + 6 : area.right - 6;
         const ay = area.top + 10 + (left ? nLeft++ : nRight++) * 14;
@@ -396,7 +444,10 @@ function applyBandVisibility() {
   if (!chart) return;
   chart.data.datasets.forEach((ds, i) => {
     if (ds._isFit || ds._band == null) return;
-    chart.setDatasetVisibility(i, lcBandVisible[ds._band] !== false);
+    // 波段勾选与「显示上限点」取交集：上限点数据集受两个开关共同控制
+    let vis = lcBandVisible[ds._band] !== false;
+    if (ds._isUpperLimit && !_lcShowUL) vis = false;
+    chart.setDatasetVisibility(i, vis);
   });
   chart.update();
 }
@@ -413,7 +464,11 @@ function buildBandPanel(sortedBands, spectralColors) {
     </span>`;
   }).join('') + `
     <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="lcBandAll">全选</button>
-    <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="lcBandNone">全不选</button>`;
+    <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="lcBandNone">全不选</button>
+    <span class="form-check form-check-inline mb-0 ms-2 border-start ps-2" title="是否在图上显示上限点（倒三角）；取消勾选只显示探测点">
+      <input class="form-check-input" type="checkbox" id="lcShowUL" ${_lcShowUL ? 'checked' : ''}>
+      <label class="form-check-label" for="lcShowUL">显示上限点</label>
+    </span>`;
   el.querySelectorAll('.lc-band-chk').forEach(chk => {
     chk.addEventListener('change', () => {
       lcBandVisible[chk.dataset.band] = chk.checked;
@@ -428,6 +483,10 @@ function buildBandPanel(sortedBands, spectralColors) {
   document.getElementById('lcBandNone')?.addEventListener('click', () => {
     for (const b of sortedBands) lcBandVisible[b] = false;
     el.querySelectorAll('.lc-band-chk').forEach(c => { c.checked = false; });
+    applyBandVisibility();
+  });
+  document.getElementById('lcShowUL')?.addEventListener('change', (e) => {
+    _lcShowUL = e.target.checked;
     applyBandVisibility();
   });
 }
@@ -545,21 +604,22 @@ function rebuildLCPlot(bands, bandNames, spectralColors) {
   buildLCChart(bands, bandNames, spectralColors);
 }
 
-// ─── 图头控件注入（「基准时刻」输入 + 「显示光谱观测」开关；页面模板在 detail.js，
-// 这两个控件由本模块在每轮 render 的 wireLCChartGlobals 时自建进图头控件区） ───
+// ─── 图头控件注入（「基准时刻」输入 + 「显示光谱观测」开关；模板在 detail.js 预留
+// #lcRefEpochSlot / #lcSpecChkSlot 占位槽，本模块在每轮 render 的 wireLCChartGlobals 时填充） ───
 function _ensureLCHeaderControls() {
-  const topSel = document.getElementById('topAxis');
-  if (!topSel || document.getElementById('lcRefEpoch')) return;
-  const wrap = topSel.parentElement;
+  if (document.getElementById('lcRefEpoch')) return;
+  const refSlot = document.getElementById('lcRefEpochSlot');
+  const specSlot = document.getElementById('lcSpecChkSlot');
+  if (!refSlot || !specSlot) return;
 
   // 基准时刻输入（MJD 数字或 UTC 时间；留空/填 t0 = 源 T0）
   const refSpan = document.createElement('span');
   refSpan.className = 'd-inline-flex align-items-center gap-1';
   refSpan.title = '横轴零点：可填 MJD 数字或 UTC 时间（如 2022-10-09T13:16:59）；留空或填 t0 = 源 T0';
   refSpan.innerHTML = `<span class="text-secondary small">基准时刻:</span>
-    <input type="text" class="form-control form-control-sm" id="lcRefEpoch" style="width:175px"
+    <input type="text" class="form-control form-control-sm" id="lcRefEpoch" style="width:260px;font-size:0.72rem"
            placeholder="MJD 或 UTC，留空=源 T0">`;
-  wrap.insertBefore(refSpan, topSel.nextSibling);
+  refSlot.appendChild(refSpan);
   const refInp = refSpan.querySelector('#lcRefEpoch');
   refInp.value = _lcRefMJD != null ? String(_lcRefMJD) : '';
   refInp.addEventListener('change', () => {
@@ -589,9 +649,7 @@ function _ensureLCHeaderControls() {
   specDiv.innerHTML = `<input class="form-check-input" type="checkbox" id="lcShowSpec"
       ${_lcShowSpec ? 'checked' : ''} ${_lcSpectra.length ? '' : 'disabled'}>
     <label class="form-check-label small" for="lcShowSpec">显示光谱观测</label>`;
-  const nowChk = document.getElementById('lcShowNow');
-  wrap.insertBefore(specDiv, nowChk && nowChk.closest('.form-check')
-    ? nowChk.closest('.form-check').nextSibling : refSpan.nextSibling);
+  specSlot.appendChild(specDiv);
   specDiv.querySelector('#lcShowSpec').addEventListener('change', (e) => {
     _lcShowSpec = e.target.checked;
     if (!_lcShowSpec) _hideSpecTip();
@@ -606,7 +664,6 @@ export function wireLCChartGlobals(bands, bandNames, spectralColors) {
   _spectralColors = spectralColors;
   _ensureLCHeaderControls();
   window.rebuildLCPlot = () => rebuildLCPlot(bands, bandNames, spectralColors);
-  window.resetLCZoom = () => { if (lcChartInstance) lcChartInstance.resetZoom(); };
   window.lcShowErrToggle = (on) => {   // 误差棒开关：只影响绘制，不动数据，无动画重绘即可
     lcShowErr = on;
     if (lcChartInstance) lcChartInstance.update('none');
@@ -914,6 +971,7 @@ function buildLCChart(bands, bandNames, spectralColors) {
           pointBackgroundColor: color,
           pointBorderColor: color,
           showLine: false,
+          clip: true,   // 手动坐标范围下把散点裁剪在 chartArea 内（Chart.js 默认对有点半径的散点不裁剪）
           pointRadius: 3,
           pointHoverRadius: 5,
           _errorValues: vals.map(d => d.err),
@@ -946,6 +1004,7 @@ function buildLCChart(bands, bandNames, spectralColors) {
           pointBackgroundColor: color,
           pointBorderColor: color,
           showLine: false,
+          clip: true,   // 同探测点：裁剪到 chartArea
           pointStyle: 'triangle',
           pointRadius: 5,
           pointRotation: 180,
@@ -988,13 +1047,13 @@ function buildLCChart(bands, bandNames, spectralColors) {
         datasets.push({
           type: 'line', label: '', data: hiPts,
           borderWidth: 0, pointRadius: 0, pointHoverRadius: 0,
-          showLine: true, fill: false, order: -1, _isFit: true,
+          showLine: true, fill: false, order: -1, _isFit: true, clip: true,
         });
         datasets.push({
           type: 'line', label: '', data: loPts,
           borderWidth: 0, pointRadius: 0, pointHoverRadius: 0,
           showLine: true, fill: '-1', backgroundColor: fit.color + '2e',
-          order: -1, _isFit: true,
+          order: -1, _isFit: true, clip: true,
         });
       }
     }
@@ -1010,6 +1069,7 @@ function buildLCChart(bands, bandNames, spectralColors) {
       pointHoverRadius: 0,
       fill: false,
       showLine: true,
+      clip: true,   // 拟合线/置信带同样裁剪在 chartArea 内
       order: -1,   // Chart.js：order 越小越晚绘制（显示在最上层）
       _isFit: true,
     });

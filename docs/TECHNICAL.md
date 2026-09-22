@@ -1,7 +1,7 @@
 # AJST 暂现源光变目录系统 — 技术文档
 
-> 版本：2.23
-> 更新日期：2026-09-22
+> 版本：2.24
+> 更新日期：2026-09-23
 
 > **说明**：本文档由开发过程中的技术文档整理而来，部分内容（数据规模、批次导入历史、
 > 已删除的脚本与备份路径等）为历史快照；如有与代码不一致之处，**以代码为准**。
@@ -192,7 +192,7 @@ BibTeX 可能很长，前端不整段展示，仅提供「复制到剪贴板」�
 
 | 表名 | 用途 |
 |---|---|
-| `spectra` | 光谱文件元数据（已启用：filename/仪器/观测日期/波长范围/file_path→`catadata/spectra/<tid>/`、`spec_type` 列（transient/host/mix，非空默认 transient，随库存文件 JSON 持久化、重建可回读）、`parent_id` 自引用外键（v2.19，银消改正二级谱层级，ON DELETE CASCADE，见 §8.28）、extra_data 含 observer/reducer/flux_type/来源，见 §8.10、§8.15） |
+| `spectra` | 光谱文件元数据（已启用：filename/仪器/观测日期/波长范围/file_path→`catadata/spectra/<tid>/`、`spec_type` 列（transient/host/mix，非空默认 transient，随库存文件 JSON 持久化、重建可回读）、`wavelength_type` 列（v2.24，'vacuum'/'air'/NULL，处理路径默认转真空、文件存原始值，见 §8.32）、`parent_id` 自引用外键（v2.19，银消改正二级谱层级，ON DELETE CASCADE，见 §8.28）、extra_data 含 observer/reducer/flux_type/来源，见 §8.10、§8.15） |
 | `images` | 图像文件（空，等待扩展） |
 | `fitting_results` | 余辉拟合任务记录（v2.5 起启用，见 §8.14） |
 | `extinction_corrections` | 银河消光改正记录（空，等待扩展） |
@@ -374,7 +374,7 @@ time,time_err,time_unit,mjd,band,flux_density,flux_density_err,flux_density_unit
 | POST | `/api/filters/svo_fetch` | 预览抓取指定 SVO ID 的透过率曲线（不落库不注册） | 登录 |
 | GET | `/api/tags` | 标签列表（支持 `?kind=main|sub` 过滤） | 否 |
 | POST | `/api/tags` | 新建标签 `{name, kind, description, color?}`（**description 必填**，缺 400） | 登录 |
-| PUT | `/api/tags/<id>` | 修改标签描述/颜色 | 登录 |
+| PUT | `/api/tags/<id>` | 修改标签描述/颜色；v2.24 起可改 `name`（(name,kind) 冲突 409） | 登录 |
 | DELETE | `/api/tags/<id>` | 删除标签 | 登录 |
 | POST | `/api/tags/register` | 批量幂等登记标签（内部用） | 登录 |
 | GET | `/api/stats/overview` | 汇总统计 | 否 |
@@ -388,7 +388,7 @@ time,time_err,time_unit,mjd,band,flux_density,flux_density_err,flux_density_unit
 | GET | `/api/spectra/<id>` | 单条光谱完整数据（数值已统一强转） | 否 |
 | GET | `/api/spectra/<id>/download` | 下载光谱数据文件（`#` 注释头元数据 + 两/三列空白分隔文本，Content-Disposition attachment，见 §8.28） | 否 |
 | POST | `/api/spectra/upload` | 上传光谱（两列/三列文本或 JSON，服务端校验规范化） | 登录 |
-| PUT | `/api/spectra/<id>` | 修改光谱类型 `spec_type`（transient/host/mix，DB 与库存文件同步写；v2.19 起传播到银消改正子行） | 管理员 |
+| PUT | `/api/spectra/<id>` | 修改光谱类型 `spec_type`（transient/host/mix，DB 与库存文件同步写；v2.19 起传播到银消改正子行）；v2.24 起接受 `wavelength_type`（vacuum/air/留空，同样传播改正子谱，见 §8.32） | 管理员 |
 | POST | `/api/spectra/<id>/gext_correct` | 光谱银河系消光改正（CSFD+P92+Rv3.1，幂等生成二级改正谱，见 §8.28） | 登录 |
 | DELETE | `/api/spectra/<id>` | 删除光谱（记录 + 文件；删除原始谱级联删除其改正谱，见 §8.28） | 管理员 |
 | GET | `/api/fitting/engines` | 拟合引擎清单（模型情形/默认先验/采样缺省，见 §8.14） | 否 |
@@ -1721,6 +1721,50 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
    CSV 上传 DB_FIELDS 加 mjd（同义词 mjdobs/obsmjd 等归 mjd，不再误归 time），time 必填改为
    time|mjd 二选一。
 
+### 8.32 上限点开关 / 光谱波长类型 / 后台标签管理 / 列表筛选与分页修复 / 光变图操作区整理（2026-09-23，v2.24）
+
+1. **显示上限点开关**：单源光变图波段面板与多源对比图调节区各加「显示上限点」勾选（默认勾选=
+   探测点+上限点都显示；取消只显示探测点）。实现：数据集 `_isUpperLimit` 标记 + 可见性交集；
+   对比页上限点原先被整体跳过，现拆为独立倒三角数据集。
+2. **光谱波长类型（wavelength_type）**：spectra 表新增 `wavelength_type` VARCHAR(8) 可空列
+   （'vacuum'/'air'/NULL；init_db 幂等迁移）。口径：**所有用到光谱的处理默认先把波长转真空**
+   （Morton 1991 折射率公式，不动点迭代反解空气→真空，≥2000Å 才转；新文件
+   `backend/wavconvert.py`）；NULL 按空气处理但不回填。转换发生在 `GET /api/spectra/<id>`
+   （响应 meta 附 wavelength_type + wavelength_converted 标记）与消光改正 correct_spectrum 的
+   P92 求值前；下载接口与库存文件保持原始值（download 的 # 头加 wavelength_type 行）。
+   上传 body 可带 wavelength_type；`PUT /api/spectra/<id>` 接受 wavelength_type（管理员，
+   DB+文件同步写，传播改正子谱）；ETL import_spectra 从文件 JSON 回读该键。前端：光谱列表加
+   「波长类型」列（管理员三档下拉直改：真空/空气/留空），上传弹窗加同款下拉（默认留空）。
+3. **管理员后台标签管理**：/admin 新增「标签管理」区块——主/副标签列表（行内编辑名称/说明/
+   颜色，`PUT /api/tags/<id>` 本轮起支持改 name，(name,kind) 冲突 409）、新建标签（描述必填）、
+   删除（confirm 提示不影响源身上同名标签）。
+4. **删除导航栏统计小字**：删掉顶部「xxxx 事件 · xxxxx 数据点」（index.html 的 #navStats +
+   app.js 的 loadNavStats 及调用）。
+5. **事件列表分页轮盘修复**：窗口从当前页 ±3 扩到 ±10 预渲染；新增 centerPager() 当前页居中
+   （含贴边收敛）；拖动时跟随鼠标的「第 X 页」浮动提示；像素↔页码换算取当前页相邻步进实测。
+   另修复一个真实 bug：#pgTrack 无 transform 时页码的 offsetParent 是 BODY 导致 offsetLeft
+   取到整页坐标、居中算错——已给 #pgTrack 加 position:relative 根治。
+6. **事件列表筛选区三排重排**：第一排 搜索/标签/副标签/排序；第二排 红移/RA/DEC 上下限 6 窄框
+   + T0 起止 2 框；第三排 3 个勾选框（仅有红移/仅有宿主/仅有光谱）+ 清除筛选。
+7. **详情页「返回列表」**：由主页 `#/` 改为事件列表 `#/list`。
+8. **光变图 now 线**：'now' 标签字号 11px→14px；越界时在对应图角画红色三角（与光谱紫色三角
+   共用 y 槽位分配，不重叠）。
+9. **手动坐标范围点溢出修复**：根因是 Chart.js v4 数据集 clip 缺省在散点有溢出量时不裁剪——
+   全部数据集显式 `clip:true`，误差棒手绘插件在 lcchart 侧包了一层 beforeDatasetsDraw clip
+   包装（未改共享 chart_plugins.js）。
+10. **单源光变图操作区整理为两排**：第一排 数据/Y/X/顶部轴 4 select + 基准时刻输入（加宽到
+    260px、placeholder 字号 0.72rem）；第二排 误差棒/显示当前时刻/显示光谱观测/静止系 4 勾选；
+    「复制光变图」固定最右端；删除单源光变图的「重置缩放」按钮（与坐标范围「恢复默认」重叠且
+    失效；多源对比页的重置缩放保留不动）。拟合参数输入框 placeholder 字号同步调小。
+11. **编辑标签改 chip 泡泡输入**：taginput.js 新增可复用 `attachChipInput(container, kind, initial)`
+    （逗号/回车固化 chip、×删除、空输入退格删尾、粘贴拆分、保留 datalist 补全）；详情页基本信息
+    编辑面板主/副标签改用它，保存仍走 ensureTagsRegistered（新 tag 必填描述）。
+12. **文章来源标记归一**：articles.source 的 'literature-mining'/'arxiv' 统一为 'bot'
+    （存量 3746 条已 UPDATE；ETL 导入处同步归一，大小写不敏感）。
+13. **多源对比页**：事件选择列表显示各源光变点数（meta 的 lc_count）；「基准时刻」从图头移除、
+    改为「各源对比波段」block 每源各一个输入（留空=该源 T0），绘图按各源自己的基准换算 x，
+    轴标题相应标注。
+
 ## 九、关键技术依赖
 
 | 组件 | 版本 | 用途 |
@@ -1765,6 +1809,23 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 ---
 
 ## 十一、版本历史
+
+### v2.24（2026-09-23）— 上限点开关 / 光谱波长类型 / 后台标签管理 / 列表筛选与分页修复 / 光变图操作区整理
+
+- 单源光变图与多源对比图新增「显示上限点」勾选（默认开；对比页上限点拆为独立倒三角数据集，见 §8.32）
+- spectra 表新增 `wavelength_type` 列（vacuum/air/NULL）：处理路径（`GET /api/spectra/<id>`、
+  银消改正 P92 求值前）默认先把波长转真空（Morton 1991，`backend/wavconvert.py`），文件与下载
+  保持原始值；上传/PUT/ETL 全链路支持，前端列表与上传弹窗加三档下拉
+- /admin 新增「标签管理」区块（主/副标签行内编辑/新建/删除；`PUT /api/tags/<id>` 起支持改名，冲突 409）
+- 事件列表：筛选区三排重排、分页轮盘修复（±10 预渲染、centerPager 居中、拖动页码提示；根治
+  #pgTrack 缺 position:relative 导致 offsetParent=BODY 的居中算错 bug）；删除导航栏统计小字；
+  详情页「返回列表」改 `#/list`
+- 光变图：now 线标签 14px + 越界红色三角；手动坐标范围点溢出修复（数据集显式 clip:true）；
+  操作区整理为两排、删除失效的「重置缩放」按钮；多源对比页基准时刻改为每源各一个输入、
+  事件选择列表显示光变点数；编辑标签改 chip 泡泡输入（attachChipInput）
+- articles.source 归一：'literature-mining'/'arxiv' → 'bot'（存量 3746 条 UPDATE + ETL 导入归一）
+- 验收证据：浏览器冒烟 20/20；分页居中修复根因 offsetParent（#pgTrack 加 position:relative）；
+  波长转换 Hα 6562.8→6564.61Å 验证；wl_type 上下线 PUT 实测；pager page40 居中 0 偏移
 
 ### v2.23（2026-09-22）— 标签索引表 / T0 元数据 / MJD 权威时间与基准时刻
 

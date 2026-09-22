@@ -534,9 +534,12 @@ def correct_spectrum(sess, spectrum_row):
     """
     对一条原始光谱生成银河系消光改正谱（依附父谱的二级产物，幂等可重算覆盖）。
 
-    改正口径与测光点一致：CSFD 尘埃图 E(B-V) + Pei(1992) 曲线 + Rv=3.1，
-    在观测者系波长上逐点改正 f_corr = f_obs × 10^(+0.4·A_λ)
-    （对 f_λ/f_ν/归一化流量同为乘性因子；波长列不变，误差列同乘）。
+    改正口径与测光点一致：CSFD 尘埃图 E(B-V) + Pei(1992) 曲线 + Rv=3.1；
+    波长先统一转成真空波长（wavelength_type 为 'air'/NULL 时按空气波长
+    处理做转换，'vacuum' 不转；wavconvert），再在观测者系真空波长上逐点
+    改正 f_corr = f_obs × 10^(+0.4·A_λ)
+    （对 f_λ/f_ν/归一化流量同为乘性因子；波长列保持父谱原始值不变，
+    误差列同乘）。
 
     子文件 <父文件名>_gextcor.json 复制父文件结构，仅替换 data 并补
     gext_corr/parent_filename/gext_ebv/gext_rv/gext_at 字段；
@@ -550,6 +553,7 @@ def correct_spectrum(sess, spectrum_row):
     from datetime import datetime, timezone
     import astropy.units as u
     from models import Transient, Spectrum
+    import wavconvert
 
     if spectrum_row.parent_id is not None:
         raise SpectrumGextError('该光谱已是银河系消光改正谱，不能对其再次改正（请对其原始谱执行改正）')
@@ -586,9 +590,13 @@ def correct_spectrum(sess, spectrum_row):
         raise SpectrumGextError('光谱无可用数据点')
 
     wavs = [p[0] for p in points]
+    # 先转真空波长再进 P92：'air'/未标注(NULL) 按空气波长处理做转换，
+    # 'vacuum' 原样；子谱波长列仍存父谱原始值（读路径再按同口径转）
+    wavs_vac, _ = wavconvert.to_vacuum_wavelengths(
+        wavs, spectrum_row.wavelength_type, sp.get('u_wavelengths'))
     # P92().extinguish(x, Av) 返回剩余流量比例 10^(-0.4·A_λ)
     try:
-        factors = _p92_model.extinguish(u.Quantity(wavs, u.Angstrom), Av=RV * ebv)
+        factors = _p92_model.extinguish(u.Quantity(wavs_vac, u.Angstrom), Av=RV * ebv)
     except ValueError:
         raise SpectrumGextError(
             f'光谱波长范围（{min(wavs):.4g}–{max(wavs):.4g} Å）超出 P92 消光曲线有效范围'
@@ -639,6 +647,8 @@ def correct_spectrum(sess, spectrum_row):
     child.observation_date = spectrum_row.observation_date
     child.file_path = child_rel
     child.spec_type = spectrum_row.spec_type
+    # 子谱波长列与父谱同一份原始值，继承父谱波长类型（转换口径一致）
+    child.wavelength_type = spectrum_row.wavelength_type
     child.extra_data = extra
 
     with open(child_abs, 'w') as f:

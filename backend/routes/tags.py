@@ -2,7 +2,8 @@
 标签索引表（主 tag / 副 tag 统一登记）
 GET  /api/tags              — 列表（可选 ?kind=main|sub 过滤；公开，首页标签分布说明用）
 POST /api/tags              — 新建（需登录；description 必填）
-PUT  /api/tags/<id>         — 更新说明/颜色（需登录）
+PUT  /api/tags/<id>         — 更新名称/说明/颜色（需登录；改名不影响
+                              transients 表存量的 tags/sub_tag 数组，仅改索引表条目）
 POST /api/tags/register     — 内部用：按 [{name, kind}] 幂等登记缺失条目（需登录）
 
 transients 写入（POST/PUT /api/transients）也会自动登记其中出现的未知 tag
@@ -79,12 +80,30 @@ def create_tag():
 @tags_bp.route('/<int:tag_id>', methods=['PUT'])
 @require_auth
 def update_tag(tag_id):
+    """更新 tag 索引条目（name/description/color）。
+
+    改名仅改索引表条目：transients 表存量的 tags/sub_tag 数组里挂的是
+    名称字符串，不会联动修改（存量源上的旧名仍为未登记状态，可重新登记）。
+    """
     body = request.get_json(force=True) or {}
     sess = get_session()
     try:
         tag = sess.query(Tag).filter(Tag.id == tag_id).first()
         if not tag:
             return {'error': 'Not found'}, 404
+        if 'name' in body:
+            new_name = (body['name'] or '').strip()
+            if not new_name:
+                return {'error': 'name 不能为空'}, 400
+            if len(new_name) > 64:
+                return {'error': 'name 长度不能超过 64 字符'}, 400
+            if new_name != tag.name:
+                dup = sess.query(Tag).filter(
+                    Tag.name == new_name, Tag.kind == tag.kind,
+                    Tag.id != tag.id).first()
+                if dup:
+                    return {'error': f'Tag "{new_name}" ({tag.kind}) already exists'}, 409
+                tag.name = new_name
         if 'description' in body:
             tag.description = (body['description'] or '').strip() or None
         if 'color' in body:

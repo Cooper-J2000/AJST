@@ -1,5 +1,5 @@
 // === App Shell + Hash Router ===
-import { api, getOverview, checkAuth, login, logout, showToast, exportTransients, exportLightcurves } from './api.js';
+import { checkAuth, login, logout, showToast, exportTransients, exportLightcurves } from './api.js';
 import { getTheme, toggleTheme } from './theme.js';
 
 const app = document.getElementById('app');
@@ -75,17 +75,7 @@ async function navigate() {
 // Listen for hash changes
 window.addEventListener('hashchange', navigate);
 
-// Load nav stats
-async function loadNavStats() {
-  try {
-    const s = await getOverview();
-    document.getElementById('navStats').textContent =
-      `${s.n_transients} 事件 · ${s.n_lightcurves} 数据点`;
-  } catch {}
-}
-
 // Bootstrap
-loadNavStats();
 checkAuthStatus();
 navigate();
 

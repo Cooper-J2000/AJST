@@ -31,7 +31,7 @@
     </div>
   </nav>
 
-  <main class="container py-4" style="max-width: 760px;">
+  <main class="container py-4" style="max-width: 960px;">
 
     <!-- 管理员登录 -->
     <div id="loginPanel" class="card mx-auto" style="max-width: 380px; display:none;">
@@ -58,12 +58,41 @@
         </div>
       </div>
 
-      <div class="card">
+      <div class="card mb-3">
         <div class="card-body">
           <h6 class="card-title"><i class="bi bi-people"></i> 用户列表</h6>
           <table class="table table-sm align-middle">
             <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>创建时间 (UTC)</th><th class="text-end">操作</th></tr></thead>
             <tbody id="userTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 标签管理 -->
+      <div class="card mb-3">
+        <div class="card-body">
+          <h6 class="card-title"><i class="bi bi-tag"></i> 新建标签</h6>
+          <div class="row g-2 align-items-center">
+            <div class="col"><input type="text" class="form-control form-control-sm" id="newTagName" placeholder="名称"></div>
+            <div class="col-auto">
+              <select class="form-select form-select-sm" id="newTagKind">
+                <option value="main">主标签</option>
+                <option value="sub">副标签</option>
+              </select>
+            </div>
+            <div class="col"><input type="text" class="form-control form-control-sm" id="newTagDesc" placeholder="说明（必填）"></div>
+            <div class="col-auto"><input type="color" class="form-control form-control-color form-control-sm" id="newTagColor" value="#6ea8fe" title="标签颜色"></div>
+            <div class="col-auto"><button class="btn btn-sm btn-primary" onclick="createTagEntry()">添加</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <h6 class="card-title"><i class="bi bi-tags"></i> 标签列表</h6>
+          <table class="table table-sm align-middle">
+            <thead><tr><th>ID</th><th>名称</th><th>类型</th><th>说明</th><th>颜色</th><th class="text-end">操作</th></tr></thead>
+            <tbody id="tagTableBody"></tbody>
           </table>
         </div>
       </div>
@@ -74,13 +103,14 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script type="module">
-import { api } from './js/api.js';
+import { api, getTags, createTag, updateTag, deleteTag } from './js/api.js';
 import { esc } from './js/utils.js';
 
 // 内联 onclick 依赖的全局入口（module 作用域不产全局，显式挂 window）
 window.doLogin = doLogin;
 window.doLogout = doLogout;
 window.createUser = createUser;
+window.createTagEntry = createTagEntry;
 
 function toast(msg, ok = true) {
   const c = document.getElementById('toastContainer');
@@ -180,6 +210,86 @@ async function deleteUser(id, username) {
   } catch (e) { toast(e.message, false); }
 }
 
+// ─── 标签管理 ───
+let tagRows = {};
+
+// <input type="color"> 只接受 #rrggbb，库里 color 可空/自由文本，渲染与保存比较统一走归一值
+function normColor(c) {
+  return /^#[0-9a-fA-F]{6}$/.test(c || '') ? c.toLowerCase() : '#6ea8fe';
+}
+
+async function loadTags() {
+  const tags = await getTags();
+  tagRows = Object.fromEntries(tags.map(t => [t.id, t]));
+  document.getElementById('tagTableBody').innerHTML = tags.map(t => `
+    <tr>
+      <td>${t.id}</td>
+      <td><input type="text" class="form-control form-control-sm" data-f="name" value="${esc(t.name)}"></td>
+      <td>${t.kind === 'sub' ? '<span class="badge text-bg-info">副标签</span>' : '<span class="badge text-bg-primary">主标签</span>'}</td>
+      <td><input type="text" class="form-control form-control-sm" data-f="description" value="${esc(t.description || '')}"></td>
+      <td><input type="color" class="form-control form-control-color form-control-sm" data-f="color" value="${normColor(t.color)}" title="标签颜色"></td>
+      <td class="text-end text-nowrap">
+        <button class="btn btn-sm btn-outline-secondary" data-save-tag="${t.id}" title="保存修改"><i class="bi bi-check-lg"></i></button>
+        <button class="btn btn-sm btn-outline-danger" data-del-tag="${t.id}" data-tname="${esc(t.name)}"><i class="bi bi-trash"></i></button>
+      </td>
+    </tr>`).join('');
+}
+
+// 标签行内保存/删除：与用户表一致的 data-* + 事件委托
+document.getElementById('tagTableBody').addEventListener('click', (e) => {
+  const sv = e.target.closest('[data-save-tag]');
+  if (sv) { saveTagRow(sv.dataset.saveTag, sv.closest('tr')); return; }
+  const del = e.target.closest('[data-del-tag]');
+  if (del) deleteTagRow(del.dataset.delTag, del.dataset.tname);
+});
+
+async function createTagEntry() {
+  const name = document.getElementById('newTagName').value.trim();
+  const kind = document.getElementById('newTagKind').value;
+  const description = document.getElementById('newTagDesc').value.trim();
+  const color = document.getElementById('newTagColor').value;
+  if (!name) { toast('标签名称不能为空', false); return; }
+  if (!description) { toast('新建标签必须填写文字说明', false); return; }
+  try {
+    await createTag({ name, kind, description, color });
+    document.getElementById('newTagName').value = '';
+    document.getElementById('newTagDesc').value = '';
+    toast(`已添加标签 ${name}`);
+    loadTags();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function saveTagRow(id, tr) {
+  const t = tagRows[id];
+  if (!t) return;
+  const name = tr.querySelector('[data-f="name"]').value.trim();
+  const description = tr.querySelector('[data-f="description"]').value.trim();
+  const color = tr.querySelector('[data-f="color"]').value;
+  if (!name) { toast('标签名称不能为空', false); return; }
+  const body = {};
+  if (name !== t.name) body.name = name;
+  if (description !== (t.description || '')) body.description = description;
+  if (color !== normColor(t.color)) body.color = color;
+  if (!Object.keys(body).length) { toast('没有改动'); return; }
+  try {
+    await updateTag(id, body);
+    toast(`已更新标签 ${name}`);
+    loadTags();
+  } catch (e) {
+    // (name, kind) 冲突等错误（409）由后端返回中文 message，原样提示
+    toast(e.message, false);
+  }
+}
+
+async function deleteTagRow(id, name) {
+  if (!confirm(`确定删除标签 ${name}？仅删除索引条目，不影响已打在源身上的同名标签。`)) return;
+  try {
+    await deleteTag(id);
+    toast(`已删除标签 ${name}`);
+    loadTags();
+  } catch (e) { toast(e.message, false); }
+}
+
 async function boot() {
   let status = { authenticated: false };
   try { status = await api('GET', '/auth/status'); } catch {}
@@ -187,7 +297,7 @@ async function boot() {
   document.getElementById('loginPanel').style.display = isAdmin ? 'none' : 'block';
   document.getElementById('adminPanel').style.display = isAdmin ? 'block' : 'none';
   document.getElementById('logoutBtn').style.display = status.authenticated ? 'inline-block' : 'none';
-  if (isAdmin) loadUsers();
+  if (isAdmin) { loadUsers(); loadTags(); }
 }
 boot();
 </script>
