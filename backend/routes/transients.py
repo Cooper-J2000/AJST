@@ -11,9 +11,11 @@ from sqlalchemy import cast, String, or_, func, select, text
 from sqlalchemy.orm import defer
 from app import get_session, require_auth, require_admin
 from models import (Transient, HostGalaxy, Lightcurve, Spectrum, utcnow,
-                    prewarm_distance_modulus, refresh_distmod, distance_modulus)
+                    prewarm_distance_modulus, refresh_distmod, distance_modulus,
+                    t0_to_mjd)
+from routes.tags import register_tags
 from coords import parse_ra, parse_dec
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 import extinction
 
@@ -71,6 +73,28 @@ def list_transients():
         tag = request.args.get('tag', '').strip()
         if tag:
             q = q.filter(Transient.tags.contains([tag]))
+        sub_tag = request.args.get('sub_tag', '').strip()
+        if sub_tag:
+            q = q.filter(Transient.sub_tag.contains([sub_tag]))
+        # --- T0 日期范围（UTC；日期型右端点含当天，即 < 次日 00:00） ---
+        def _parse_t0_arg(raw, end_of_day=False):
+            if not raw:
+                return None
+            try:
+                dt = datetime.fromisoformat(raw.strip().replace('Z', '+00:00'))
+                if dt.tzinfo is not None:
+                    dt = dt.replace(tzinfo=None)
+                if end_of_day and len(raw.strip()) <= 10:
+                    dt = dt + timedelta(days=1)
+                return dt
+            except (ValueError, TypeError):
+                return None
+        t0_from = _parse_t0_arg(request.args.get('t0_from', '').strip())
+        t0_to = _parse_t0_arg(request.args.get('t0_to', '').strip(), end_of_day=True)
+        if t0_from is not None:
+            q = q.filter(Transient.t0 >= t0_from)
+        if t0_to is not None:
+            q = q.filter(Transient.t0 < t0_to)
         # --- RA/Dec 范围 ---
         ra_min = _float_arg('ra_min')
         ra_max = _float_arg('ra_max')
@@ -94,6 +118,16 @@ def list_transients():
         elif has_host == 'false':
             q = q.filter(Transient.id.notin_(
                 sess.query(HostGalaxy.transient_id)))
+        # --- 是否有光谱数据（二级产物改正谱不计） ---
+        has_spectra = request.args.get('has_spectra')
+        if has_spectra == 'true':
+            q = q.filter(Transient.id.in_(
+                sess.query(Spectrum.transient_id)
+                    .filter(Spectrum.parent_id.is_(None))))
+        elif has_spectra == 'false':
+            q = q.filter(Transient.id.notin_(
+                sess.query(Spectrum.transient_id)
+                    .filter(Spectrum.parent_id.is_(None))))
         # --- 排序 ---
         sort = request.args.get('sort', 't0')
         if sort not in SORTABLE:
@@ -162,7 +196,8 @@ def list_transients_meta():
     try:
         rows = sess.execute(
             select(Transient.id, Transient.ra, Transient.dec, Transient.redshift,
-                   Transient.tags, Transient.aliases, Transient.gext_distmod)
+                   Transient.tags, Transient.aliases, Transient.gext_distmod,
+                   Transient.t0)
             .order_by(Transient.id)).all()
         # 距离模数批量预热（未命中的 z 一次向量化），逐行只命中持久化值/缓存
         prewarm_distance_modulus([t.redshift for t in rows])
@@ -171,6 +206,7 @@ def list_transients_meta():
             'ra': t.ra,
             'dec': t.dec,
             'redshift': t.redshift,
+            't0': t.t0.isoformat() if t.t0 else None,
             'tags': t.tags or [],
             'aliases': t.aliases or [],
             'distmod': (t.gext_distmod if t.gext_distmod is not None
@@ -191,6 +227,20 @@ def list_transient_tags():
             "jsonb_array_elements_text(tags) elem "
             "WHERE jsonb_typeof(tags) = 'array' ORDER BY 1")).fetchall()
         return jsonify({'tags': [r[0] for r in rows]})
+    finally:
+        sess.close()
+
+
+@transients_bp.route('/sub_tags', methods=['GET'])
+def list_transient_sub_tags():
+    """全部源的 sub_tag（副标签）去重并集，供列表页副标签筛选下拉。"""
+    sess = get_session()
+    try:
+        rows = sess.execute(text(
+            "SELECT DISTINCT elem FROM transients, LATERAL "
+            "jsonb_array_elements_text(sub_tag) elem "
+            "WHERE jsonb_typeof(sub_tag) = 'array' ORDER BY 1")).fetchall()
+        return jsonify({'sub_tags': [r[0] for r in rows]})
     finally:
         sess.close()
 
@@ -227,6 +277,9 @@ def create_transient():
         t = Transient(id=body['id'])
         _apply_transient_fields(t, body)
         sess.add(t)
+        # 新源的 tag 自动登记进索引表（主/副分层；description 留空待补）
+        register_tags(sess, t.tags, 'main')
+        register_tags(sess, t.sub_tag, 'sub')
         extinction.refresh_ebv(t)      # 坐标建立 → 计算 E(B-V) 缓存（无坐标则置 None）
         sess.commit()
         return jsonify(t.to_dict()), 201
@@ -249,8 +302,19 @@ def update_transient(tid):
             return {'error': 'Not found'}, 404
         old_ra, old_dec = t.ra, t.dec
         old_z = t.redshift
+        old_t0 = t.t0
         _apply_transient_fields(t, body)
         t.updated_at = utcnow()
+        # tag 变动 → 自动登记进索引表（主/副分层）
+        register_tags(sess, t.tags, 'main')
+        register_tags(sess, t.sub_tag, 'sub')
+        # T0 变动 → 该源全部光变点的 MJD 重算（MJD 为权威时间，随 T0 联动；
+        # T0 被清除则 MJD 置空，time 缓存列保持不变）
+        if t.t0 != old_t0:
+            new_mjd = t0_to_mjd(t.t0)
+            for lc in sess.query(Lightcurve).filter(
+                    Lightcurve.transient_id == tid).all():
+                lc.mjd = (new_mjd + lc.time / 86400.0) if new_mjd is not None else None
         # 红移变动 → 刷新距离模数缓存
         if t.redshift != old_z:
             refresh_distmod(t)
@@ -289,7 +353,7 @@ def delete_transient(tid):
 def _apply_transient_fields(t, body):
     """将请求体字段映射到模型（可扩展）。
     约定：传 null 或空字符串 = 清空该字段；不传 = 保持不变。"""
-    for field in ('redshift', 'pos_error'):
+    for field in ('redshift', 'pos_error', 't0_offset'):
         if field in body:
             v = body[field]
             setattr(t, field, float(v) if v not in (None, '') else None)
@@ -299,7 +363,7 @@ def _apply_transient_fields(t, body):
     if 'dec' in body:
         t.dec = parse_dec(body['dec'])
     for field in ('trigger_instrument', 'redshift_type', 'redshift_ref',
-                  'pos_error_unit', 'pos_ref'):
+                  'pos_error_unit', 'pos_ref', 't0_ref', 't0_offset_ref'):
         if field in body:
             v = body[field]
             setattr(t, field, str(v) if v not in (None, '') else None)

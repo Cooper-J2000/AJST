@@ -2,6 +2,7 @@
 import { app, showLoading, showError } from './layout.js';
 import { createTransient, saveHost, showToast } from '../api.js';
 import { parseRA, parseDec, attachCoordHint } from '../coords.js';
+import { attachTagInput, ensureTagsRegistered } from '../taginput.js';
 
 export async function render() {
   app.innerHTML = `
@@ -38,6 +39,19 @@ export async function render() {
                   <label class="form-label">T0</label>
                   <input type="text" class="form-control" id="fT0" placeholder="2025-12-02T01:48:23Z">
                 </div>
+                <div class="col-md-4">
+                  <label class="form-label">T0 引用</label>
+                  <input type="text" class="form-control" id="fT0Ref" placeholder="GCN 42939">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">T0 偏移量 (秒)</label>
+                  <input type="number" class="form-control" id="fT0Offset" step="any" placeholder="0">
+                  <div class="form-text">正=向后，负=提前</div>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">T0 偏移量引用</label>
+                  <input type="text" class="form-control" id="fT0OffsetRef" placeholder="GCN 42940">
+                </div>
                 <div class="col-md-3">
                   <label class="form-label">红移</label>
                   <input type="number" class="form-control" id="fZ" step="any" placeholder="2.785">
@@ -72,8 +86,12 @@ export async function render() {
                   <input type="text" class="form-control" id="fPosRef" placeholder="GCN 42956">
                 </div>
                 <div class="col-md-6">
-                  <label class="form-label">标签 (逗号分隔)</label>
+                  <label class="form-label">主标签 (逗号分隔)</label>
                   <input type="text" class="form-control" id="fTags" placeholder="fxt, grb">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">副标签 (逗号分隔)</label>
+                  <input type="text" class="form-control" id="fSubTags" placeholder="EE, sgrb">
                 </div>
                 <div class="col-md-6">
                   <label class="form-label">别名 (逗号分隔)</label>
@@ -140,6 +158,8 @@ export async function render() {
   attachCoordHint(document.getElementById('fDec'), false);
   attachCoordHint(document.getElementById('fHostRa'), true);
   attachCoordHint(document.getElementById('fHostDec'), false);
+  attachTagInput(document.getElementById('fTags'), 'main');
+  attachTagInput(document.getElementById('fSubTags'), 'sub');
 
   window.submitNewTransient = async () => {
     const getId = (id) => document.getElementById(id)?.value?.trim() || null;
@@ -164,19 +184,39 @@ export async function render() {
     const hDec = coord('fHostDec', false, '宿主 Dec');
     if (hDec === undefined) return false;
 
+    // T0 偏移量：非空时必须是数字（可正可负）
+    const t0OffsetStr = getId('fT0Offset');
+    let t0Offset = null;
+    if (t0OffsetStr) {
+      t0Offset = Number(t0OffsetStr);
+      if (!isFinite(t0Offset)) { showToast('T0 偏移量需为数字（秒，可正可负）', 'danger'); return false; }
+    }
+
+    // 主/副标签保存前登记（新标签需补文字说明；返回 null = 用户中止，不保存）
+    const tags = await ensureTagsRegistered(
+      (getId('fTags') || '').split(',').map(s => s.trim()).filter(Boolean), 'main');
+    if (tags === null) return false;
+    const subTags = await ensureTagsRegistered(
+      (getId('fSubTags') || '').split(',').map(s => s.trim()).filter(Boolean), 'sub');
+    if (subTags === null) return false;
+
     const data = {
       id,
       trigger_instrument: getId('fTrigger'),
       ra: raV,
       dec: decV,
       t0: getId('fT0') || null,
+      t0_ref: getId('fT0Ref'),
+      t0_offset: t0Offset,
+      t0_offset_ref: getId('fT0OffsetRef'),
       redshift: parseFloatOrNull(getId('fZ')),
       redshift_type: getId('fZType') || null,
       redshift_ref: getId('fZRef'),
       pos_error: parseFloatOrNull(getId('fPosErr')),
       pos_error_unit: getId('fPosErrUnit') || 'arcsec',
       pos_ref: getId('fPosRef'),
-      tags: (getId('fTags') || '').split(',').map(s => s.trim()).filter(Boolean),
+      tags,
+      sub_tag: subTags,
       aliases: (getId('fAliases') || '').split(',').map(s => s.trim()).filter(Boolean),
     };
 

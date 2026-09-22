@@ -4,9 +4,10 @@
 // 这些 handler 原本也只依赖 currentTid 与模块状态，不捕获 render 的局部变量）。
 import {
   showToast, isAuthed, isAdmin, updateTransient, runExtinction,
-  createArticle, updateArticle, deleteArticle, getHost,
+  createArticle, updateArticle, deleteArticle, getHost, exportLightcurves,
 } from '../api.js';
 import { parseRA, parseDec, attachCoordHint } from '../coords.js';
+import { attachTagInput, ensureTagsRegistered } from '../taginput.js';
 import { esc, escAttr, safeUrl, sig3 } from '../utils.js';
 import { render, currentTid } from './detail.js';
 
@@ -26,6 +27,12 @@ export function initOverview(transient, articles) {
 export function attachEditCoordHints() {
   attachCoordHint(document.getElementById('editRa'), true);
   attachCoordHint(document.getElementById('editDec'), false);
+}
+
+// 主/副标签输入 datalist 自动补全；模板插入后每轮 render 调用
+export function attachEditTagInputs() {
+  attachTagInput(document.getElementById('editTags'), 'main');
+  attachTagInput(document.getElementById('editSubTags'), 'sub');
 }
 
 // ─── 基本信息：相关研究文章条目（简称 + 标题 + 链接 + BibTeX，可多条） ───
@@ -243,10 +250,29 @@ window.saveDetailEdit = async () => {
   const decV = parseDec(val('editDec'));
   if (typeof decV === 'number' && isNaN(decV)) { showToast('Dec 格式无法解析（支持十进制度或时分秒，如 +40d36m44.8s）', 'danger'); return; }
 
+  // T0 偏移量：空 → null，否则必须是数字（秒，可正可负）
+  const t0OffsetStr = val('editT0Offset');
+  let t0Offset = null;
+  if (t0OffsetStr) {
+    t0Offset = Number(t0OffsetStr);
+    if (!isFinite(t0Offset)) { showToast('T0 偏移量需为数字（秒，可正可负）', 'danger'); return; }
+  }
+
+  // 主/副标签保存前登记（新标签需补文字说明；返回 null = 用户中止，不保存）
+  const tags = await ensureTagsRegistered(
+    (val('editTags') || '').split(',').map(s => s.trim()).filter(Boolean), 'main');
+  if (tags === null) return;
+  const subTags = await ensureTagsRegistered(
+    (val('editSubTags') || '').split(',').map(s => s.trim()).filter(Boolean), 'sub');
+  if (subTags === null) return;
+
   const body = {
     ra: raV,
     dec: decV,
     t0: val('editT0'),
+    t0_ref: val('editT0Ref'),
+    t0_offset: t0Offset,
+    t0_offset_ref: val('editT0OffsetRef'),
     redshift: num('editZ'),
     redshift_type: val('editZType') || null,
     redshift_ref: val('editZRef'),
@@ -254,8 +280,8 @@ window.saveDetailEdit = async () => {
     pos_ref: val('editPosRef'),
     comment: val('editComment'),
     trigger_instrument: val('editTrigger'),
-    tags: (val('editTags') || '').split(',').map(s => s.trim()).filter(Boolean),
-    sub_tag: (val('editSubTags') || '').split(',').map(s => s.trim()).filter(Boolean),
+    tags,
+    sub_tag: subTags,
     aliases: (val('editAliases') || '').split(',').map(s => s.trim()).filter(Boolean),
   };
 
@@ -267,4 +293,50 @@ window.saveDetailEdit = async () => {
   } catch (err) {
     showToast(`保存失败: ${err.message}`, 'danger');
   }
+};
+
+// ─── 导出光变数据（弹窗选基准时刻：源 T0 / 自定义 MJD / 自定义 UTC） ───
+// 弹窗模板在 detail.js（#lcExportModal）；tRef=null 时后端按源 T0 导出
+function _lcExportHint() {
+  const hint = document.getElementById('lcExportHint');
+  const mode = document.getElementById('lcExportMode')?.value || 't0';
+  const custom = document.getElementById('lcExportCustom');
+  if (!hint || !custom) return;
+  custom.style.display = mode === 't0' ? 'none' : '';
+  if (mode === 't0') {
+    hint.textContent = (_transient && _transient.t0)
+      ? `将以源 T0（${_transient.t0}）为基准导出。`
+      : '该源无 T0，将以 MJD 列为准导出。';
+  } else {
+    hint.textContent = mode === 'mjd'
+      ? '请输入 MJD 数字作为基准时刻。'
+      : '请输入 UTC 时间（ISO 8601，如 2025-12-02T01:48:23Z）。';
+  }
+}
+
+window.exportLCWithRef = () => {
+  const mode = document.getElementById('lcExportMode');
+  if (!mode) return;
+  mode.value = 't0';
+  const custom = document.getElementById('lcExportCustom');
+  if (custom) custom.value = '';
+  _lcExportHint();
+  new bootstrap.Modal(document.getElementById('lcExportModal')).show();
+};
+
+window.lcExportModeChanged = () => _lcExportHint();
+
+window.doLCExport = () => {
+  const mode = document.getElementById('lcExportMode')?.value || 't0';
+  const custom = document.getElementById('lcExportCustom')?.value.trim() || '';
+  let tRef = null;
+  if (mode === 'mjd') {
+    if (!custom || !isFinite(Number(custom))) { showToast('请输入有效的 MJD 数字', 'warning'); return; }
+    tRef = custom;
+  } else if (mode === 'utc') {
+    if (!custom || isNaN(Date.parse(custom))) { showToast('请输入有效的 UTC 时间（ISO 8601）', 'warning'); return; }
+    tRef = custom;
+  }
+  exportLightcurves(currentTid, 'csv', tRef);
+  bootstrap.Modal.getInstance(document.getElementById('lcExportModal'))?.hide();
 };

@@ -61,6 +61,24 @@ def init_db():
             "ALTER TABLE transients ADD COLUMN IF NOT EXISTS gext_distmod DOUBLE PRECISION"))
         conn.execute(text(
             "ALTER TABLE host_galaxies ADD COLUMN IF NOT EXISTS gext_distmod DOUBLE PRECISION"))
+        # 2026-09-22：T0 引用/偏移量（纯元数据，不参与时间计算）
+        conn.execute(text(
+            "ALTER TABLE transients ADD COLUMN IF NOT EXISTS t0_ref TEXT"))
+        conn.execute(text(
+            "ALTER TABLE transients ADD COLUMN IF NOT EXISTS t0_offset DOUBLE PRECISION"))
+        conn.execute(text(
+            "ALTER TABLE transients ADD COLUMN IF NOT EXISTS t0_offset_ref TEXT"))
+        # 2026-09-22：光变表新增 MJD 列（观测时间的权威依据；time 为相对 T0 的缓存列）
+        conn.execute(text(
+            "ALTER TABLE lightcurves ADD COLUMN IF NOT EXISTS mjd DOUBLE PRECISION"))
+        # 2026-09-22：tags 表成为主/副 tag 统一索引表（kind 区分层级，唯一约束 (name, kind)）
+        conn.execute(text(
+            "ALTER TABLE tags ADD COLUMN IF NOT EXISTS kind VARCHAR(8)"
+            " NOT NULL DEFAULT 'main'"))
+        conn.execute(text(
+            "ALTER TABLE tags DROP CONSTRAINT IF EXISTS tags_name_key"))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_tags_name_kind ON tags(name, kind)"))
     # 种子管理员：无任何 admin 账户时创建 admin，密码取 AUTH_PASSWORD
     # （环境变量 AJST_CATALOG_PASSWORD；未设置时为每次启动随机生成，
     #  请务必通过环境变量显式设置一个强密码，见 docs/TECHNICAL.md §7.1）

@@ -6,6 +6,7 @@ import { chartColors, academicFonts } from '../theme.js';
 import { ensureFilterCache, mJyToMagAB, pointToMJy } from '../bands.js';
 import { esc, minOf, maxOf } from '../utils.js';
 import { createYErrBarPlugin } from '../chart_plugins.js';
+import { t0ToMJD, parseRefEpoch } from './detail_lcchart.js';
 
 // ─── 工具函数 ───
 function sciFmt(v) {
@@ -23,6 +24,7 @@ let cmpAxisRange = { xmin: null, xmax: null, ymin: null, ymax: null };  // 框�
 let selectedTransients = [];
 let filtersCache = null;
 let _cmpReqId = 0; // 异步请求令牌
+let _cmpRefMJD = null;   // 统一基准时刻（MJD；null = 各源 T0，即默认行为）
 let transientMeta = {};    // id → { z, dm }（红移 / 距离模数）
 let lastAllLC = null;      // 最近一次拉取的光变数据（与 selectedTransients 对齐）
 let bandSel = {};          // id → 已勾选波段数组（默认全选）
@@ -51,7 +53,8 @@ export async function render() {
     filtersCache = filters;
     transientMeta = {};
     allTransients = data.items;
-    for (const t of data.items) transientMeta[t.id] = { z: t.redshift, dm: t.distmod ?? null };
+    for (const t of data.items) transientMeta[t.id] = { z: t.redshift, dm: t.distmod ?? null, t0: t.t0 ?? null };
+    _cmpRefMJD = null;   // 页面重渲染后输入框清空，基准同步复位为各源 T0
     // 滤波器缓存（波长 / Vega→AB 系数）
     ensureFilterCache(filters);
 
@@ -109,6 +112,11 @@ export async function render() {
                   <input class="form-check-input" type="checkbox" id="cmpRestFrame" onchange="renderCompareChart()">
                   <label class="form-check-label small" for="cmpRestFrame">静止系 t/(1+z)</label>
                 </div>
+                <span class="d-inline-flex align-items-center gap-1" title="统一横轴零点：填 MJD 数字或 UTC 时间（如 2022-10-09T13:16:59）；留空或填 t0 = 各源 T0">
+                  <span class="text-secondary small">基准时刻:</span>
+                  <input type="text" class="form-control form-control-sm" id="cmpRefEpoch" style="width:160px"
+                         placeholder="留空=各源 T0；MJD 或 UTC">
+                </span>
                 <button class="btn btn-sm btn-outline-secondary" onclick="resetCmpZoom()" title="恢复默认范围"><i class="bi bi-arrows-expand"></i></button>
                 <span class="text-secondary small" title="在图上按住左键拖出矩形框可放大该区域，左上角按钮恢复默认"><i class="bi bi-info-circle"></i> 可框选缩放</span>
               </div>
@@ -222,6 +230,20 @@ export async function render() {
 
     window.renderCompareChart = renderCompareChart;
 
+    // 统一基准时刻：留空/t0 = 各源 T0（默认）；否则按 mjd 换算横轴并重绘
+    document.getElementById('cmpRefEpoch').addEventListener('change', (e) => {
+      const r = parseRefEpoch(e.target.value);
+      if (r.err) {
+        alert('基准时刻无法解析：请填 MJD 数字或 UTC 时间（留空/t0 = 各源 T0）');
+        e.target.value = _cmpRefMJD != null ? String(_cmpRefMJD) : '';
+        return;
+      }
+      if (r.mjd === _cmpRefMJD) return;
+      _cmpRefMJD = r.mjd;
+      e.target.value = r.mjd != null ? String(r.mjd) : '';   // 归一化显示为 MJD
+      renderCompareChart();
+    });
+
     window.cmpErrToggle = (on) => {   // 误差棒开关：只影响绘制，无动画重绘即可
       _cmpShowErr = on;
       if (compareChart) compareChart.update('none');
@@ -268,6 +290,7 @@ function renderCompareChart() {
     const meta = transientMeta[id] || {};
     if (absMag && meta.dm == null) return; // 无红移的源无法计算距离模数
     const zfac = (restFrame && meta.z != null && meta.z > -1) ? (1 + meta.z) : 1;
+    const t0mjd = t0ToMJD(meta.t0);   // 该源 T0（统一基准模式下对无 mjd 的点兜底）
     const wanted = bandSel[id] ? new Set(bandSel[id]) : null;
     // 按 (源, 波段) 拆数据集：同源同色，不同波段不同点形
     const byBand = {};
@@ -286,12 +309,22 @@ function renderCompareChart() {
         // 绝对星等模式下原始值≤0 的点无对应星等，不绘制（流量模式截断到 log 轴底部并在 tooltip 标注）
         if (absMag && clipped) return null;
         const tObs = p.time;
+        // 统一基准模式：x = ((p.mjd ?? 该源T0 + time/86400) − ref)×86400 / zfac；
+        // 源无 T0 且该点无 mjd：无法换算到统一基准，跳过该点
+        let x;
+        if (_cmpRefMJD != null) {
+          const mjd = (p.mjd != null) ? p.mjd : (t0mjd != null ? t0mjd + p.time / 86400 : null);
+          if (mjd == null) return null;
+          x = (mjd - _cmpRefMJD) * 86400 / zfac;
+        } else {
+          x = tObs / zfac;
+        }
         if (absMag) {
           // 绝对星等模式:误差换算到星等空间 σ_m = (2.5/ln10)·σ_F/F
           const errMag = err != null && err > 0 ? (2.5 / Math.LN10) * err / y : null;
-          return { x: tObs / zfac, y: mJyToMagAB(y) - meta.dm, err: errMag, tObs, clipped };
+          return { x, y: mJyToMagAB(y) - meta.dm, err: errMag, tObs, clipped };
         }
-        return { x: tObs / zfac, y, err, tObs, clipped };
+        return { x, y, err, tObs, clipped };
       }).filter(d => d && isFinite(d.x) && isFinite(d.y));
       if (pts.length > 0) {
         datasets.push({
@@ -313,7 +346,8 @@ function renderCompareChart() {
       const meta = chart.getDatasetMeta(i);
       if (meta.hidden) return;
       ds.data.forEach(p => {
-        if (p.x > 0 && isFinite(p.x)) allX.push(p.x);
+        // 统一基准下线性轴的 x 可为负（基准前的点）；log 轴仍只取正值
+        if (isFinite(p.x) && (p.x > 0 || (_cmpRefMJD != null && xType !== 'logarithmic'))) allX.push(p.x);
         // 绝对星等模式 y 可为负（线性轴）；流量模式仅取正值（log 轴）
         if (absMag ? isFinite(p.y) : (isFinite(p.y) && p.y > 0)) allY.push(p.y);
       });
@@ -326,7 +360,8 @@ function renderCompareChart() {
         r = { min: mn * 0.8, max: mx * 1.5 };
       } else {
         const pad = (mx - mn) * 0.1;
-        r = { min: Math.max(0, mn - pad), max: mx + pad };
+        // 统一基准时 x 可为负，不做 ≥0 钳制
+        r = { min: _cmpRefMJD != null ? mn - pad : Math.max(0, mn - pad), max: mx + pad };
       }
       // 框选手动范围覆盖（null 端自动）
       if (cmpAxisRange.xmin != null) r.min = cmpAxisRange.xmin;
@@ -373,7 +408,13 @@ function renderCompareChart() {
       scales: {
         x: {
           type: xType,
-          title: { display: true, text: restFrame ? '静止系时间 t/(1+z) (s)' : '时间 (s)', color: cc.tick, font: fonts.title },
+          title: {
+            display: true,
+            text: _cmpRefMJD != null
+              ? (restFrame ? '静止系 t/(1+z)，统一基准 (s)' : 'time since 统一基准 (s)')
+              : (restFrame ? '静止系时间 t/(1+z) (s)' : '时间 (s)'),
+            color: cc.tick, font: fonts.title,
+          },
           grid: { color: cc.gridSoft },
           border: { color: cc.tick },
           ticks: { color: cc.tick, font: fonts.tick, callback: v => sciFmt(v) },

@@ -9,14 +9,41 @@ DELETE /api/lightcurves?transient_id=X     — 删除某源所有光变
 """
 from flask import Blueprint, request, jsonify, session
 from app import get_session, require_auth, require_admin, current_username
-from models import Lightcurve
+from models import Lightcurve, Transient, t0_to_mjd
 import extinction
 
 lightcurves_bp = Blueprint('lightcurves', __name__)
 
 # 支持排序的列（白名单）
-LC_SORTABLE = {'id', 'time', 'time_err', 'band', 'flux_density', 'flux_density_err',
+LC_SORTABLE = {'id', 'time', 'mjd', 'time_err', 'band', 'flux_density', 'flux_density_err',
                'telescope', 'instrument', 'created_at', 'updated_at'}
+
+
+def _t0_mjd_of(sess, tid, cache):
+    """源的 T0 → MJD（None 表示无 T0）。cache 为调用方提供的请求级字典
+    （批量写入时避免逐行查询；不能跨请求缓存，T0 可能被改）。"""
+    if tid not in cache:
+        t = sess.query(Transient).filter(Transient.id == tid).first()
+        cache[tid] = t0_to_mjd(t.t0) if t else None
+    return cache[tid]
+
+
+def _sync_time_mjd(t0_mjd, lc, body, creating=False):
+    """time（相对 T0 秒数，缓存列）与 mjd（权威时间）的写入联动：
+    - 显式给了 mjd：记录之；源有 T0 时用 mjd 重算 time。
+    - 只给了 time：源有 T0 时用 time 重算 mjd；无 T0 则 mjd 置 None。
+    两者都没给（仅新建时）：报错。"""
+    if 'mjd' in body:
+        v = body.get('mjd')
+        lc.mjd = None if v in (None, '') else float(v)
+        if lc.mjd is not None and t0_mjd is not None:
+            lc.time = (lc.mjd - t0_mjd) * 86400.0
+    elif 'time' in body and lc.time is not None:
+        lc.mjd = (t0_mjd + lc.time / 86400.0) if t0_mjd is not None else None
+    if creating and lc.time is None:
+        if lc.mjd is not None and t0_mjd is None:
+            raise ValueError('该源没有 T0，仅给 MJD 无法推算相对时间 time，请同时提供 time（秒）')
+        raise ValueError('time is required（或提供 mjd 且该源有 T0）')
 
 
 # 各经验模型的自由参数数（最少点数 = 参数数；N == 参数数时为退化拟合：只给参数、不给误差）
@@ -393,11 +420,15 @@ def batch_create():
     sess = get_session()
     try:
         records = []
+        t0_cache = {}
         for item in body:
             if 'transient_id' not in item:
                 return {'error': 'transient_id is required for each item'}, 400
             lc = Lightcurve(transient_id=item['transient_id'])
             _apply_lc_fields(lc, item)
+            # time/mjd 联动（MJD 为权威时间；time 由 T0 重算或触发 mjd 重算）
+            _sync_time_mjd(_t0_mjd_of(sess, item['transient_id'], t0_cache),
+                           lc, item, creating=True)
             lc.source = current_username()  # 网页录入：自动记录提交账户
             sess.add(lc)
             records.append(lc)
@@ -426,6 +457,8 @@ def update_lightcurve(lc_id):
             if not own and set(body.keys()) - {'discard'}:
                 return {'error': '普通用户仅可修改自己录入的记录；他人记录仅可切换 discard（扣点）'}, 403
         _apply_lc_fields(lc, body)
+        # time/mjd 联动（MJD 为权威时间；改 mjd 重算 time 缓存，改 time 重算 mjd）
+        _sync_time_mjd(_t0_mjd_of(sess, lc.transient_id, {}), lc, body)
         # 已做银消改正的数据点随变动自动重算（条件不满足则清除）
         extinction.recompute_point(sess, lc)
         sess.commit()
@@ -476,7 +509,7 @@ def delete_by_transient():
 
 # 必填字段（数据库 NOT NULL）不允许清空；其余字段传 null/空字符串即清空
 LC_REQUIRED_FLOATS = ('time', 'flux_density')
-LC_NULLABLE_FLOATS = ('time_err', 'flux_density_err', 'gext_Alambda',
+LC_NULLABLE_FLOATS = ('mjd', 'time_err', 'flux_density_err', 'gext_Alambda',
                       'mag_gextcor', 'mag_gextcor_err',
                       'flux_density_gextcor', 'flux_density_gextcor_err', 'weights')
 LC_REQUIRED_STRS = ('band', 'flux_density_unit')

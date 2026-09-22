@@ -13,7 +13,7 @@ import { syncLcPoint } from './detail_lcchart.js';
 
 // ─── 数据表列显示（lcColVis[key] 显式记录用户选择；未记录的按默认子集），localStorage 持久化 ───
 export const LC_COLS = [
-  ['time', '时间(s)'], ['time_err', '时间误差'], ['band', '波段'], ['flux_density', '流量/星等'],
+  ['time', '时间(s)'], ['mjd', 'MJD'], ['time_err', '时间误差'], ['band', '波段'], ['flux_density', '流量/星等'],
   ['flux_density_err', '误差'], ['flux_density_unit', '单位'], ['mag_system', '星等系统'],
   ['gext_corr', '银消'], ['upperlimit', '上限'], ['host_subtracted', '扣宿主'], ['gext_Alambda', '银消量'],
   ['mag_gextcor', '银消后AB星等'], ['mag_gextcor_err', '银消后星等误差'],
@@ -60,6 +60,7 @@ export function lcRowHTML(pt) {
     <tr id="lcRow_${pt.id}"${marked ? ' class="lc-row-mark"' : ''}>
       <td class="lc-mark-cell"><input type="checkbox" class="lc-mark-chk" data-id="${pt.id}" ${marked ? 'checked ' : ''}onchange="lcMarkRow(${pt.id}, this.checked)" title="标记该行（整行高亮；管理员可批量删除勾选项）"></td>
       <td class="lc-val" data-field="time" data-col="time">${fmtNum(pt.time, 1)}</td>
+      <td class="lc-val" data-field="mjd" data-col="mjd">${fmtNum(pt.mjd, 5)}</td>
       <td class="lc-val" data-field="time_err" data-col="time_err">${fmtNum(pt.time_err, 1)}</td>
       <td class="lc-val" data-field="band" data-col="band">${esc(pt.band)}</td>
       <td class="lc-val" data-field="flux_density" data-col="flux_density">${fmtNum(pt.flux_density, 3)}</td>
@@ -255,7 +256,8 @@ window.lcEditStart = (id) => {
         <option value="" ${val === '-' ? 'selected' : ''}>-</option>
       </select>`;
     } else {
-      cell.innerHTML = `<input type="text" class="form-control form-control-sm lc-edit-input" data-field="${field}" value="${val === '-' ? '' : escAttr(val)}" style="width:90px">`;
+      cell.innerHTML = `<input type="text" class="form-control form-control-sm lc-edit-input" data-field="${field}" value="${val === '-' ? '' : escAttr(val)}" style="width:90px">` +
+        (field === 'mjd' ? `<div class="small text-secondary text-nowrap">MJD 与相对秒数可互算，填其一即可</div>` : '');
     }
     editing = true;
   });
@@ -289,7 +291,7 @@ window.lcEditSave = async (id) => {
       body[field] = val === 'null' ? null : val === 'true';
     } else if (['upperlimit', 'gext_corr', 'discard'].includes(field)) {
       body[field] = val === 'true';
-    } else if (['time', 'time_err', 'flux_density', 'flux_density_err', 'gext_Alambda', 'mag_gextcor', 'mag_gextcor_err', 'flux_density_gextcor', 'flux_density_gextcor_err', 'weights'].includes(field)) {
+    } else if (['time', 'mjd', 'time_err', 'flux_density', 'flux_density_err', 'gext_Alambda', 'mag_gextcor', 'mag_gextcor_err', 'flux_density_gextcor', 'flux_density_gextcor_err', 'weights'].includes(field)) {
       body[field] = val ? parseFloat(val) : null;
     } else {
       body[field] = val || null;
@@ -305,7 +307,7 @@ window.lcEditSave = async (id) => {
 };
 
 // ─── 添加新光变记录 ───
-const LC_NEW_EDITABLE = new Set(['time','time_err','band','flux_density','flux_density_err','flux_density_unit','mag_system','gext_corr','upperlimit','host_subtracted','gext_Alambda','mag_gextcor','mag_gextcor_err','flux_density_gextcor','flux_density_gextcor_err','weights','discard','telescope','instrument','reference','comment']);
+const LC_NEW_EDITABLE = new Set(['time','mjd','time_err','band','flux_density','flux_density_err','flux_density_unit','mag_system','gext_corr','upperlimit','host_subtracted','gext_Alambda','mag_gextcor','mag_gextcor_err','flux_density_gextcor','flux_density_gextcor_err','weights','discard','telescope','instrument','reference','comment']);
 // 单位下拉候选（对齐 bands.js toMJy/pointToMJy 支持的单位；magnitude 配合 mag_system 列）
 const LC_NEW_UNITS = ['mJy', 'uJy', 'Jy', 'cgs(erg/cm2/s/Hz)', 'erg/cm2/s/keV', 'magnitude'];
 // 时间/时间误差乘积因子（提交时前端乘好以秒入库，time_unit 保持 's'）
@@ -345,6 +347,9 @@ window.lcAddNewRow = () => {
         `</select>`;
     } else if (f === 'time' || f === 'time_err') {
       input = `<div class="d-flex gap-1 align-items-center"><input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="${f}" style="width:80px">${tfacSelect(f)}</div>`;
+    } else if (f === 'mjd') {
+      input = `<input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="MJD" style="width:110px">` +
+        `<div class="small text-secondary text-nowrap">MJD 与相对秒数可互算，填其一即可</div>`;
     } else {
       input = `<input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="${f}" style="width:90px">`;
     }
@@ -376,7 +381,7 @@ window.lcAddNewSave = async () => {
   inputs.forEach(inp => {
     const field = inp.dataset.field;
     let val = inp.value.trim();
-    if (!val && ['time', 'band', 'flux_density', 'flux_density_unit'].includes(field)) {
+    if (!val && ['band', 'flux_density', 'flux_density_unit'].includes(field)) {
       missing = true;
       return;
     }
@@ -389,13 +394,18 @@ window.lcAddNewSave = async () => {
       const facEl = inp.closest('td')?.querySelector('.lc-new-tfac');
       const fac = facEl ? parseFloat(facEl.value) : 1;
       body[field] = val ? parseFloat(val) * (isFinite(fac) ? fac : 1) : null;
-    } else if (['flux_density', 'flux_density_err', 'gext_Alambda', 'mag_gextcor', 'mag_gextcor_err', 'flux_density_gextcor', 'flux_density_gextcor_err', 'weights'].includes(field)) {
+    } else if (['mjd', 'flux_density', 'flux_density_err', 'gext_Alambda', 'mag_gextcor', 'mag_gextcor_err', 'flux_density_gextcor', 'flux_density_gextcor_err', 'weights'].includes(field)) {
       body[field] = val ? parseFloat(val) : null;
     } else {
       body[field] = val || null;
     }
   });
-  if (missing) { showToast('请填写 time / band / flux_density', 'warning'); return; }
+  if (missing) { showToast('请填写 band / flux_density', 'warning'); return; }
+  // time 与 MJD 至少填一个；两者都给了原样提交，服务端负责互算
+  if (body.time == null && body.mjd == null) {
+    showToast('time 与 MJD 至少填一个', 'warning');
+    return;
+  }
   try {
     await createLightcurves([body]);
     showToast('已添加', 'success');

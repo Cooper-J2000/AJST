@@ -1,6 +1,6 @@
 // === Home Page (Swiss International Typographic Style) ===
 import { app, showLoading, showError, navSeq, navStale } from './layout.js';
-import { api, getOverview, getFittingEngines } from '../api.js';
+import { api, getOverview, getFittingEngines, getTags } from '../api.js';
 import { esc } from '../utils.js';
 
 // 各标签页入口（编号列表式导航）
@@ -26,13 +26,14 @@ function statBlock(value, label, en) {
 export async function render() {
   showLoading();
   const seq = navSeq();  // 导航序号：请求期间切到其它路由则丢弃本次渲染
-  let s, tagStats = null, relCount = null;
+  let s, tagStats = null, relCount = null, tagIndex = null;
   try {
     let relData = null;
-    [s, tagStats, relData] = await Promise.all([
+    [s, tagStats, relData, tagIndex] = await Promise.all([
       getOverview(),
       api('GET', '/stats/tags').catch(() => null),  // 标签统计失败不阻塞主页
       api('GET', '/relations').catch(() => null),   // 关系统计数失败回退静态文案
+      getTags().catch(() => null),                  // 标签说明索引失败静默降级（只显示名字）
     ]);
     if (relData && Array.isArray(relData.relations)) relCount = relData.relations.length;
   } catch (err) {
@@ -40,6 +41,14 @@ export async function render() {
     return;
   }
   if (navStale(seq)) return;  // 请求期间已切换路由
+
+  // 标签 name → description 索引（按 kind 分主/副；无索引时为空表，只显示名字）
+  const tagDesc = { main: {}, sub: {} };
+  if (Array.isArray(tagIndex)) {
+    for (const t of tagIndex) {
+      if (t && t.name && t.description && tagDesc[t.kind]) tagDesc[t.kind][t.name] = t.description;
+    }
+  }
 
   // 拟合引擎版本（接口失败时静默不显示）
   let engineVer = null;
@@ -75,17 +84,24 @@ export async function render() {
           const noSub = (tagStats.no_sub || {})[t.tag] || 0;
           const rows = [...subs.map(x => ({ name: x.sub_tag, count: x.count })),
                         ...(noSub ? [{ name: '未标注', count: noSub }] : [])];
+          const desc = tagDesc.main[t.tag] || null;
           return `
         <div class="swiss-tag-item">
           <div class="swiss-tag-row" onclick="this.parentElement.classList.toggle('open')">
-            <span class="swiss-tag-name">${esc(t.tag)}</span>
-            <span></span>
+            <span class="swiss-tag-name"${desc ? ` title="${esc(desc)}"` : ''}>${esc(t.tag)}</span>
+            <span class="swiss-tag-desc">${desc ? `<small class="text-secondary">${esc(desc)}</small>` : ''}</span>
             <span class="swiss-tag-count">${fmt(t.count)}</span>
             <span class="swiss-tag-toggle">+</span>
           </div>
           <div class="swiss-tag-subs">
-            ${rows.length ? rows.map(r => `
-            <div class="swiss-tag-subrow"><span>${esc(r.name)}</span><span>${fmt(r.count)}</span></div>`).join('')
+            ${rows.length ? rows.map(r => {
+              const sd = r.name === '未标注' ? null : (tagDesc.sub[r.name] || null);
+              return sd
+                ? `
+            <div class="swiss-tag-subrow" style="grid-template-columns:10rem 1fr auto"><span title="${esc(sd)}">${esc(r.name)}</span><span><small>${esc(sd)}</small></span><span>${fmt(r.count)}</span></div>`
+                : `
+            <div class="swiss-tag-subrow"><span>${esc(r.name)}</span><span>${fmt(r.count)}</span></div>`;
+            }).join('')
             : '<div class="swiss-tag-subrow text-secondary"><span>（无子标签）</span><span></span></div>'}
           </div>
         </div>`;

@@ -30,6 +30,11 @@ let _lcName = null;    // 源名（复制光变图标题用）
 // ─── 当前时刻竖线（图头「显示当前时刻」开关，默认关闭） ───
 let _lcShowNow = false;
 let _lcZfac = 1;   // 静止系因子（buildLCChart 每轮重建同步）
+// ─── 基准时刻（图头「基准时刻」输入；null = 源 T0，即默认行为） ───
+let _lcRefMJD = null;
+// ─── 光谱观测竖线（detail.js 经 setLCSpectra 注入；图头「显示光谱观测」开关） ───
+let _lcSpectra = [];   // [{mjd, instrument, observation_date}]
+let _lcShowSpec = false;
 // ─── 光变图波段可见性（勾选框面板控制，默认全显示） ───
 let lcBandVisible = {};  // band → bool
 // ─── 光变图顶部副轴配置（null = 不画） ───
@@ -46,6 +51,52 @@ export function t0ToMJD(t0) {
   const ms = Date.parse(iso.endsWith('Z') ? iso : iso + 'Z');
   if (!isFinite(ms)) return null;
   return ms / 86400000 + 40587;  // Unix epoch = MJD 40587
+}
+
+// 解析「基准时刻」输入：MJD 数字或 UTC 时间（如 2022-10-09T13:16:59）；
+// 留空或填 't0' = 源 T0（默认行为）。返回 { mjd }（mjd=null 表示默认）或 { err: true }
+export function parseRefEpoch(v) {
+  const s = (v || '').trim();
+  if (s === '' || s.toLowerCase() === 't0') return { mjd: null };
+  if (/^[+-]?[\d.]+([eE][+-]?\d+)?$/.test(s)) {
+    const n = Number(s);
+    if (isFinite(n)) return { mjd: n };
+  }
+  const mjd = t0ToMJD(s);
+  return mjd != null ? { mjd } : { err: true };
+}
+
+// 当前有效基准（MJD）：用户输入优先，缺省源 T0；null = 无基准（横轴维持 time 原样）
+function _lcEffRefMJD() {
+  return _lcRefMJD != null ? _lcRefMJD : _lcT0MJD;
+}
+
+// 是否启用了自定义基准（有效基准存在且 ≠ 源 T0）
+function _lcUseRefX() {
+  const refMJD = _lcEffRefMJD();
+  return refMJD != null && refMJD !== _lcT0MJD;
+}
+
+// 图坐标相对 T0 秒数的平移量：x = t/zfac + dx（自定义基准且源有 T0 时非零，否则为 0）
+function _lcChartDxRef() {
+  const refMJD = _lcEffRefMJD();
+  if (refMJD == null || refMJD === _lcT0MJD || _lcT0MJD == null) return 0;
+  return (_lcT0MJD - refMJD) * 86400 / _lcZfac;
+}
+
+// detail.js 获取光谱列表后调用：注入光谱观测时刻（[{mjd, instrument, observation_date}]；
+// 传 null/undefined 清空）。设置后若「显示光谱观测」开关开着则重绘
+export function setLCSpectra(list) {
+  _lcSpectra = Array.isArray(list) ? list.filter(s => s && s.mjd != null && isFinite(s.mjd)) : [];
+  const chk = document.getElementById('lcShowSpec');
+  if (chk) {
+    chk.disabled = _lcSpectra.length === 0;
+    const box = chk.closest('.form-check');
+    if (box) box.title = _lcSpectra.length
+      ? '在光变图上以紫色竖虚线标出各光谱的观测时刻（越界时以三角箭头指示方向）'
+      : '该源暂无光谱数据';
+  }
+  if (lcChartInstance && _lcShowSpec) lcChartInstance.update('none');
 }
 
 // render() 获取源数据后调用：注入光变图用的源级参数
@@ -65,6 +116,9 @@ export function resetLCChart() {
   lcShowErr = true;
   _lcShowNow = false;
   _lcZfac = 1;
+  _lcRefMJD = null;
+  _lcSpectra = [];
+  _lcShowSpec = false;
   _lcTopAxis = null;
   _lcTopAxisSuppress = false;
   _lcRedshift = null;
@@ -122,13 +176,14 @@ const errorBarPlugin = createYErrBarPlugin({
 const lcNowLinePlugin = {
   id: 'lcNowLine',
   afterDraw(chart) {
-    if (!_lcShowNow || _lcT0MJD == null) return;
+    const refMJD = _lcEffRefMJD();   // 与横轴同一基准（默认源 T0）
+    if (!_lcShowNow || refMJD == null) return;
     const xs = chart.scales.x;
     const area = chart.chartArea;
     if (!xs || !area) return;
-    // 与横轴同单位同坐标系：观测系秒数 = (当前 MJD − T0 MJD)×86400，静止系再除 (1+z)
+    // 与横轴同单位同坐标系：观测系秒数 = (当前 MJD − 基准 MJD)×86400，静止系再除 (1+z)
     const nowMJD = Date.now() / 86400000 + 40587;  // Unix epoch = MJD 40587
-    const tNow = (nowMJD - _lcT0MJD) * 86400 / _lcZfac;
+    const tNow = (nowMJD - refMJD) * 86400 / _lcZfac;
     if (!(tNow >= xs.min && tNow <= xs.max)) return;
     const px = xs.getPixelForValue(tNow);
     if (!isFinite(px)) return;
@@ -150,6 +205,109 @@ const lcNowLinePlugin = {
     ctx.restore();
   },
 };
+
+// ─── 光谱观测竖线（紫色虚线 + 越界三角箭头；afterDraw 手绘，只读 chartArea，不动轴范围） ───
+const SPEC_LINE_COLOR = '#bc8cff';   // 紫色，与「显示当前时刻」红线 #f85149 明显区分
+const lcSpecLinesPlugin = {
+  id: 'lcSpecLines',
+  afterDraw(chart) {
+    chart._lcSpecHits = [];   // 本帧命中区（竖线 px / 越界三角包围盒），悬停提示用
+    if (!_lcShowSpec || !_lcSpectra.length) return;
+    const xs = chart.scales.x;
+    const area = chart.chartArea;
+    if (!xs || !area) return;
+    const refMJD = _lcEffRefMJD();   // 与横轴同一基准（默认源 T0）
+    if (refMJD == null) return;
+    const ctx = chart.ctx;
+    let nLeft = 0, nRight = 0;
+    for (const sp of _lcSpectra) {
+      const xSec = (sp.mjd - refMJD) * 86400 / _lcZfac;
+      if (xSec >= xs.min && xSec <= xs.max) {
+        const px = xs.getPixelForValue(xSec);
+        if (!isFinite(px)) continue;
+        ctx.save();
+        ctx.strokeStyle = SPEC_LINE_COLOR;
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath();
+        ctx.moveTo(px, area.top);
+        ctx.lineTo(px, area.bottom);
+        ctx.stroke();
+        ctx.restore();
+        chart._lcSpecHits.push({ kind: 'line', px, sp });
+      } else {
+        // 越界（需求4.6）：左越界在左上角画指向左的三角，右越界在右上角画指向右的三角；
+        // 多个越界箭头纵向错开约 14px
+        const left = xSec < xs.min;
+        const ax = left ? area.left + 6 : area.right - 6;
+        const ay = area.top + 10 + (left ? nLeft++ : nRight++) * 14;
+        ctx.save();
+        ctx.fillStyle = SPEC_LINE_COLOR;
+        ctx.beginPath();
+        if (left) {
+          ctx.moveTo(ax, ay);
+          ctx.lineTo(ax + 7, ay - 5);
+          ctx.lineTo(ax + 7, ay + 5);
+        } else {
+          ctx.moveTo(ax, ay);
+          ctx.lineTo(ax - 7, ay - 5);
+          ctx.lineTo(ax - 7, ay + 5);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+        chart._lcSpecHits.push({ kind: 'tri', x0: ax - 8, y0: ay - 7, x1: ax + 8, y1: ay + 7, sp });
+      }
+    }
+  },
+};
+
+// ─── 光谱竖线悬停提示（canvas mousemove 命中检测 + 绝对定位 tooltip div） ───
+let _specTip = null;
+function _hideSpecTip() { if (_specTip) _specTip.style.display = 'none'; }
+
+// tooltip 内容：观测日期（observation_date 有就直接用，否则由 mjd 换算 YYYY-MM-DD）+ 仪器名
+function _specTipText(sp) {
+  let date = sp.observation_date ? String(sp.observation_date).slice(0, 10) : '';
+  if (!date) date = new Date((sp.mjd - 40587) * 86400000).toISOString().slice(0, 10);  // Unix epoch = MJD 40587
+  return `${date} · ${sp.instrument || '未知仪器'}`;
+}
+
+function _attachSpecHover(canvas) {
+  if (canvas._lcSpecHoverOn) return;   // 同一 canvas 只挂一次
+  canvas._lcSpecHoverOn = true;
+  const container = canvas.parentElement;
+  if (!container) return;
+  if (getComputedStyle(container).position === 'static') container.style.position = 'relative';
+  const cc = chartColors();
+  _specTip = document.createElement('div');
+  _specTip.style.cssText = `position:absolute;display:none;pointer-events:none;z-index:10;`
+    + `padding:3px 8px;border-radius:4px;font-size:12px;white-space:nowrap;`
+    + `background:${cc.tooltipBg};color:${cc.tooltipText}`;
+  container.appendChild(_specTip);
+  canvas.addEventListener('mousemove', (e) => {
+    const chart = lcChartInstance;
+    const hits = chart && chart._lcSpecHits;
+    if (!chart || !_lcShowSpec || !hits || !hits.length || !chart.chartArea) { _hideSpecTip(); return; }
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const area = chart.chartArea;
+    let hit = null;
+    for (const h of hits) {
+      if (h.kind === 'line') {
+        // 距竖线 ≤4px 且在绘图区纵向范围内
+        if (Math.abs(mx - h.px) <= 4 && my >= area.top && my <= area.bottom) { hit = h.sp; break; }
+      } else if (mx >= h.x0 - 2 && mx <= h.x1 + 2 && my >= h.y0 - 2 && my <= h.y1 + 2) { hit = h.sp; break; }
+    }
+    if (!hit) { _hideSpecTip(); return; }
+    _specTip.textContent = _specTipText(hit);
+    _specTip.style.display = 'block';
+    // 右半区向左展开，避免超出容器
+    _specTip.style.left = (mx > rect.width / 2 ? mx - 12 - _specTip.offsetWidth : mx + 12) + 'px';
+    _specTip.style.top = (my + 12) + 'px';
+  });
+  canvas.addEventListener('mouseleave', _hideSpecTip);
+}
 
 // ─── 光变图顶部副轴（day / MJD）───
 // 每帧根据主横轴当前范围在显示单位内取 1-2-5 规整刻度，再换算回秒定位像素
@@ -218,7 +376,7 @@ function _drawTopAxisBand(ctx, chart, yLine, titleY) {
     ctx.stroke();
     ctx.fillText(info.fmt(d), px, yLine - 7);
   }
-  ctx.fillText(info.mode === 'mjd' ? 'MJD' : 'time since T0 (day)', (area.left + area.right) / 2, titleY);
+  ctx.fillText(info.mode === 'mjd' ? 'MJD' : (_lcUseRefX() ? 'time since 基准 (day)' : 'time since T0 (day)'), (area.left + area.right) / 2, titleY);
   ctx.restore();
 }
 
@@ -343,13 +501,16 @@ function renderFitList() {
   const el = document.getElementById('lcFitList');
   if (!el) return;
   if (lcFits.length === 0) { el.innerHTML = ''; return; }
+  // 拟合内部存 T0 相对秒数；自定义基准时显示换算回图坐标（与拟合面板输入同坐标系）
+  const dxRef = _lcChartDxRef();
+  const toChartT = (t) => t / _lcZfac + dxRef;
   el.innerHTML = lcFits.map((fit, i) => {
     const ptxt = fitParamsText(fit);
     const prange = (fit.pmin !== fit.tmin || fit.pmax !== fit.tmax)
-      ? ` · 绘制[${sciFormat(fit.pmin)}, ${sciFormat(fit.pmax)}]s` : '';
+      ? ` · 绘制[${sciFormat(toChartT(fit.pmin))}, ${sciFormat(toChartT(fit.pmax))}]s` : '';
     return `<div class="d-flex align-items-center gap-2 mb-1">
       <span style="display:inline-block;width:24px;border-top:2px dashed ${fit.color}"></span>
-      <span>${FIT_MODEL_NAMES[fit.model] || fit.model} · ${esc(fit.band)} · 拟合[${sciFormat(fit.tmin)}, ${sciFormat(fit.tmax)}]s${prange} · ${ptxt} · N=${fit.N}</span>
+      <span>${FIT_MODEL_NAMES[fit.model] || fit.model} · ${esc(fit.band)} · 拟合[${sciFormat(toChartT(fit.tmin))}, ${sciFormat(toChartT(fit.tmax))}]s${prange} · ${ptxt} · N=${fit.N}</span>
       <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="removeLCFit(${i})" title="删除该拟合"><i class="bi bi-trash"></i></button>
     </div>`;
   }).join('');
@@ -384,11 +545,66 @@ function rebuildLCPlot(bands, bandNames, spectralColors) {
   buildLCChart(bands, bandNames, spectralColors);
 }
 
+// ─── 图头控件注入（「基准时刻」输入 + 「显示光谱观测」开关；页面模板在 detail.js，
+// 这两个控件由本模块在每轮 render 的 wireLCChartGlobals 时自建进图头控件区） ───
+function _ensureLCHeaderControls() {
+  const topSel = document.getElementById('topAxis');
+  if (!topSel || document.getElementById('lcRefEpoch')) return;
+  const wrap = topSel.parentElement;
+
+  // 基准时刻输入（MJD 数字或 UTC 时间；留空/填 t0 = 源 T0）
+  const refSpan = document.createElement('span');
+  refSpan.className = 'd-inline-flex align-items-center gap-1';
+  refSpan.title = '横轴零点：可填 MJD 数字或 UTC 时间（如 2022-10-09T13:16:59）；留空或填 t0 = 源 T0';
+  refSpan.innerHTML = `<span class="text-secondary small">基准时刻:</span>
+    <input type="text" class="form-control form-control-sm" id="lcRefEpoch" style="width:175px"
+           placeholder="MJD 或 UTC，留空=源 T0">`;
+  wrap.insertBefore(refSpan, topSel.nextSibling);
+  const refInp = refSpan.querySelector('#lcRefEpoch');
+  refInp.value = _lcRefMJD != null ? String(_lcRefMJD) : '';
+  refInp.addEventListener('change', () => {
+    const r = parseRefEpoch(refInp.value);
+    if (r.err) {   // 解析失败：toast 报错并保持原值
+      showToast('基准时刻无法解析：请填 MJD 数字或 UTC 时间（留空/t0 = 源 T0）', 'warning');
+      refInp.value = _lcRefMJD != null ? String(_lcRefMJD) : '';
+      return;
+    }
+    if (r.mjd === _lcRefMJD) return;
+    _lcRefMJD = r.mjd;
+    refInp.value = r.mjd != null ? String(r.mjd) : '';   // 归一化显示为 MJD
+    // 自定义基准可替代源 T0 支撑 MJD 副轴与「当前时刻」竖线：按可用性刷新禁用态
+    const mjdOpt = document.querySelector('#topAxis option[value="mjd"]');
+    if (mjdOpt) mjdOpt.disabled = _lcEffRefMJD() == null;
+    const nowChk0 = document.getElementById('lcShowNow');
+    if (nowChk0) nowChk0.disabled = _lcEffRefMJD() == null;
+    if (_bands && lcChartInstance) rebuildLCPlot(_bands, _bandNames, _spectralColors);
+  });
+
+  // 显示光谱观测开关（无光谱数据时禁用）
+  const specDiv = document.createElement('div');
+  specDiv.className = 'form-check form-check-inline mb-0';
+  specDiv.title = _lcSpectra.length
+    ? '在光变图上以紫色竖虚线标出各光谱的观测时刻（越界时以三角箭头指示方向）'
+    : '该源暂无光谱数据';
+  specDiv.innerHTML = `<input class="form-check-input" type="checkbox" id="lcShowSpec"
+      ${_lcShowSpec ? 'checked' : ''} ${_lcSpectra.length ? '' : 'disabled'}>
+    <label class="form-check-label small" for="lcShowSpec">显示光谱观测</label>`;
+  const nowChk = document.getElementById('lcShowNow');
+  wrap.insertBefore(specDiv, nowChk && nowChk.closest('.form-check')
+    ? nowChk.closest('.form-check').nextSibling : refSpan.nextSibling);
+  specDiv.querySelector('#lcShowSpec').addEventListener('change', (e) => {
+    _lcShowSpec = e.target.checked;
+    if (!_lcShowSpec) _hideSpecTip();
+    if (lcChartInstance) lcChartInstance.update('none');
+  });
+}
+
 // ─── 全局入口接线（每轮 render 以最新的 bands/bandNames/spectralColors 重挂） ───
 export function wireLCChartGlobals(bands, bandNames, spectralColors) {
   _bands = bands;
   _bandNames = bandNames;
   _spectralColors = spectralColors;
+  _ensureLCHeaderControls();
   window.rebuildLCPlot = () => rebuildLCPlot(bands, bandNames, spectralColors);
   window.resetLCZoom = () => { if (lcChartInstance) lcChartInstance.resetZoom(); };
   window.lcShowErrToggle = (on) => {   // 误差棒开关：只影响绘制，不动数据，无动画重绘即可
@@ -430,8 +646,12 @@ export function wireLCChartGlobals(bands, bandNames, spectralColors) {
   window.addLCFit = async () => {
     const model = document.getElementById('fitModel')?.value || 'pl';
     const band = document.getElementById('fitBand')?.value;
-    const tminIn = parseFloat(document.getElementById('fitTmin')?.value);
-    const tmaxIn = parseFloat(document.getElementById('fitTmax')?.value);
+    // 拟合面板 t 输入与图同坐标系：自定义基准时图坐标含平移，换算回 T0 相对秒数供拟合
+    // （自定义基准但源无 T0 时 dxRef=0，输入按 T0 相对秒数解释——此时拟合线也不叠加，见 buildLCChart）
+    const dxRef = _lcChartDxRef();
+    const fromChartT = (v) => isFinite(v) ? (v - dxRef) * _lcZfac : v;
+    const tminIn = fromChartT(parseFloat(document.getElementById('fitTmin')?.value));
+    const tmaxIn = fromChartT(parseFloat(document.getElementById('fitTmax')?.value));
     const useGext = document.getElementById('gextMode')?.value === 'gext';
     // 该波段 + 时间范围内的探测点（排除 discard 与上限点），统一换算到 mJy 空间
     const pts = (bands[band] || [])
@@ -451,8 +671,8 @@ export function wireLCChartGlobals(bands, bandNames, spectralColors) {
     // bpl/sbpl 拐点预设范围（留空端=数据范围）
     let bounds = null;
     if (model === 'bpl' || model === 'sbpl') {
-      const lo = parseFloat(document.getElementById('fitTbMin')?.value);
-      const hi = parseFloat(document.getElementById('fitTbMax')?.value);
+      const lo = fromChartT(parseFloat(document.getElementById('fitTbMin')?.value));
+      const hi = fromChartT(parseFloat(document.getElementById('fitTbMax')?.value));
       if ((isFinite(lo) || isFinite(hi))) {
         const ts = pts.map(d => d.t);
         const blo = isFinite(lo) ? lo : minOf(ts);
@@ -468,8 +688,8 @@ export function wireLCChartGlobals(bands, bandNames, spectralColors) {
       const ts = pts.map(d => d.t);
       const tmin = isNaN(tminIn) ? minOf(ts) : tminIn;
       const tmax = isNaN(tmaxIn) ? maxOf(ts) : tmaxIn;
-      const pminIn = parseFloat(document.getElementById('fitPmin')?.value);
-      const pmaxIn = parseFloat(document.getElementById('fitPmax')?.value);
+      const pminIn = fromChartT(parseFloat(document.getElementById('fitPmin')?.value));
+      const pmaxIn = fromChartT(parseFloat(document.getElementById('fitPmax')?.value));
       const fit = {
         model, band,
         tmin, tmax,
@@ -633,12 +853,25 @@ function buildLCChart(bands, bandNames, spectralColors) {
   // 静止系：t/(1+z)（需红移）
   const restFrame = (document.getElementById('lcRestFrame')?.checked || false) && _lcRedshift != null;
   const zfac = restFrame ? (1 + _lcRedshift) : 1;
-  _lcZfac = zfac;  // 模块级同步（当前时刻竖线用）
-  // 顶部副轴
+  _lcZfac = zfac;  // 模块级同步（当前时刻竖线/光谱竖线用）
+  // 有效基准（MJD）：用户输入优先，缺省源 T0；自定义基准（≠源 T0）时横轴按 mjd 换算
+  const refMJD = _lcEffRefMJD();
+  const useRefX = refMJD != null && refMJD !== _lcT0MJD;
+  // 点的横轴 x（秒，静止系除 zfac）：默认 p.time/zfac；自定义基准时
+  // x = (p.mjd − ref)×86400/zfac，无 mjd 的点回退 (T0 + time/86400)；
+  // 源无 T0 且点无 mjd：无法换算，返回 null 不绘制
+  const toX = (p) => {
+    if (!useRefX) return p.time / zfac;
+    const mjd = (p.mjd != null) ? p.mjd : (_lcT0MJD != null ? _lcT0MJD + p.time / 86400 : null);
+    return mjd != null ? (mjd - refMJD) * 86400 / zfac : null;
+  };
+  // 自定义基准且源有 T0 时，图坐标 = T0 相对秒数/zfac 的纯平移（拟合线/置信带叠加用）
+  const dxRef = (useRefX && _lcT0MJD != null) ? (_lcT0MJD - refMJD) * 86400 / zfac : 0;
+  // 顶部副轴（mjd 模式零点与横轴同一基准）
   const topMode = document.getElementById('topAxis')?.value || 'day';
-  _lcTopAxis = (topMode === 'none' || (topMode === 'mjd' && _lcT0MJD == null))
+  _lcTopAxis = (topMode === 'none' || (topMode === 'mjd' && refMJD == null))
     ? null
-    : { mode: topMode, t0mjd: _lcT0MJD };
+    : { mode: topMode, t0mjd: refMJD };
 
   // 数据默认以 mJy 绘制（左轴 log mJy；右轴由 y2 换算显示 AB 星等）；
   // 绝对星等模式下 y 为 M（mag，线性反向轴）
@@ -664,9 +897,11 @@ function buildLCChart(bands, bandNames, spectralColors) {
       const vals = detections.map(p => {
         const m = pointToMJy(p, useGext);
         if (!m) return null;
-        // 时间误差（秒）与横轴同坐标系：静止系同样除 (1+z)
+        const x = toX(p);
+        if (x == null) return null;
+        // 时间误差（秒）与横轴同坐标系：静止系同样除 (1+z)（时标平移不影响误差宽度）
         const terr = (p.time_err != null && p.time_err > 0) ? p.time_err / zfac : null;
-        return { x: p.time / zfac, y: toY(m.y), err: toYerr(m.y, m.err), terr, raw: p, clipped: m.clipped };
+        return { x, y: toY(m.y), err: toYerr(m.y, m.err), terr, raw: p, clipped: m.clipped };
       }).filter(d => d && isFinite(d.x) && isFinite(d.y)
         && !(absMag && d.clipped));  // 绝对星等模式下原始值≤0 的点无对应星等，不绘制（流量模式截断到底部并标注）
 
@@ -696,7 +931,9 @@ function buildLCChart(bands, bandNames, spectralColors) {
       const uv = upperLimits.map(p => {
         const m = pointToMJy(p, useGext);
         if (!m) return null;
-        return { x: p.time / zfac, y: toY(m.y), raw: p, clipped: m.clipped };
+        const x = toX(p);
+        if (x == null) return null;
+        return { x, y: toY(m.y), raw: p, clipped: m.clipped };
       }).filter(d => d && isFinite(d.x) && isFinite(d.y)
         && !(absMag && d.clipped));  // 同探测点：绝对星等模式不绘制原始值≤0 的截断点
 
@@ -723,6 +960,8 @@ function buildLCChart(bands, bandNames, spectralColors) {
 
   // ── 叠加拟合曲线（虚线，按绘制范围 ~120 点；order 保证画在最上层） ──
   for (const fit of lcFits) {
+    // 自定义基准但源无 T0：拟合内部坐标（T0 相对秒数）无法换算到新横轴，跳过叠加
+    if (useRefX && _lcT0MJD == null) continue;
     const t0 = fit.pmin ?? fit.tmin, t1 = fit.pmax ?? fit.tmax;
     if (!(t0 > 0) || !(t1 > t0)) continue;
     const ts = [];
@@ -731,7 +970,7 @@ function buildLCChart(bands, bandNames, spectralColors) {
     for (const tt of ts) {
       const f = fitModelFlux(fit.model, fit.params, tt);
       if (!(f > 0) || !isFinite(f)) continue;
-      data.push({ x: tt / zfac, y: toY(f) });
+      data.push({ x: tt / zfac + dxRef, y: toY(f) });
     }
     // 1σ 置信带（半透明阴影；先压入上/下边界，拟合线后画在其上）
     const band = fitBandPoints(fit, ts);
@@ -741,8 +980,8 @@ function buildLCChart(bands, bandNames, spectralColors) {
         const yHi = toY(b.hi);
         const yLo = toY(Math.max(b.lo, LOG_AXIS_FLOOR));
         if (isFinite(yHi) && isFinite(yLo)) {
-          hiPts.push({ x: b.x / zfac, y: yHi });
-          loPts.push({ x: b.x / zfac, y: yLo });
+          hiPts.push({ x: b.x / zfac + dxRef, y: yHi });
+          loPts.push({ x: b.x / zfac + dxRef, y: yLo });
         }
       }
       if (hiPts.length > 2) {
@@ -783,7 +1022,8 @@ function buildLCChart(bands, bandNames, spectralColors) {
       const meta = chart.getDatasetMeta(i);
       if (meta.hidden) return;
       ds.data.forEach(p => {
-        if (p.x > 0 && isFinite(p.x)) allX.push(p.x);
+        // 自定义基准下线性轴的 x 可为负（基准前的点）；log 轴仍只取正值
+        if (isFinite(p.x) && (p.x > 0 || (useRefX && xType !== 'logarithmic'))) allX.push(p.x);
         // 绝对星等模式 y 可为负（线性轴）；流量模式仅取正值（log 轴）
         if (absMag ? isFinite(p.y) : (isFinite(p.y) && p.y > 0)) allY.push(p.y);
       });
@@ -798,7 +1038,8 @@ function buildLCChart(bands, bandNames, spectralColors) {
           r = { min: mn * 0.8, max: mx * 1.5 };
         } else {
           const pad = (mx - mn) * 0.1;
-          r = { min: Math.max(0, mn - pad), max: mx + pad };
+          // 自定义基准时 x 可为负，不做 ≥0 钳制
+          r = { min: useRefX ? mn - pad : Math.max(0, mn - pad), max: mx + pad };
         }
       }
       // 手动范围覆盖（留空端自动）
@@ -829,7 +1070,7 @@ function buildLCChart(bands, bandNames, spectralColors) {
     lcChartInstance = new Chart(ctx, {
     type: 'scatter',
     data: { datasets },
-    plugins: [errorBarPlugin, lcNowLinePlugin, lcTopAxisPlugin, dragRectPlugin],
+    plugins: [errorBarPlugin, lcNowLinePlugin, lcSpecLinesPlugin, lcTopAxisPlugin, dragRectPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -863,7 +1104,13 @@ function buildLCChart(bands, bandNames, spectralColors) {
         x: {
           type: xType,
           reverse: false,
-          title: { display: true, text: restFrame ? 't/(1+z)  (s)' : 'time since T0  (s)', color: cc.tick, font: fonts.title },
+          title: {
+            display: true,
+            text: restFrame
+              ? (useRefX ? 't/(1+z) since 基准  (s)' : 't/(1+z)  (s)')
+              : (useRefX ? 'time since 基准  (s)' : 'time since T0  (s)'),
+            color: cc.tick, font: fonts.title,
+          },
           grid: { color: cc.gridSoft },
           border: { color: cc.tick },
           ticks: { color: cc.tick, font: fonts.tick, callback: (v) => sciTick(v) },
@@ -930,6 +1177,7 @@ function buildLCChart(bands, bandNames, spectralColors) {
       }
       lcChartInstance.update('none');
     });
+    _attachSpecHover(ctx);   // 光谱竖线悬停提示（同一 canvas 只挂一次）
   } catch (err) {
     console.error('Chart creation error:', err);
     const c = ctx.getContext('2d');

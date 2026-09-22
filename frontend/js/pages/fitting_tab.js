@@ -2,10 +2,11 @@
 // 由 detail.js 在切换到「余辉拟合」标签时调用 initFittingTab(container, tid)，
 // 切走或页面重渲染时调用 destroyFittingTab() 停止轮询、销毁图表。
 import {
-  isAuthed, isAdmin, showToast, getLightcurves,
+  isAuthed, isAdmin, showToast, getLightcurves, getTransient,
   getFittingEngines, submitFittingJob, getFittingJobs, getFittingJob,
   getFittingJobFile, deleteFittingJob, stopFittingJob,
 } from '../api.js';
+import { t0ToMJD, parseRefEpoch } from './detail_lcchart.js';
 import { chartColors, academicFonts } from '../theme.js';
 // 光变数据 → mJy 换算统一用 bands.js 实现（口径唯一来源；Vega/ST 星等、erg/cm2/s/keV 均已处理）
 // 滤波器缓存（getVega2ab）由 detail.js 页面加载时填充
@@ -29,6 +30,8 @@ let _bandColorMap = {};     // band → color
 let _axisRange = { xmin: null, xmax: null, ymin: null, ymax: null };  // 叠加图手动范围
 let _selChart = null;       // 数据选取预览散点图
 let _selExcluded = new Set();  // 数据选取：手动排除的 lightcurve id
+let _t0MJD = null;      // 源 T0（MJD；initFittingTab 时拉取缓存，无 T0 为 null）
+let _refMJD = null;     // 数据选取基准时刻（MJD；null = 源 T0，即默认行为）
 let _resultReqId = 0;       // 结果加载请求令牌（竞态防护）
 
 // ─── 叠加图坐标范围（手动输入 + 框选缩放共用） ───
@@ -181,6 +184,21 @@ const _lcErrorBarPlugin = createYErrBarPlugin({
   skipPoint: raw => raw.isUL,
 });
 
+// 数据点横轴 x（秒）：默认 = p.time（源 T0 基准）；自定义基准时
+// x = (p.mjd − ref)×86400，无 mjd 的点回退 (T0 + time/86400)；
+// 源无 T0 且点无 mjd：无法换算，回退 p.time 原值（与缺省行为一致）
+function _pointX(p) {
+  if (_refMJD == null || _refMJD === _t0MJD) return p.time;
+  const mjd = (p.mjd != null) ? p.mjd : (_t0MJD != null ? _t0MJD + p.time / 86400 : null);
+  return mjd != null ? (mjd - _refMJD) * 86400 : p.time;
+}
+
+// 基准时刻变更后重算全部点的 x
+function _applyRefToBands() {
+  for (const pts of Object.values(_lcBands || {}))
+    for (const p of pts) p.x = _pointX(p);
+}
+
 async function loadLightcurveBands() {
   _lcBands = {};
   try {
@@ -191,7 +209,8 @@ async function loadLightcurveBands() {
       const conv = pointToMJy(p, true);
       if (!conv || !(p.time > 0)) continue;
       if (!_lcBands[p.band]) _lcBands[p.band] = [];
-      _lcBands[p.band].push({ x: p.time, y: conv.y, err: conv.err, isUL: !!p.upperlimit, id: p.id });
+      // x 按当前基准计算；time/mjd 保留供基准切换后重算
+      _lcBands[p.band].push({ x: _pointX(p), time: p.time, mjd: p.mjd ?? null, y: conv.y, err: conv.err, isUL: !!p.upperlimit, id: p.id });
       bandSet.add(p.band);
     }
     _bandColorMap = {};
@@ -234,12 +253,25 @@ function currentSchema() {
 }
 
 // ─── 入口 / 清理 ───
+// 源 T0（MJD）缓存：自定义基准时刻时对无 mjd 的点兜底（t0 + time/86400）
+async function _cacheT0(tid) {
+  try {
+    const t = await getTransient(tid);
+    _t0MJD = t0ToMJD(t.t0);
+  } catch (e) {
+    console.warn('源 T0 获取失败（自定义基准时对无 mjd 的点无法兜底）:', e);
+    _t0MJD = null;
+  }
+}
+
 export async function initFittingTab(container, tid) {
   destroyFittingTab();
   _tid = tid;
   _selectedId = null;
   _jobs = [];
   _selExcluded = new Set();   // 切换事件重进标签页时重置选取
+  _refMJD = null;             // 基准时刻复位为源 T0
+  _t0MJD = null;
   container.innerHTML = `
     <div class="row g-3">
       <div class="col-lg-6">
@@ -286,7 +318,7 @@ export async function initFittingTab(container, tid) {
   try {
     if (!_engines) _engines = await getFittingEngines();
     renderConfig();
-    await Promise.all([refreshJobs(), loadLightcurveBands()]);
+    await Promise.all([refreshJobs(), loadLightcurveBands(), _cacheT0(tid)]);
     renderDataSelection();
   } catch (e) {
     document.getElementById('fitConfigBody').innerHTML =
@@ -301,6 +333,8 @@ export function destroyFittingTab() {
   if (_selChart) { try { _selChart.destroy(); } catch {} _selChart = null; }
   _tid = null;
   _selectedId = null;
+  _t0MJD = null;
+  _refMJD = null;
 }
 
 // ─── 拟合配置区 ───
@@ -485,6 +519,12 @@ function renderDataSelection() {
   }
   el.innerHTML = `
     <div class="row g-2 mb-2">
+      <div class="col-12"><label class="small text-secondary mb-0">基准时刻（横轴/拟合的时间零点；默认源 T0）</label>
+        <input type="text" class="form-control form-control-sm" id="fitSelRefEpoch"
+               placeholder="留空 = 源 T0；MJD 或 UTC，如 2022-10-09T13:16:59"
+               title="可填 MJD 数字或 UTC 时间；改动后下方 t_min/t_max 与提交拟合的时间均按此基准"></div>
+    </div>
+    <div class="row g-2 mb-2">
       <div class="col-6"><label class="small text-secondary mb-0">全局 t_min (s，各波段默认)</label>
         <input type="number" class="form-control form-control-sm" id="fitSelTmin" min="0" step="any" placeholder="不限"></div>
       <div class="col-6"><label class="small text-secondary mb-0">全局 t_max (s，各波段默认)</label>
@@ -514,6 +554,22 @@ function renderDataSelection() {
     </div>
     <div style="position:relative;height:220px"><canvas id="fitSelChart"></canvas></div>
     <div class="small mt-1" id="fitSelCount"></div>`;
+  // 基准时刻：解析失败 toast 报错并保持原值；成功后重算所有点的 x 并重绘预览
+  const refEl = document.getElementById('fitSelRefEpoch');
+  refEl.value = _refMJD != null ? String(_refMJD) : '';
+  refEl.addEventListener('change', () => {
+    const r = parseRefEpoch(refEl.value);
+    if (r.err) {
+      showToast('基准时刻无法解析：请填 MJD 数字或 UTC 时间（留空/t0 = 源 T0）', 'warning');
+      refEl.value = _refMJD != null ? String(_refMJD) : '';
+      return;
+    }
+    if (r.mjd === _refMJD) return;
+    _refMJD = r.mjd;
+    refEl.value = r.mjd != null ? String(r.mjd) : '';   // 归一化显示为 MJD
+    _applyRefToBands();
+    buildSelChart();
+  });
   el.querySelectorAll('.fit-sel-band').forEach(cb => cb.addEventListener('change', buildSelChart));
   for (const id of ['fitSelTmin', 'fitSelTmax']) {
     document.getElementById(id).addEventListener('input', buildSelChart);
@@ -622,7 +678,7 @@ function buildSelChart() {
       scales: {
         x: {
           type: 'logarithmic',
-          title: { display: true, text: '时间 (s)', color: cc.tick, font: academicFonts().title },
+          title: { display: true, text: _refMJD != null ? 'time since 基准 (s)' : '时间 (s)', color: cc.tick, font: academicFonts().title },
           ticks: { color: cc.tick, font: academicFonts().tick }, grid: { color: cc.gridSoft },
           border: { color: cc.tick },
         },
@@ -654,6 +710,9 @@ function collectDataSelection() {
   }
   if (Object.keys(bandRanges).length) ds.band_ranges = bandRanges;
   if (_selExcluded.size) ds.exclude_ids = [..._selExcluded];
+  // 自定义基准时刻：仅用户改了基准才传（缺省时后端 prepare_data 按 time 原样；
+  // 传了则 t=(mjd−t_ref)×86400，无 mjd 行用 t0+time 兜底）
+  if (_refMJD != null && _refMJD !== _t0MJD) ds.t_ref_mjd = _refMJD;
   return Object.keys(ds).length ? ds : null;
 }
 
@@ -1068,7 +1127,7 @@ function buildFitChart(lcModel) {
       scales: {
         x: {
           type: 'logarithmic',
-          title: { display: true, text: '时间 (s)', color: cc.tick, font: academicFonts().title },
+          title: { display: true, text: _refMJD != null ? 'time since 基准 (s)' : '时间 (s)', color: cc.tick, font: academicFonts().title },
           ticks: { color: cc.tick, font: academicFonts().tick }, grid: { color: cc.gridSoft },
           border: { color: cc.tick },
         },

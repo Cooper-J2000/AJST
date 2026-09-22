@@ -1,7 +1,7 @@
 # AJST 暂现源光变目录系统 — 技术文档
 
-> 版本：2.20
-> 更新日期：2026-09-18
+> 版本：2.23
+> 更新日期：2026-09-22
 
 > **说明**：本文档由开发过程中的技术文档整理而来，部分内容（数据规模、批次导入历史、
 > 已删除的脚本与备份路径等）为历史快照；如有与代码不一致之处，**以代码为准**。
@@ -70,6 +70,9 @@
 | `ra` | FLOAT | J2000 赤经（度） |
 | `dec` | FLOAT | J2000 赤纬（度） |
 | `t0` | DATETIME | 触发时刻（UTC） |
+| `t0_ref` | TEXT | T0 引用（v2.23 新增，**纯元数据**，不参与任何 MJD 换算与绘图基准） |
+| `t0_offset` | FLOAT | T0 偏移量（秒，正=向后/负=提前；v2.23 新增，纯元数据） |
+| `t0_offset_ref` | TEXT | T0 偏移量引用（v2.23 新增，纯元数据） |
 | `trigger_instrument` | VARCHAR(64) | 触发仪器 |
 | `redshift` | FLOAT | 红移值 |
 | `redshift_type` | VARCHAR(16) | `value` / `phot_z` / `spec` / `spec-host` / `upperlimit` |
@@ -95,9 +98,10 @@
 |---|---|---|
 | `id` | BIGINT PK auto | |
 | `transient_id` | VARCHAR(32) FK | → transients.id，级联删除 |
-| `time` | FLOAT | **统一以秒为单位** |
+| `time` | FLOAT | **统一以秒为单位**；相对 T0 的秒数**画图加速缓存**（v2.23 起权威时间为 `mjd`，可随时由 mjd 重算覆盖） |
 | `time_err` | FLOAT | 时间误差（秒） |
 | `time_unit` | VARCHAR(8) | 固定为 `s`（ETL 自动统一） |
+| `mjd` | FLOAT | **观测时间的唯一权威依据**（v2.23 新增，可空；源无 T0 时为 NULL、time 维持原值） |
 | `band` | VARCHAR(32) | 波段标识 |
 | `flux_density` | FLOAT | **原始值**（星等或流量密度，不强制转换） |
 | `flux_density_err` | FLOAT | 原始误差 |
@@ -142,8 +146,9 @@
 | 列 | 类型 |
 |---|---|
 | `id` | BIGINT PK auto |
-| `name` | VARCHAR(64) UNIQUE |
-| `description` | TEXT |
+| `name` | VARCHAR(64) |
+| `kind` | VARCHAR(8)，`main`=主标签 / `sub`=副标签，缺省 `main`（v2.23 新增；唯一约束改为 `(name, kind)`，唯一索引 `uq_tags_name_kind`） |
+| `description` | TEXT，文字说明（新建 tag 时**必填**） |
 | `color` | VARCHAR(16) |
 
 ### 2.5 `articles` — 相关研究文章（2026-08-26 新增；2026-08-27 扩展 title/bibtex）
@@ -259,6 +264,9 @@ ABmag = 16.4 - 2.5 × log10(flux_density_mJy)
   "ra": 93.3875,
   "dec": -51.933333,
   "T0": null,
+  "T0_ref": null,
+  "T0_offset": null,
+  "T0_offset_ref": null,
   "Trigger_Instrument": null,
   "redshift": 4.5,
   "tag": ["grb"],
@@ -274,15 +282,17 @@ ABmag = 16.4 - 2.5 × log10(flux_density_mJy)
 字段说明：
 - `tag`：主标签，`["fxt"]` / `["grb"]` / `["sn"]` / `["tde"]`
 - `sub_tag`：子标签，`["L"]` / `["S"]` / `["X"]` 等
+- `T0_ref` / `T0_offset` / `T0_offset_ref`（v2.23 起）：T0 引用 / T0 偏移量（秒，正=向后/负=提前）/ 偏移量引用，纯元数据，不参与任何换算
 
 ### 3.5 CSV 文件格式（`catadata/lc/<id>.csv`）
 
 ```
-time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag_system,...
-4665.6,300.0,s,atlas-c,15.6,0.2,mag,AB,...
+time,time_err,time_unit,mjd,band,flux_density,flux_density_err,flux_density_unit,mag_system,...
+4665.6,300.0,s,60479.554,atlas-c,15.6,0.2,mag,AB,...
 ```
 
 注意：CSV 中的单位是**原始单位**，导入时仅时间统一为秒，流量/星等保留原始单位入库。
+`mjd` 列（v2.23 新增，`time_unit` 之后）是观测时间的**唯一权威依据**；旧 CSV 无此列可正常导入（导入时按 t0+time/86400 补齐），给 mjd 不给 time 时也会自动重算 time。
 
 ---
 
@@ -344,6 +354,7 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | GET | `/api/transients` | 列表（搜索/筛选/分页/排序） | 否 |
 | POST | `/api/transients` | 新建事件（`ra`/`dec` 支持十进制度或时分秒字符串，入库统一转度，见 §8.22） | 登录 |
 | GET | `/api/transients/<id>` | 单源详情 | 否 |
+| GET | `/api/transients/sub_tags` | 现役副标签列表（`{sub_tags:[...]}`，列表页副标签筛选用） | 否 |
 | PUT | `/api/transients/<id>` | 更新基本信息（`ra`/`dec` 同上支持时分秒） | 管理员 |
 | DELETE | `/api/transients/<id>` | 删除事件（级联删除） | 管理员 |
 | GET | `/api/lightcurves?transient_id=<tid>` | 光变数据列表（可选 `band` / `telescope` 过滤，`sort` / `order` 排序，`page` / `per_page` 分页） | 否 |
@@ -361,7 +372,11 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | POST | `/api/filters/parse_curve` | 校验两列透过率曲线文本（不落库，返回归一化曲线或含行号的错误） | 登录 |
 | GET | `/api/filters/svo_search?q=` | SVO FPS 模糊搜索候选滤光片 | 登录 |
 | POST | `/api/filters/svo_fetch` | 预览抓取指定 SVO ID 的透过率曲线（不落库不注册） | 登录 |
-| GET | `/api/tags` | 标签列表 | 否 |
+| GET | `/api/tags` | 标签列表（支持 `?kind=main|sub` 过滤） | 否 |
+| POST | `/api/tags` | 新建标签 `{name, kind, description, color?}`（**description 必填**，缺 400） | 登录 |
+| PUT | `/api/tags/<id>` | 修改标签描述/颜色 | 登录 |
+| DELETE | `/api/tags/<id>` | 删除标签 | 登录 |
+| POST | `/api/tags/register` | 批量幂等登记标签（内部用） | 登录 |
 | GET | `/api/stats/overview` | 汇总统计 | 否 |
 | GET | `/api/stats/hosts` | 宿主星系统计（覆盖率 / M*/SFR 分布 / 宿主绝对星等点；带 `ETag` + `Cache-Control: no-cache`，数据未变时返回 304，见 §8.30） | 否 |
 | GET | `/api/relations` | 统计关系定义列表 + 各关系当前可用来源目录（见 §8.13） | 否 |
@@ -390,7 +405,7 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 | GET | `/api/gcn/status` | GCN 存档概况（期数/最新期号/存档目录修改时间 archive_mtime）+ 更新任务状态 | 否 |
 | POST | `/api/gcn/update` | 从 NASA GCN 下载最新整包替换本地存档（后台线程） | 登录 |
 | GET | `/api/export/transients` | 导出事件 CSV | 登录 |
-| GET | `/api/export/lightcurves/<tid>` | 导出光变 CSV | 登录 |
+| GET | `/api/export/lightcurves/<tid>` | 导出光变 CSV（**全部列**，含 mjd；支持 `t_ref` 查询参数指定基准时刻：缺省/`t0`=源 T0，纯数字=MJD，或 ISO UTC 字符串，time 列按基准重算，响应头 `X-AJST-Tref` 回显） | 登录 |
 | POST | `/api/auth/login` | 登录（`{username, password}`；省略 username 兼容旧版按 admin 验证） | — |
 | POST | `/api/auth/logout` | 退出 | — |
 | GET | `/api/auth/status` | 鉴权状态（返回 `authenticated`/`username`/`role`） | — |
@@ -431,6 +446,9 @@ time,time_err,time_unit,band,flux_density,flux_density_err,flux_density_unit,mag
 GET /api/transients?search=EP24
                    &z_min=0.5&z_max=5.0
                    &tag=fxt
+                   &sub_tag=L
+                   &has_spectra=true
+                   &t0_from=2024-01-01&t0_to=2024-12-31
                    &ra_min=100&ra_max=200
                    &dec_min=-30&dec_max=30
                    &has_z=true
@@ -438,7 +456,8 @@ GET /api/transients?search=EP24
                    &page=1&per_page=50
 ```
 
-支持排序的列：`id`, `ra`, `dec`, `redshift`, `t0`
+支持排序的列：`id`, `ra`, `dec`, `redshift`, `t0`（光变列表 `/api/lightcurves` 另支持 `sort=mjd`）。
+`sub_tag`（v2.23）按副标签筛选；`has_spectra=true` 仅显示有光谱数据的源；`t0_from`/`t0_to` 为 T0 日期范围（`t0_to` 含当天全天）。
 
 ### 鉴权
 
@@ -1653,6 +1672,55 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
    列宽按真实 DOM 度量（`font-variant-numeric: tabular-nums`，canvas `measureText` 量不准）；总览图支持
    **框选放大**（只改 x 轴，y 恒 0–1，拖动不足 5 px 视为点击）。
 
+### 8.31 标签索引表 / T0 元数据 / MJD 权威时间与基准时刻（2026-09-22，v2.23）
+
+1. **tags 表升级为带分类的索引表**：新增 `kind` 列（VARCHAR(8)，`main`=主标签 / `sub`=副标签，
+   缺省 `main`）；唯一约束由 `name` 单列唯一改为 `UniqueConstraint('name','kind')`（唯一索引
+   `uq_tags_name_kind`；`init_db` 幂等迁移：DROP CONSTRAINT IF EXISTS tags_name_key +
+   CREATE UNIQUE INDEX IF NOT EXISTS）。API 扩展为完整 CRUD：`GET /api/tags` 支持
+   `?kind=main|sub` 过滤（公开）；`POST /api/tags`（登录，`{name,kind,description,color?}`，
+   **description 必填**，缺 400）、`PUT /api/tags/<id>`（改描述/颜色）、`DELETE /api/tags/<id>`；
+   `POST /api/tags/register` 批量幂等登记（内部用）。新建/编辑源时写上的 tag 会自动登记进索引表。
+   tags 随 `etl.py --dump` 落盘到 `catadata/tags.json`，全量重建时 force 回灌 +
+   `register_used_tags` 扫 transients 表登记现役 tag。
+2. **transients 新增三个 T0 元数据列**：`t0_ref`（TEXT）、`t0_offset`（FLOAT，秒，正=向后/负=提前）、
+   `t0_offset_ref`（TEXT）。**纯元数据，不参与任何 MJD 换算与绘图基准**；POST/PUT /api/transients
+   均可读写，info JSON 双向支持 `T0_ref`/`T0_offset`/`T0_offset_ref` 键。
+3. **lightcurves 新增 `mjd` 列**（FLOAT 可空）：**观测时间的唯一权威依据**；`time` 降级为相对 T0 的
+   秒数画图加速缓存，可随时由 mjd 重算覆盖。源无 T0 时 mjd 为 NULL、time 维持原值。存量 257391 行
+   已用 `scripts/migrate_lc_mjd.py` 按 t0+time/86400 回填（0 行 NULL）。写入侧（batch、PUT、ingest、
+   ETL 导入）自动互算：给 mjd 重算 time、给 time 重算 mjd（新增时两者至少给一个，否则 400）；
+   PUT /api/transients 改 T0 时联动重算该源全部光变点 mjd（T0 清除则置 NULL）。lc CSV
+   （`catadata/lc/*.csv`）新增 `mjd` 列（time_unit 之后），旧 CSV 无此列可正常导入（导入时补齐）；
+   光变列表排序支持 `sort=mjd`。
+4. **基准时刻（t_ref）贯穿三处**：单源光变图页图头新增「基准时刻」输入（MJD 数字或 UTC 时间，
+   留空/`t0`=源 T0 默认），x 坐标按 (mjd−ref)×86400/zfac 重算，顶部 MJD 副轴与拟合叠加同步；
+   多源对比图同样可加统一基准时刻（默认各源自己的 T0）；余辉拟合数据选取卡加基准时刻输入，
+   提交时 selection 带 `t_ref_mjd`（`fitting/jobs.py prepare_data` 已支持：t=(mjd−t_ref)×86400，
+   无 mjd 行用 t0+time 兜底；源无 T0 时报错）。注意模型要求 t>0，基准之后的点会被丢弃
+   （与默认路径 t<=0 剔除一致）。
+5. **导出基准时刻**：`GET /api/export/lightcurves/<tid>` 新增 `t_ref` 查询参数（缺省/`t0`=源 T0；
+   纯数字=MJD；ISO UTC 字符串），time 列按基准重算，响应头 `X-AJST-Tref` 回显；CSV 含**全部列**
+   （含 mjd）。前端详情页「导出光变」按钮改为弹窗选基准时刻。
+6. **前端 tag 组件**（`frontend/js/taginput.js`）：`attachTagInput` 挂 datalist 补全（option 显示
+   name—description）；`ensureTagsRegistered` 提交前对未登记 tag 逐个 prompt 要求必填文字说明并
+   POST /api/tags 登记，取消则中止保存。新建事件页（create.js）新增副标签输入与三个 T0 元数据输入；
+   详情页编辑面板同。首页「TAGS-标签分布」区显示各主/副 tag 的文字描述（取 /api/tags，失败静默降级）。
+7. **事件列表页（list.js）**：T0 列显示完整 UTC `YYYY-MM-DD HH:MM:SS`（去 T 与小数秒）；标签列
+   主 tag（badge-tag）与副 tag（badge-neutral 灰色）同列显示、颜色不同；筛选区新增「仅显示有光谱
+   数据」勾选（`has_spectra=true`）、T0 日期范围（`t0_from`/`t0_to`，t0_to 含当天全天）、副标签下拉
+   （`sub_tag`，选项来自 `GET /api/transients/sub_tags`）；分页改为居中横向滚轮式分页条（拖动/滚轮
+   翻页，当前页 ±3 窗口，点击当前页码可直接输入页码跳转）。
+8. **光变图增强（detail_lcchart.js）**：图容器宽度 80% 浏览器窗口居中（保持 aspect-ratio 3/2）；
+   新增「显示光谱观测」勾选（数据由 detail.js 经 `setLCSpectra([{mjd,instrument,observation_date}])`
+   注入，只用 parent_id 为空的原始谱）：在光谱观测时刻画紫色 #bc8cff 竖虚线（与「显示当前时刻」
+   红线 #f85149 区分），不影响轴范围；越界谱在 chartArea 左/右上角画指向对应方向的小三角、多个纵向
+   错开 14px；悬停竖线或三角显示 tooltip（观测日期 YYYY-MM-DD + 仪器）。
+9. **光变数据表/上传（detail_lctable.js、lc_upload.js）**：数据表新增 MJD 列（time 之后，fmtNum
+   5 位小数，null 显示 '-'）；行内编辑/新增支持 mjd 字段，新增校验改为「time 或 MJD 至少填一个」；
+   CSV 上传 DB_FIELDS 加 mjd（同义词 mjdobs/obsmjd 等归 mjd，不再误归 time），time 必填改为
+   time|mjd 二选一。
+
 ## 九、关键技术依赖
 
 | 组件 | 版本 | 用途 |
@@ -1697,6 +1765,24 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 ---
 
 ## 十一、版本历史
+
+### v2.23（2026-09-22）— 标签索引表 / T0 元数据 / MJD 权威时间与基准时刻
+
+- tags 表新增 `kind` 列（main/sub），唯一约束改 `(name,kind)`；`/api/tags` 扩展为完整 CRUD
+  （GET 支持 `?kind=`，POST 的 description 必填）+ `POST /api/tags/register` 批量登记；
+  tags 随 `--dump` 落盘 `catadata/tags.json`，全量重建 force 回灌 + 登记现役 tag（详见 §8.31）
+- transients 新增 `t0_ref`/`t0_offset`/`t0_offset_ref` 三个 T0 元数据列（纯元数据不参与换算）；
+  lightcurves 新增 `mjd` 列作为观测时间唯一权威依据，`time` 降级为画图加速缓存，
+  写入侧自动互算，改 T0 联动重算全源光变点
+- 基准时刻（t_ref）贯穿单源光变图、多源对比图、余辉拟合数据选取（`t_ref_mjd`）与导出接口
+  （`t_ref` 参数 + `X-AJST-Tref` 回显，导出 CSV 含全部列）
+- 前端：新组件 `js/taginput.js`（datalist 补全 + 未登记 tag 提交前强制补描述）；事件列表页
+  T0 完整 UTC 显示、主/副 tag 同列异色徽标、新筛选（has_spectra/t0 范围/sub_tag）、滚轮式分页条；
+  光变图 80% 宽居中、光谱观测紫色竖虚线 + 越界三角 + 悬停 tooltip；数据表/CSV 上传支持 mjd 列
+- 验收证据：存量 257391 行 mjd 回填 0 行 NULL；`etl.py --sync` 无更新 + GRB221009A 单源往返
+  mjd 保留；`prepare_data` t_ref_mjd 612 点平移 +86400s 精确；浏览器冒烟 22+ 项全过
+  （tag 描述/新筛选/滚轮分页/T0 完整显示/图 80% 宽/光谱竖线与越界三角/悬停 tooltip/导出弹窗/
+  对比与拟合基准输入）
 
 ### v2.22（2026-09-21）— 距离模数缓存 + 宿主统计 ETag / 迁移与口径修复 / pcigale 回退 / 滤光片总览前端
 

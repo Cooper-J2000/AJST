@@ -6,8 +6,9 @@ import { esc } from '../utils.js';
 
 // ─── 可映射的数据库列（与 detail.js「添加记录」字段集一致，另加 time_unit） ───
 const DB_FIELDS = [
-  { key: 'time',                    label: '时间 time',                 type: 'float',   required: true },
+  { key: 'time',                    label: '时间 time',                 type: 'float' },
   { key: 'time_err',                label: '时间误差 time_err',         type: 'float' },
+  { key: 'mjd',                     label: 'MJD mjd',                   type: 'float' },
   { key: 'time_unit',               label: '时间单位 time_unit',        type: 'timeunit' },
   { key: 'band',                    label: '波段 band',                 type: 'str',     required: true },
   { key: 'flux_density',            label: '流量/星等 flux_density',    type: 'float',   required: true },
@@ -32,8 +33,9 @@ const DB_FIELDS = [
 
 // ─── 表头自动猜测同义词（归一化后精确匹配：小写、去空格/下划线/连字符/括号） ───
 const HEADER_SYNONYMS = {
-  time: ['time', 't', 'dt', 'times', 'timesincetrigger', 'tt0', 'timesinceburst', 'obstime', 'deltat', 'mjdobs'],
+  time: ['time', 't', 'dt', 'times', 'timesincetrigger', 'tt0', 'timesinceburst', 'obstime', 'deltat'],
   time_err: ['timeerr', 'terr', 'dtime', 'timeerror', 'sigmat', 'deltaterr', 'exptime', 'exposure'],
+  mjd: ['mjd', 'mjdobs', 'obsmjd', 'mjddate', 'mjdutc', 'obsmjdutc'],
   time_unit: ['timeunit', 'tunit'],
   band: ['band', 'filter', 'filt', 'passband', 'bandname', 'energy', 'freq', 'frequency', 'channel'],
   flux_density: ['fluxdensity', 'flux', 'mag', 'magnitude', 'fluxmjy', 'fnu', 'countrate', 'rate', 'fluxnu', 'fd', 'value'],
@@ -224,7 +226,7 @@ function ensureModal() {
           <div id="lcUpStep2" style="display:none">
             <div class="small text-secondary mb-2">
               为每个数据库列选择数据来源：<strong>不导入</strong> / <strong>上传表的某列</strong> / <strong>固定值</strong>（用指定内容填充所有行）。
-              带 <span class="text-danger">*</span> 为必填列。映射仅本次有效，不会保存。
+              带 <span class="text-danger">*</span> 为必填列；时间 time 与 MJD 至少映射其一（源有 T0 时服务端自动互算）。映射仅本次有效，不会保存。
             </div>
             <div class="table-scroll" style="max-height:420px;overflow:auto">
               <table class="table table-sm mb-0" style="font-size:0.85rem">
@@ -441,17 +443,21 @@ function buildRecords(mapping) {
         if (rec[f.key] == null) { rowErr = `必填列 ${f.key} 未映射或为空`; break; }
       }
     }
+    // time 与 mjd 至少有一个（两者都给了原样提交，服务端负责互算）
+    if (!rowErr && rec.time == null && rec.mjd == null) {
+      rowErr = 'time 与 mjd 列至少需要一个';
+    }
     // 星等数据要求星等系统
     if (!rowErr && rec.flux_density_unit && rec.flux_density_unit.toLowerCase().includes('mag')
         && !rec.mag_system) {
       rowErr = '单位为星等但 mag_system 为空';
     }
     if (rowErr) { errors.push({ row: rowNo, msg: rowErr }); return; }
-    // 时间统一换算为秒
+    // 时间统一换算为秒（time 可空：仅给 mjd 的行由服务端按 T0 反算）
     const unit = rec.time_unit || 's';
     const factor = TIME_FACTOR[unit] || 1;
     if (factor !== 1) {
-      rec.time *= factor;
+      if (rec.time != null) rec.time *= factor;
       if (rec.time_err != null) rec.time_err *= factor;
     }
     rec.time_unit = 's';

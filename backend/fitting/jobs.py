@@ -82,17 +82,26 @@ def prepare_data(transient_id, selection=None):
     误差缺失/为 0 的探测点跳过。
     selection（可选的用户数据选取）: {'bands': [波段名...], 'tmin': 秒|None,
       'tmax': 秒|None, 'band_ranges': {波段: [tmin, tmax]}（精细时段，优先于
-      全局 tmin/tmax）, 'exclude_ids': [lightcurve id...]}，缺省=不限制。
+      全局 tmin/tmax）, 'exclude_ids': [lightcurve id...],
+      't_ref_mjd': 基准时刻 MJD|None（缺省=源 T0；指定后所有时间以该时刻为零点，
+      由 MJD 权威列重算：t = (mjd − t_ref_mjd)×86400）}，缺省=不限制。
     返回:
       {z, bands: [{band, nu, t[], f[], ferr[], weights[], is_ul[]}],
        warnings: [...], n_points}
     """
+    from models import t0_to_mjd
     selection = selection or {}
     sel_bands = set(selection.get('bands') or []) or None
     sel_tmin, sel_tmax = selection.get('tmin'), selection.get('tmax')
     # 分波段精细时段：{'R': [tmin, tmax], ...}，未设的波段用全局 sel_tmin/sel_tmax
     band_ranges = selection.get('band_ranges') or {}
     sel_excl = set(selection.get('exclude_ids') or [])
+    # 自定义基准时刻（MJD）；缺省 = 源 T0（即用库存 time 缓存列）
+    sel_tref = selection.get('t_ref_mjd')
+    try:
+        sel_tref = float(sel_tref) if sel_tref is not None else None
+    except (TypeError, ValueError):
+        sel_tref = None
     sess = get_session()
     try:
         t = sess.get(Transient, transient_id)
@@ -100,6 +109,9 @@ def prepare_data(transient_id, selection=None):
             raise ValueError(f'暂现源不存在: {transient_id}')
         if t.redshift is None:
             raise ValueError(f'{transient_id} 缺少红移，无法拟合')
+        t0_mjd = t0_to_mjd(t.t0)
+        if sel_tref is not None and t0_mjd is None:
+            raise ValueError(f'{transient_id} 没有 T0，无法使用自定义基准时刻')
         filters = {f.id: f for f in sess.query(FilterDef).all()}
         rows = (sess.query(Lightcurve)
                 .filter_by(transient_id=transient_id, discard=False)
@@ -127,9 +139,16 @@ def prepare_data(transient_id, selection=None):
                     skip_no_filter.add(lc.band)
                     continue
             # 时间 → s，模型要求 t > 0
-            factor = _TIME_UNIT_TO_S.get((lc.time_unit or 's').lower())
-            t_s = (lc.time * factor
-                   if (factor is not None and lc.time is not None) else None)
+            if sel_tref is not None:
+                # 自定义基准时刻：以 MJD 权威列重算（缺 MJD 时由 T0+time 现算兜底）
+                mjd = lc.mjd
+                if mjd is None and t0_mjd is not None and lc.time is not None:
+                    mjd = t0_mjd + lc.time / 86400.0
+                t_s = (mjd - sel_tref) * 86400.0 if mjd is not None else None
+            else:
+                factor = _TIME_UNIT_TO_S.get((lc.time_unit or 's').lower())
+                t_s = (lc.time * factor
+                       if (factor is not None and lc.time is not None) else None)
             if t_s is None or t_s <= 0:
                 skip_bad_t += 1
                 continue
@@ -178,6 +197,8 @@ def prepare_data(transient_id, selection=None):
 
         if skip_no_filter:
             warnings.append(f'filters 表无定义，已跳过波段: {sorted(skip_no_filter)}')
+        if sel_tref is not None:
+            warnings.append(f'时间基准时刻: MJD {sel_tref}（t = (MJD − {sel_tref}) × 86400 s；非源 T0）')
         if n_sel_skip:
             parts = []
             if sel_bands is not None:

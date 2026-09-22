@@ -5,7 +5,7 @@
 // 实时绑定，模块求值期不访问，ESM 循环安全）。
 import { app, showLoading, showError, navSeq, navStale } from './layout.js';
 import {
-  getTransient, getLightcurves, getFilters, getArticles,
+  getTransient, getLightcurves, getFilters, getArticles, getSpectra,
   isAuthed, isAdmin,
 } from '../api.js';
 import { initFittingTab, destroyFittingTab } from './fitting_tab.js';
@@ -13,9 +13,9 @@ import { initHostfitTab, destroyHostfitTab } from './hostfit_tab.js';
 import { initSedTab, destroySedTab } from './sed_tab.js';
 import { ensureFilterCache, buildSpectralColors } from '../bands.js';
 import { esc, escAttr } from '../utils.js';
-import { initOverview, articlesHTML, fillHostSummary, attachEditCoordHints } from './detail_overview.js';
+import { initOverview, articlesHTML, fillHostSummary, attachEditCoordHints, attachEditTagInputs } from './detail_overview.js';
 import { LC_COLS, lcRowHTML, setLCItems, buildLcColPanel, applyLcColVis } from './detail_lctable.js';
-import { setLCSourceParams, resetLCChart, initLCPlot, wireLCChartGlobals, t0ToMJD } from './detail_lcchart.js';
+import { setLCSourceParams, resetLCChart, initLCPlot, wireLCChartGlobals, t0ToMJD, setLCSpectra } from './detail_lcchart.js';
 import { renderDerivedCard, initDerived, resetDerived } from './detail_derived.js';
 import { renderCatalogData } from './detail_catalog.js';
 import { initSpectraTab, resetSpectra, getSpecAxisType } from './detail_spectra.js';
@@ -56,6 +56,16 @@ export async function render(tid) {
     initOverview(transient, articles);
     // 光变图用的源级参数（注入 detail_lcchart.js；模板里的开关可用性用本地副本判断）
     setLCSourceParams({ redshift: transient.redshift, t0: transient.t0, distmod: transient.distmod, name: transient.id });
+    // 光谱观测时刻注入光变图（独立请求，不阻塞渲染；只取原始谱 parent_id 为空者，
+    // mjd 缺失的丢弃；接口失败静默传 null。每次 render 重新注入，重建图表后仍有效）
+    getSpectra(tid).then(list => {
+      if (currentTid !== tid) return;
+      const specPts = (Array.isArray(list) ? list : [])
+        .filter(s => !s.parent_id)
+        .map(s => ({ mjd: s.extra_data?.mjd, instrument: s.instrument, observation_date: s.observation_date }))
+        .filter(s => s.mjd != null);
+      setLCSpectra(specPts);
+    }).catch(() => { if (currentTid === tid) setLCSpectra(null); });
     const canRestFrame = (transient.redshift != null && transient.redshift > -1);
     const canAbsMag = transient.distmod != null;
     const canMJD = t0ToMJD(transient.t0) != null;
@@ -99,7 +109,7 @@ export async function render(tid) {
           <button class="btn btn-sm btn-outline-secondary" onclick="handleEditClick()" id="editBtn" title="编辑">
             <i class="bi bi-pencil"></i>
           </button>
-          <button class="btn btn-sm btn-outline-secondary" onclick="APIImport.exportLC(currentTid)" title="导出光变CSV">
+          <button class="btn btn-sm btn-outline-secondary" onclick="exportLCWithRef()" title="导出光变CSV（可选基准时刻）">
             <i class="bi bi-download"></i>
           </button>
         </div>
@@ -129,6 +139,9 @@ export async function render(tid) {
                       <tr><td class="text-secondary" style="width:140px">RA</td><td>${transient.ra != null ? transient.ra.toFixed(6) : '-'}</td></tr>
                       <tr><td class="text-secondary">Dec</td><td>${transient.dec != null ? transient.dec.toFixed(6) : '-'}</td></tr>
                       <tr><td class="text-secondary">T0</td><td>${esc(transient.t0) || '-'}</td></tr>
+                      <tr><td class="text-secondary">T0 引用</td><td class="small">${esc(transient.t0_ref) || '-'}</td></tr>
+                      <tr><td class="text-secondary">T0 偏移量(秒)</td><td>${transient.t0_offset != null ? transient.t0_offset : '-'}</td></tr>
+                      <tr><td class="text-secondary">T0 偏移量引用</td><td class="small">${esc(transient.t0_offset_ref) || '-'}</td></tr>
                       <tr><td class="text-secondary">触发仪器</td><td>${esc(transient.trigger_instrument) || '-'}</td></tr>
                       <tr><td class="text-secondary">红移</td><td>${transient.redshift != null ? `${transient.redshift} (${esc(transient.redshift_type) || '?'})` : '<span class="text-secondary">未知</span>'}</td></tr>
                       <tr><td class="text-secondary">红移引用</td><td class="small">${esc(transient.redshift_ref) || '-'}</td></tr>
@@ -151,6 +164,9 @@ export async function render(tid) {
                       <div class="col-6"><label class="form-label small">RA</label><input type="text" class="form-control form-control-sm" id="editRa" value="${escAttr(transient.ra ?? '')}" placeholder="度 或 08h08m27.4s"></div>
                       <div class="col-6"><label class="form-label small">Dec</label><input type="text" class="form-control form-control-sm" id="editDec" value="${escAttr(transient.dec ?? '')}" placeholder="度 或 +40d36m44.8s"></div>
                       <div class="col-6"><label class="form-label small">T0</label><input type="text" class="form-control form-control-sm" id="editT0" value="${escAttr(transient.t0)}"></div>
+                      <div class="col-6"><label class="form-label small">T0 引用</label><input type="text" class="form-control form-control-sm" id="editT0Ref" value="${escAttr(transient.t0_ref)}"></div>
+                      <div class="col-6"><label class="form-label small">T0 偏移量(秒)</label><input type="number" class="form-control form-control-sm" id="editT0Offset" step="any" value="${transient.t0_offset ?? ''}" title="正=向后，负=提前"></div>
+                      <div class="col-6"><label class="form-label small">T0 偏移量引用</label><input type="text" class="form-control form-control-sm" id="editT0OffsetRef" value="${escAttr(transient.t0_offset_ref)}"></div>
                       <div class="col-6"><label class="form-label small">触发仪器</label><input type="text" class="form-control form-control-sm" id="editTrigger" value="${escAttr(transient.trigger_instrument)}"></div>
                       <div class="col-4"><label class="form-label small">红移</label><input type="number" class="form-control form-control-sm" id="editZ" step="any" value="${transient.redshift ?? ''}"></div>
                       <div class="col-4"><label class="form-label small">红移类型</label>
@@ -266,7 +282,7 @@ export async function render(tid) {
                 <button class="btn btn-sm btn-outline-primary" onclick="applyLCAxisRange()">应用</button>
                 <button class="btn btn-sm btn-outline-secondary" onclick="resetLCAxisRange()">恢复默认</button>
               </div>
-              <div class="chart-container" style="height:auto;aspect-ratio:3/2;min-height:0;overflow:hidden"><canvas id="lcChart"></canvas></div>
+              <div class="chart-container" style="height:auto;aspect-ratio:3/2;width:80%;margin:0 auto;min-height:0;overflow:hidden"><canvas id="lcChart"></canvas></div>
               <!-- 波段显示勾选面板（替代内置图例的划线开关） -->
               <div id="lcBandPanel" class="d-flex flex-wrap gap-2 align-items-center mt-2 small"></div>
               ${lcData.total > 0 ? `
@@ -410,6 +426,31 @@ export async function render(tid) {
         <div id="tab-sed" class="tab-pane" style="display:none"></div>
       </div>
 
+      <!-- 导出光变数据弹窗（选基准时刻：源 T0 / MJD / UTC） -->
+      <div class="modal fade" id="lcExportModal" tabindex="-1">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header"><h6 class="mb-0"><i class="bi bi-download"></i> 导出光变数据 — ${esc(tid)}</h6>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+              <label class="form-label small">基准时刻（导出时间列以此为零点）</label>
+              <select class="form-select form-select-sm mb-2" id="lcExportMode" onchange="lcExportModeChanged()">
+                <option value="t0" selected>源 T0（默认）</option>
+                <option value="mjd">自定义 MJD</option>
+                <option value="utc">自定义 UTC 时间 (ISO 8601)</option>
+              </select>
+              <input type="text" class="form-control form-control-sm" id="lcExportCustom"
+                     placeholder="如 60600.5 或 2025-12-02T01:48:23Z" style="display:none">
+              <div class="small text-secondary mt-2" id="lcExportHint"></div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+              <button class="btn btn-sm btn-primary" onclick="doLCExport()"><i class="bi bi-download"></i> 导出 CSV</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 上传光谱弹窗 -->
       <div class="modal fade" id="specUploadModal" tabindex="-1">
         <div class="modal-dialog">
@@ -548,6 +589,8 @@ export async function render(tid) {
 
     // 坐标输入即时解析提示（度 ⇄ 时分秒）
     attachEditCoordHints();
+    // 主/副标签输入 datalist 自动补全
+    attachEditTagInputs();
 
   } catch (err) {
     if (navStale(seq)) return;  // 已离开本页，错误提示不覆盖新页面

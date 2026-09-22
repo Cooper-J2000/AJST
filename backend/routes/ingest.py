@@ -294,6 +294,7 @@ def photometry():
             lc = Lightcurve(transient_id=transient.id)
             fields = {
                 'time': t_sec,
+                'mjd': mjd,              # MJD 为权威时间，time 为其相对 T0 的缓存
                 'time_unit': 's',
                 'band': band,
                 'flux_density': value,

@@ -16,8 +16,10 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 from app import get_engine, get_session
-from models import Base, Transient, Lightcurve, FilterDef, Tag, Spectrum, Article, HostGalaxy, utcnow
+from models import (Base, Transient, Lightcurve, FilterDef, Tag, Spectrum,
+                    Article, HostGalaxy, utcnow, t0_to_mjd)
 from models import refresh_distmod
+from routes.tags import register_tags
 import extinction
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,12 +27,14 @@ DATA_DIR = os.environ.get('AJST_DATA_DIR', os.path.join(PROJECT_ROOT, 'catadata'
 LC_DIR = os.path.join(DATA_DIR, 'lc')
 INFO_DIR = os.path.join(DATA_DIR, 'info')
 FILTERS_FILE = os.path.join(DATA_DIR, 'filters.json')
+TAGS_FILE = os.path.join(DATA_DIR, 'tags.json')
 SPECTRA_DIR = os.path.join(DATA_DIR, 'spectra')
 MJD_EPOCH = datetime(1858, 11, 17)
 
 # CSV 列名到模型字段的映射
 CSV_FIELD_MAP = {
     'time': 'time', 'time_err': 'time_err', 'time_unit': 'time_unit',
+    'mjd': 'mjd',
     'band': 'band', 'flux_density': 'flux_density',
     'flux_density_err': 'flux_density_err', 'flux_density_unit': 'flux_density_unit',
     'mag_system': 'mag_system', 'Gext_corr': 'gext_corr', 'upperlimit': 'upperlimit',
@@ -44,7 +48,7 @@ CSV_FIELD_MAP = {
     'source': 'source',
 }
 BOOL_FIELDS = {'gext_corr', 'upperlimit', 'discard'}
-FLOAT_FIELDS = {'time', 'time_err', 'flux_density', 'flux_density_err',
+FLOAT_FIELDS = {'time', 'time_err', 'mjd', 'flux_density', 'flux_density_err',
                 'gext_Alambda', 'mag_gextcor', 'mag_gextcor_err',
                 'flux_density_gextcor', 'flux_density_gextcor_err', 'weights'}
 
@@ -174,6 +178,9 @@ def import_one_transient(sess, tid):
         t.ra = parse_float(data.get('ra'))
         t.dec = parse_float(data.get('dec'))
         t.t0 = t0
+        t.t0_ref = data.get('T0_ref')
+        t.t0_offset = parse_float(data.get('T0_offset'))
+        t.t0_offset_ref = data.get('T0_offset_ref')
         t.trigger_instrument = data.get('Trigger_Instrument')
         t.redshift = parse_float(data.get('redshift'))
         t.redshift_type = data.get('redshift_type')
@@ -193,7 +200,10 @@ def import_one_transient(sess, tid):
     else:
         t = Transient(
             id=tid, ra=parse_float(data.get('ra')), dec=parse_float(data.get('dec')),
-            t0=t0, trigger_instrument=data.get('Trigger_Instrument'),
+            t0=t0, t0_ref=data.get('T0_ref'),
+            t0_offset=parse_float(data.get('T0_offset')),
+            t0_offset_ref=data.get('T0_offset_ref'),
+            trigger_instrument=data.get('Trigger_Instrument'),
             redshift=parse_float(data.get('redshift')),
             redshift_type=data.get('redshift_type'), redshift_ref=data.get('redshift_ref'),
             pos_error=parse_float(data.get('pos_error')),
@@ -207,6 +217,10 @@ def import_one_transient(sess, tid):
         extinction.refresh_ebv(t)      # 坐标建立 → 计算 E(B-V) 缓存
         refresh_distmod(t)             # 红移 → 距离模数缓存
     sess.flush()
+
+    # 该源的主/副 tag 登记进索引表（幂等；缺失描述留空）
+    register_tags(sess, t.tags, 'main')
+    register_tags(sess, t.sub_tag, 'sub')
 
     # 研究文章：info JSON 含 articles 字段时对该源做全量替换（与光变一致；
     # 字段缺失说明是旧格式文件，不动库中现有条目）
@@ -265,6 +279,7 @@ def import_one_lightcurve(sess, tid):
     sess.query(Lightcurve).filter(Lightcurve.transient_id == tid).delete()
     sess.flush()
 
+    t0_mjd = t0_to_mjd(t.t0)   # 有 T0 时逐行补齐 MJD（权威时间列）
     count = 0
     errors = 0
     with open(lc_file, newline='', encoding='utf-8-sig') as f:
@@ -297,6 +312,9 @@ def import_one_lightcurve(sess, tid):
                         lc.time_unit = 's'
                 # 流量/星等保留原始值与原始单位（mag/uJy/Jy/cgs/mJy 原样入库），
                 # mJy 统一在银河系消光改正后写入 flux_density_gextcor 列
+                # MJD 权威时间列：CSV 未带 mjd 列时由 time + T0 补齐（无 T0 留空）
+                if lc.mjd is None and t0_mjd is not None and lc.time is not None:
+                    lc.mjd = t0_mjd + lc.time / 86400.0
                 sess.add(lc)
                 count += 1
             except Exception as e:
@@ -417,7 +435,7 @@ def import_spectra(sess):
 
 
 def ensure_default_tags(sess):
-    """创建默认标签（幂等）"""
+    """创建默认标签（幂等）。主 tag 层（kind='main'）。"""
     default_tags = [
         ('fxt', 'EP/FXT fast X-ray transient', '#e74c3c'),
         ('grb', 'Gamma-ray burst', '#3498db'),
@@ -425,10 +443,64 @@ def ensure_default_tags(sess):
         ('tde', 'Tidal disruption event', '#9b59b6'),
     ]
     for name, desc, color in default_tags:
-        existing = sess.query(Tag).filter(Tag.name == name).first()
+        existing = sess.query(Tag).filter(Tag.name == name, Tag.kind == 'main').first()
         if not existing:
-            sess.add(Tag(name=name, description=desc, color=color))
+            sess.add(Tag(name=name, kind='main', description=desc, color=color))
     sess.commit()
+
+
+def import_tags(sess, force=False):
+    """从 catadata/tags.json 导入 tag 索引（幂等 upsert；force 时描述/颜色以文件为准）"""
+    if not os.path.exists(TAGS_FILE):
+        print('[SKIP] tags.json not found')
+        return
+    with open(TAGS_FILE) as f:
+        raw = json.load(f)
+    items = raw if isinstance(raw, list) else raw.get('tags', [])
+    count = 0
+    for item in items:
+        name = (item.get('name') or '').strip()
+        kind = item.get('kind') if item.get('kind') in ('main', 'sub') else 'main'
+        if not name:
+            continue
+        existing = sess.query(Tag).filter(Tag.name == name, Tag.kind == kind).first()
+        if existing:
+            if force:
+                existing.description = item.get('description')
+                existing.color = item.get('color')
+                count += 1
+            continue
+        sess.add(Tag(name=name, kind=kind,
+                     description=item.get('description'),
+                     color=item.get('color')))
+        count += 1
+    sess.commit()
+    print(f'  [OK] Tags: {count} imported/updated')
+
+
+def register_used_tags(sess):
+    """把 transients 表现役的主/副 tag 全部登记进索引表（缺失描述留空，幂等）"""
+    main_rows = sess.execute(text(
+        "SELECT DISTINCT elem FROM transients, LATERAL "
+        "jsonb_array_elements_text(tags) elem "
+        "WHERE jsonb_typeof(tags) = 'array'")).fetchall()
+    sub_rows = sess.execute(text(
+        "SELECT DISTINCT elem FROM transients, LATERAL "
+        "jsonb_array_elements_text(sub_tag) elem "
+        "WHERE jsonb_typeof(sub_tag) = 'array'")).fetchall()
+    register_tags(sess, [r[0] for r in main_rows], 'main')
+    register_tags(sess, [r[0] for r in sub_rows], 'sub')
+    sess.commit()
+
+
+def dump_tags(sess):
+    """将 tag 索引表写回 catadata/tags.json（--dump 的一部分；全量覆盖）"""
+    rows = sess.query(Tag).order_by(Tag.kind, Tag.name).all()
+    out = [{'name': r.name, 'kind': r.kind, 'description': r.description,
+            'color': r.color} for r in rows]
+    with open(TAGS_FILE, 'w') as f:
+        json.dump(out, f, indent=2, ensure_ascii=False)
+    print(f'  [OK] Tags dumped: {len(out)} entries')
 
 
 def dump_filters(sess):
@@ -467,6 +539,7 @@ def from_dump(sess):
     os.makedirs(LC_DIR, exist_ok=True)
 
     dump_filters(sess)
+    dump_tags(sess)
 
     transients = sess.query(Transient).order_by(Transient.id).all()
     n_info = 0
@@ -480,6 +553,9 @@ def from_dump(sess):
             'ra': t.ra,
             'dec': t.dec,
             'T0': (t.t0.isoformat() + 'Z' if t.t0 else None),
+            'T0_ref': t.t0_ref,
+            'T0_offset': t.t0_offset,
+            'T0_offset_ref': t.t0_offset_ref,
             'Trigger_Instrument': t.trigger_instrument,
             'redshift': t.redshift,
             'tag': t.tags or [],
@@ -527,7 +603,7 @@ def from_dump(sess):
 
         if lcs:
             fields = [
-                'time', 'time_err', 'time_unit', 'band',
+                'time', 'time_err', 'time_unit', 'mjd', 'band',
                 'flux_density', 'flux_density_err', 'flux_density_unit',
                 'mag_system', 'Gext_corr', 'upperlimit',
                 'Gext_Alambda', 'mag_Gextcor', 'mag_Gextcor_err',
@@ -615,6 +691,7 @@ def main():
         # ---- 标签（增量模式；全量模式必须在 TRUNCATE 之后重建，见下） ----
         if args.sync:
             ensure_default_tags(sess)
+            import_tags(sess)   # tags.json 中缺失的条目补入（不覆盖已有描述）
 
         # ---- 全量模式：清空重建 ----
         if tids is None:
@@ -632,8 +709,10 @@ def main():
                 conn.execute(text('SELECT 1'))
             import_filters(sess, force=True)
 
-            # 默认标签同样被 TRUNCATE 清掉，必须在清空之后重建
+            # 默认标签同样被 TRUNCATE 清掉，必须在清空之后重建；
+            # tags.json（tag 索引表的落盘）随后以文件为准灌入
             ensure_default_tags(sess)
+            import_tags(sess, force=True)
 
             tids = list_available_tids()
             print(f'\n--- Importing {len(tids)} transients ---')
@@ -641,6 +720,9 @@ def main():
                 import_one_transient(sess, tid)
             sess.commit()
             print(f'  [OK] {len(tids)} transients')
+
+            # 数据中出现的主/副 tag 全部登记进索引表（tags.json 未覆盖的补空描述行）
+            register_used_tags(sess)
 
             print(f'\n--- Importing lightcurves ---')
             total_lc = 0

@@ -67,6 +67,7 @@ export const getTransient = (id) => api('GET', `/transients/${id}`);
 // 轻量专用接口：统计/对比页全量元数据、列表页 tags 下拉（避免整表 per_page=10000）
 export const getTransientMeta = () => api('GET', '/transients/meta');
 export const getTransientTags = () => api('GET', '/transients/tags');
+export const getTransientSubTags = () => api('GET', '/transients/sub_tags');
 export const createTransient = (data) => api('POST', '/transients', data);
 export const updateTransient = (id, data) => api('PUT', `/transients/${id}`, data);
 export const deleteTransient = (id) => api('DELETE', `/transients/${id}`);
@@ -185,12 +186,22 @@ export const getGcnStatus = () => api('GET', '/gcn/status');
 export const getGcnRelated = (cid) => api('GET', `/gcn/${cid}/related`);
 export const updateGcnArchive = () => api('POST', '/gcn/update');
 
+// Tags（标签索引表；kind: main=主标签 / sub=副标签；新建时 description 必填）
+export const getTags = (kind = null) =>
+  api('GET', `/tags${kind ? '?kind=' + encodeURIComponent(kind) : ''}`);
+export const createTag = (data) => api('POST', '/tags', data);
+export const updateTag = (id, data) => api('PUT', `/tags/${id}`, data);
+export const deleteTag = (id) => api('DELETE', `/tags/${id}`);
+
 // Export
 export const exportTransients = (fmt = 'csv') => {
   window.open(`${API_BASE}/export/transients?format=${fmt}`, '_blank');
 };
-export const exportLightcurves = (tid, fmt = 'csv') => {
-  window.open(`${API_BASE}/export/lightcurves/${tid}?format=${fmt}`, '_blank');
+// tRef：下载光变表的基准时刻（缺省/'t0'=源 T0；纯数字=MJD；ISO UTC 字符串）
+export const exportLightcurves = (tid, fmt = 'csv', tRef = null) => {
+  let url = `${API_BASE}/export/lightcurves/${tid}?format=${fmt}`;
+  if (tRef) url += `&t_ref=${encodeURIComponent(tRef)}`;
+  window.open(url, '_blank');
 };
 export const exportHostPhotometry = (tid, fmt = 'csv') => {
   window.open(`${API_BASE}/export/host_photometry/${encodeURIComponent(tid)}?format=${fmt}`, '_blank');

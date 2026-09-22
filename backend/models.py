@@ -19,6 +19,16 @@ def utcnow():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+MJD_EPOCH = datetime(1858, 11, 17)  # MJD 0 = 1858-11-17T00:00:00 UTC
+
+
+def t0_to_mjd(t0):
+    """naive UTC datetime → MJD（float）；None → None"""
+    if t0 is None:
+        return None
+    return (t0 - MJD_EPOCH).total_seconds() / 86400.0
+
+
 # 距离模数进程内缓存：z 按 1e-6 分桶（z≳0.01 时 dz=1e-6 引起的 μ 误差远小于
 # 返回值本身的 0.001 mag 舍入；极低 z 时桶边界误差可达数 mmag，科学上可忽略）。
 # 支持批量向量化填充：逐行标量调用 astropy 开销可观（341 个 z ≈ 0.14 s）。
@@ -104,6 +114,9 @@ class Transient(Base):
     ra              = Column(Float, nullable=True)
     dec             = Column(Float, nullable=True)
     t0              = Column(DateTime, nullable=True)
+    t0_ref          = Column(Text, nullable=True)        # T0 的信息来源依据（引用）
+    t0_offset       = Column(Float, nullable=True)       # T0 偏移量（秒；正=向后，负=提前）
+    t0_offset_ref   = Column(Text, nullable=True)        # T0 偏移量的引用
     trigger_instrument = Column(String(64), nullable=True)
     redshift        = Column(Float, nullable=True)
     redshift_type   = Column(String(16), nullable=True)   # value / phot_z / upperlimit
@@ -154,6 +167,9 @@ class Transient(Base):
             'ra': self.ra,
             'dec': self.dec,
             't0': self.t0.isoformat() if self.t0 else None,
+            't0_ref': self.t0_ref,
+            't0_offset': self.t0_offset,
+            't0_offset_ref': self.t0_offset_ref,
             'trigger_instrument': self.trigger_instrument,
             'redshift': self.redshift,
             'redshift_type': self.redshift_type,
@@ -192,6 +208,9 @@ class Lightcurve(Base):
     transient_id  = Column(String(32), ForeignKey('transients.id', ondelete='CASCADE'),
                            nullable=False, index=True)
 
+    # mjd 为观测时间的唯一权威依据（源有 T0 时 = T0_MJD + time/86400；无 T0 时为 NULL）。
+    # time（秒，相对该源 T0）是画图加速缓存列，随时可由 mjd 重算覆盖。
+    mjd           = Column(Float, nullable=True)
     time          = Column(Float, nullable=False)
     time_err      = Column(Float, nullable=True)
     time_unit     = Column(String(8), default='s')
@@ -233,6 +252,7 @@ class Lightcurve(Base):
         return {
             'id': self.id,
             'transient_id': self.transient_id,
+            'mjd': self.mjd,
             'time': self.time,
             'time_err': self.time_err,
             'time_unit': self.time_unit,
@@ -321,20 +341,29 @@ class FilterDef(Base):
         }
 
 
-# ---------- 标签（多对多） ----------
+# ---------- 标签（主 tag / 副 tag 统一索引表） ----------
 class Tag(Base):
+    """tag 索引表：项目中所有主 tag（transients.tags）与副 tag（transients.sub_tag）
+    的名称 + 文字说明。kind 区分层级；同名 tag 在主/副层可各有一行。
+    新建/修改源的 tag 时写接口会自动登记缺失条目（description 留空待补）。"""
     __tablename__ = 'tags'
 
     id          = Column(BigInteger, primary_key=True, autoincrement=True)
-    name        = Column(String(64), unique=True, nullable=False)
+    name        = Column(String(64), nullable=False)
+    kind        = Column(String(8), nullable=False, default='main')  # main / sub
     description = Column(Text, nullable=True)
     color       = Column(String(16), nullable=True)     # 前端显示颜色
     created_at  = Column(DateTime, default=lambda: utcnow())
+
+    __table_args__ = (
+        UniqueConstraint('name', 'kind', name='uq_tags_name_kind'),
+    )
 
     def to_dict(self):
         return {
             'id': self.id,
             'name': self.name,
+            'kind': self.kind,
             'description': self.description,
             'color': self.color,
         }
