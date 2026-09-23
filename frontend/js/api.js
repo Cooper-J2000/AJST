@@ -1,5 +1,5 @@
 // === API Client ===
-const API_BASE = '/api';
+const API_BASE = location.pathname.replace(/\/[^/]*$/, '') + '/api';
 
 let _authed = false;
 let _user = { username: null, role: null };
