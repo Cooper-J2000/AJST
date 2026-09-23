@@ -33,9 +33,10 @@ const detailRe = /^\/transient\/(.+)$/;
 
 function getRoute() {
   const hash = location.hash.replace(/^#/, '') || '/';
-  const m = hash.match(detailRe);
+  const path = hash.split('?')[0] || '/';  // 去掉查询串（列表页把筛选/排序/页码同步进 URL）
+  const m = path.match(detailRe);
   if (m) return { page: 'detail', params: { id: m[1] } };
-  const handler = routes[hash];
+  const handler = routes[path];
   if (handler) return { page: 'static', handler };
   return { page: 'static', handler: routes['/'] };
 }
@@ -61,13 +62,14 @@ async function navigate() {
     div.textContent = `加载页面出错: ${err.message}`;
     app.appendChild(div);
   }
-  // Update active nav link
+  // Update active nav link（比较时忽略查询串，避免 #/list?tag=... 匹配不上 #/list）
+  const curHash = '#' + (location.hash.replace(/^#/, '').split('?')[0] || '/');
   document.querySelectorAll('#navLinks .nav-link').forEach(a => {
     const href = a.getAttribute('href');
     // /stats 的子路由（如 /stats/relations）也高亮"全局统计"；#/tools 高亮"工具箱"下拉
-    const active = href === location.hash ||
-      (href === '#/stats' && location.hash.startsWith('#/stats')) ||
-      (a.id === 'toolsDropdown' && location.hash.startsWith('#/tools'));
+    const active = href === curHash ||
+      (href === '#/stats' && curHash.startsWith('#/stats')) ||
+      (a.id === 'toolsDropdown' && curHash.startsWith('#/tools'));
     a.classList.toggle('active', active);
   });
 }
