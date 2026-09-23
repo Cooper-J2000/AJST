@@ -458,15 +458,15 @@ function buildBandPanel(sortedBands, spectralColors) {
   el.innerHTML = `<span class="text-secondary">波段:</span>` + sortedBands.map((b, i) => {
     const vis = lcBandVisible[b] !== false;
     const c = spectralColors[b] || '#58a6ff';
-    return `<span class="form-check form-check-inline mb-0">
-      <input class="form-check-input lc-band-chk" type="checkbox" id="lcBandChk_${i}" data-band="${escAttr(b)}" ${vis ? 'checked' : ''}>
+    return `<span class="form-check form-check-inline mb-0 d-inline-flex align-items-center">
+      <input class="form-check-input lc-band-chk mt-0" type="checkbox" id="lcBandChk_${i}" data-band="${escAttr(b)}" ${vis ? 'checked' : ''}>
       <label class="form-check-label" for="lcBandChk_${i}"><span style="color:${c}">●</span> ${esc(b)}</label>
     </span>`;
   }).join('') + `
     <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="lcBandAll">全选</button>
     <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="lcBandNone">全不选</button>
-    <span class="form-check form-check-inline mb-0 ms-2 border-start ps-2" title="是否在图上显示上限点（倒三角）；取消勾选只显示探测点">
-      <input class="form-check-input" type="checkbox" id="lcShowUL" ${_lcShowUL ? 'checked' : ''}>
+    <span class="form-check form-check-inline mb-0 ms-2 border-start ps-2 d-inline-flex align-items-center" title="是否在图上显示上限点（倒三角）；取消勾选只显示探测点">
+      <input class="form-check-input mt-0" type="checkbox" id="lcShowUL" ${_lcShowUL ? 'checked' : ''}>
       <label class="form-check-label" for="lcShowUL">显示上限点</label>
     </span>`;
   el.querySelectorAll('.lc-band-chk').forEach(chk => {

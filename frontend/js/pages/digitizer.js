@@ -276,6 +276,15 @@ export async function render() {
                   <option value="mix">Mix（混合）</option>
                 </select>
               </div>
+              <div class="d-flex gap-2 align-items-center mb-1">
+                <span class="small" style="width:70px">波长类型</span>
+                <select class="form-select form-select-sm" id="dgzSpecWaveType" style="width:auto">
+                  <option value="" selected>留空（默认按空气处理）</option>
+                  <option value="vacuum">真空波长</option>
+                  <option value="air">空气波长</option>
+                </select>
+                <span class="small text-secondary">留空按空气波长处理；处理默认先转真空</span>
+              </div>
               <div class="row g-1 mb-1">
                 <div class="col-6"><input class="form-control form-control-sm" id="dgzSpecInstr" placeholder="instrument"></div>
                 <div class="col-6"><input class="form-control form-control-sm" id="dgzSpecMjd" placeholder="MJD（观测日，可空）"></div>
@@ -1164,6 +1173,7 @@ function buildSpectraPayloads() {
   const observer = $('dgzSpecObserver').value.trim() || null;
   const reducer = $('dgzSpecReducer').value.trim() || null;
   const specType = $('dgzSpecType').value;
+  const waveType = $('dgzSpecWaveType').value;  // '' = 留空（后端按空气处理，不回填）
   const payloads = [];
   const perDs = [];
   for (const ds of _datasets.filter(d => d.points.length)) {
@@ -1185,11 +1195,13 @@ function buildSpectraPayloads() {
     const bad = pts.find(p => !(p.wl > 100 && p.wl < 1e7));
     if (bad) return { err: `数据集「${ds.name}」波长 ${fmtNum(bad.wl)} Å 超出 100–1e7 Å 合理范围` };
     const content = pts.map(p => `${p.wl.toPrecision(10)} ${p.flux.toPrecision(10)}`).join('\n');
-    payloads.push({
+    const payload = {
       transient_id: _src.id, filename: fname, content,
       instrument, mjd: mjdRaw || null, observer, reducer, flux_type: fluxType,
       spec_type: specType,
-    });
+    };
+    if (waveType) payload.wavelength_type = waveType;
+    payloads.push(payload);
     perDs.push({ name: ds.name, fname, n: pts.length, wlMin: pts[0].wl, wlMax: pts[pts.length - 1].wl,
                  sample: pts.slice(0, 5), convNote });
   }

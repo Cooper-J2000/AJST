@@ -283,6 +283,25 @@ const _cmpErrorBarPlugin = createYErrBarPlugin({
   enabled: () => _cmpShowErr,
   errOf: (ds, raw) => raw.err,
 });
+// 包装层：手绘误差棒前把画布裁剪到 chartArea（框选放大后误差棒不越界；
+// 共享实现 chart_plugins.js 不动，clip 只加在本页）
+const cmpErrorBarClipPlugin = {
+  id: 'cmpYErrBarClip',
+  beforeDatasetsDraw(chart, args, opts) {
+    const area = chart.chartArea;
+    if (!area) return;
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(area.left, area.top, area.width, area.height);
+    ctx.clip();
+    try {
+      _cmpErrorBarPlugin.beforeDatasetsDraw(chart, args, opts);
+    } finally {
+      ctx.restore();
+    }
+  },
+};
 
 function renderCompareChart() {
   const allLC = lastAllLC;
@@ -356,6 +375,7 @@ function renderCompareChart() {
             showLine: false, pointRadius: isUL ? 5 : 3, pointHoverRadius: 5,
             pointStyle: isUL ? 'triangle' : bandStyles[bi % bandStyles.length],
             pointRotation: isUL ? 180 : 0,
+            clip: true,   // 框选放大后把散点裁剪在 chartArea 内（Chart.js 默认对有点半径的散点不裁剪）
             _isUpperLimit: isUL,
             hidden: isUL && !_cmpShowUL,
           });
@@ -409,7 +429,7 @@ function renderCompareChart() {
   compareChart = new Chart(ctx, {
     type: 'scatter',
     data: { datasets },
-    plugins: [dragRectPlugin, _cmpErrorBarPlugin],
+    plugins: [dragRectPlugin, cmpErrorBarClipPlugin],
     options: {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'nearest', intersect: true },

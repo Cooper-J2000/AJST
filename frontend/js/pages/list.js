@@ -378,7 +378,7 @@ function renderPagination(data) {
   renderPager();
 }
 
-// 页码窗口（当前页 ±10：宽窗预渲染，保证拖动时前方页码已就位）+ 首尾快跳按钮状态；翻页/取消输入后据此重绘
+// 页码窗口（当前页 ±10 预渲染；拖动中由窗口跟随虚拟化按需重渲染）+ 首尾快跳按钮状态；翻页/取消输入后据此重绘
 function renderPager() {
   const track = document.getElementById('pgTrack');
   if (!track) return;  // 已离开列表页
@@ -468,16 +468,19 @@ function initPager() {
     else window.goPage(p);
   });
 
-  // 按住鼠标左右拖动：track 在居中基准上实时跟随（±10 宽窗已预渲染前后页码），
-  // 拖动中浮动提示将要落到的页码；松手按拖动距离换算落点翻页，未翻页则吸附回中
+  // 按住鼠标左右拖动：track 在居中基准上实时跟随。窗口跟随虚拟化——拖动中按
+  // 浮动位移算出虚拟中心页，逼近渲染窗口边缘（<3 页）时以其为中心重渲染 ±10 窗口，
+  // 并按窗口平移量补偿 transform 基准（视觉无缝）；这样任意远的落点页码始终已渲染。
+  // 视觉位移夹在 [当前页→首页, 当前页→末页] 对应区间内，拖到边界不外露空白。
+  // 拖动中浮动提示将要落到的页码；松手按同一换算落点翻页，未翻页则吸附回中
   viewport.addEventListener('mousedown', (e) => {
     e.preventDefault();
     _pgSuppressClick = false;
     const startX = e.clientX;
-    const base = _pgOffset;
-    const itemW = pgItemWidth(track);
-    let dx = 0;
-    // 拖动距离 → 落点页码（浮动提示与松手翻页共用同一换算，所见即所得）
+    let base = _pgOffset;
+    let itemW = pgItemWidth(track);
+    let dx = 0, visDx = 0;
+    // 视觉位移 → 落点页码（浮动提示与松手翻页共用同一换算，所见即所得）
     const targetFor = (delta) => {
       const steps = Math.round(Math.abs(delta) / itemW);
       return Math.max(1, Math.min(_pgData.totalPages, _pgData.page + (delta < 0 ? steps : -steps)));
@@ -490,9 +493,35 @@ function initPager() {
     viewport.style.cursor = 'grabbing';
     const onMove = (ev) => {
       dx = ev.clientX - startX;
-      track.style.transform = `translateX(${base + dx}px)`;
+      // 夹到合法落点区间：拖到首/末页后继续拖不再产生位移（也不露空白）
+      const dxMin = -(_pgData.totalPages - _pgData.page) * itemW;
+      const dxMax = (_pgData.page - 1) * itemW;
+      visDx = Math.max(dxMin, Math.min(dxMax, dx));
+      // 虚拟中心页逼近窗口边缘时重渲染 ±10 窗口并补偿基准（跨阈值才触发，天然节流）
+      const vc = targetFor(visDx);
+      const winStart = Number(track.firstElementChild?.dataset.page) || 1;
+      const winEnd = Number(track.lastElementChild?.dataset.page) || winStart;
+      if (vc - winStart < 3 || winEnd - vc < 3) {
+        const newStart = Math.max(1, Math.min(vc - 10, _pgData.totalPages - 20));
+        if (newStart !== winStart) {
+          const newEnd = Math.min(_pgData.totalPages, newStart + 20);
+          let html = '';
+          for (let i = newStart; i <= newEnd; i++) {
+            html += `<span class="pg-num" data-page="${i}" style="${pgNumStyle(i === _pgData.page)}">${i}</span>`;
+          }
+          track.innerHTML = html;
+          base += (newStart - winStart) * itemW;  // 内容平移量补回 transform，视觉无缝
+          itemW = pgItemWidth(track);
+        }
+      }
+      // 视觉位移再作边缘收敛：窗口内容比视口宽时，内容边缘不拉进视口内露空白
+      // （只影响视觉，不影响 hint/落点换算；中部拖动时 tx 本就在该区间内，无感）
+      const tx = base + visDx;
+      const contentW = track.scrollWidth, vpW = viewport.clientWidth;
+      const txVis = contentW > vpW ? Math.max(vpW - contentW, Math.min(0, tx)) : tx;
+      track.style.transform = `translateX(${txVis}px)`;
       if (Math.abs(dx) > 5) {
-        hint.textContent = `第 ${targetFor(dx)} 页`;
+        hint.textContent = `第 ${targetFor(visDx)} 页`;
         hint.style.left = ev.clientX + 'px';
         hint.style.top = (viewport.getBoundingClientRect().top - 6) + 'px';
         hint.style.display = '';
@@ -506,7 +535,7 @@ function initPager() {
       hint.remove();
       viewport.style.cursor = 'grab';
       if (Math.abs(dx) > 5) _pgSuppressClick = true;
-      const target = targetFor(dx);
+      const target = targetFor(visDx);
       centerPager();  // 先吸附回当前页居中位；翻页响应到达后 renderPager 会重新居中
       if (target !== _pgData.page) window.goPage(target);
     };

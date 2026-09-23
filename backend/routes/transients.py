@@ -189,7 +189,7 @@ def list_transients():
 def list_transients_meta():
     """轻量全量元数据（统计页/对比页专用，替代 per_page=10000 全量拉取）。
 
-    每项仅含 {id, ra, dec, redshift, tags, aliases, distmod}——覆盖这两页的全部
+    每项仅含 {id, ra, dec, redshift, tags, aliases, distmod, lc_count}——覆盖这两页的全部
     数据需求；只 SELECT 所需列（无 comment/extra_data 等大字段）。
     """
     sess = get_session()
@@ -199,6 +199,10 @@ def list_transients_meta():
                    Transient.tags, Transient.aliases, Transient.gext_distmod,
                    Transient.t0)
             .order_by(Transient.id)).all()
+        # 全量光变点数一次聚合（对比页事件列表显示用），代替逐源 count
+        lc_counts = dict(sess.execute(
+            select(Lightcurve.transient_id, func.count())
+            .group_by(Lightcurve.transient_id)).all())
         # 距离模数批量预热（未命中的 z 一次向量化），逐行只命中持久化值/缓存
         prewarm_distance_modulus([t.redshift for t in rows])
         items = [{
@@ -209,6 +213,7 @@ def list_transients_meta():
             't0': t.t0.isoformat() if t.t0 else None,
             'tags': t.tags or [],
             'aliases': t.aliases or [],
+            'lc_count': lc_counts.get(t.id, 0),
             'distmod': (t.gext_distmod if t.gext_distmod is not None
                         else distance_modulus(t.redshift)),
         } for t in rows]
