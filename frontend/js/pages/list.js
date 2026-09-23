@@ -8,9 +8,8 @@ import { esc, escAttr } from '../utils.js';
 let currentState = { page: 1, sort: 't0', order: 'desc' };
 let _listReqId = 0;     // 异步请求令牌（竞态防护）
 let _applyTimer = null; // 筛选输入防抖
-let _pgData = { page: 1, totalPages: 1 }; // 分页条状态（拖动/滚轮/输入跳转共用）
-let _pgOffset = 0;    // 分页条基准平移（当前页居中位），拖动时在此基础上叠加 dx
-let _pgSuppressClick = false; // 拖动翻页后抑制紧随的 click，避免误触页码
+let _pgData = { page: 1, totalPages: 1 }; // 分页条状态（滚轮/输入跳转共用）
+let _pgOffset = 0;    // 分页条基准平移（当前页居中位）
 let _wheelAcc = 0;      // 滚轮翻页：滚动量累积（节流用）
 let _wheelFlipAt = 0;   // 滚轮翻页：上次翻页时刻（节流用）
 let _urlQuery = {};     // URL 中的筛选/排序/页码初值（render 时解析）
@@ -40,8 +39,8 @@ export async function render() {
         <!-- 第一排：搜索 / 标签 / 副标签 / 排序 -->
         <div class="row g-2 align-items-end">
           <div class="col-md-3">
-            <label class="form-label small">搜索 (ID/别名/引用)</label>
-            <input type="text" class="form-control form-control-sm" id="fSearch" placeholder="EP251202a / GRB..." oninput="applyFilter()">
+            <label class="form-label small">搜索 (ID/别名/引用/触发仪器)</label>
+            <input type="text" class="form-control form-control-sm" id="fSearch" placeholder="EP251202a / Fermi / GRB..." oninput="applyFilter()">
           </div>
           <div class="col-md-2">
             <label class="form-label small">标签</label>
@@ -160,13 +159,13 @@ export async function render() {
         </div>
       </div>
     </div>
-    <!-- Pagination（居中滚轮式分页条：左右拖动/滚轮翻页，点当前页码可输入跳转） -->
+    <!-- Pagination（居中分页条：静态渲染当前页 ±5 页码，滚轮翻页，点当前页码可输入跳转） -->
     <nav class="mt-3 d-flex align-items-center">
       <small class="text-secondary" id="pageInfo"></small>
       <div class="d-flex justify-content-center align-items-center flex-grow-1" id="pagination">
         <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" id="pgFirst" title="第一页">«</button>
-        <div id="pgViewport" title="按住左右拖动或滚动滚轮翻页"
-             style="max-width:360px;overflow:hidden;margin:0 6px;user-select:none;cursor:grab;touch-action:pan-y">
+        <div id="pgViewport" title="滚动滚轮翻页；点击当前页码输入跳转"
+             style="max-width:360px;overflow:hidden;margin:0 6px;user-select:none;touch-action:pan-y">
           <!-- position:relative 使 track 恒为页码的 offsetParent（否则无 transform 时 offsetLeft 相对 BODY，居中计算会错乱） -->
           <div id="pgTrack" class="d-flex align-items-center" style="position:relative"></div>
         </div>
@@ -463,7 +462,7 @@ function renderPagination(data) {
   renderPager();
 }
 
-// 页码窗口（当前页 ±10 预渲染；拖动中由窗口跟随虚拟化按需重渲染）+ 首尾快跳按钮状态；翻页/取消输入后据此重绘
+// 页码窗口（静态渲染当前页 ±5）+ 首尾快跳按钮状态；翻页/取消输入后据此重绘
 function renderPager() {
   const track = document.getElementById('pgTrack');
   if (!track) return;  // 已离开列表页
@@ -471,8 +470,8 @@ function renderPager() {
   document.getElementById('pgFirst').disabled = page <= 1;
   document.getElementById('pgLast').disabled = page >= totalPages;
   if (totalPages <= 1) { track.innerHTML = ''; track.style.transform = ''; _pgOffset = 0; return; }
-  const start = Math.max(1, page - 10);
-  const end = Math.min(totalPages, page + 10);
+  const start = Math.max(1, page - 5);
+  const end = Math.min(totalPages, page + 5);
   let html = '';
   for (let i = start; i <= end; i++) {
     html += `<span class="pg-num" data-page="${i}" style="${pgNumStyle(i === page)}">${i}</span>`;
@@ -482,7 +481,7 @@ function renderPager() {
 }
 
 // 把当前页码平移到视口中央（窗口贴边时收敛到不露空白；内容不足一屏则整体居中），
-// 基准偏移记入 _pgOffset 供拖动时叠加
+// 基准偏移记入 _pgOffset
 function centerPager() {
   const viewport = document.getElementById('pgViewport');
   const track = document.getElementById('pgTrack');
@@ -501,15 +500,6 @@ function centerPager() {
   track.style.transform = off ? `translateX(${off}px)` : '';
 }
 
-// 实测页码步进宽度（含间距）：取当前页与相邻页码的左边缘差，保证 transform 像素 ↔ 页码换算一致
-function pgItemWidth(track) {
-  const cur = track.querySelector(`.pg-num[data-page="${_pgData.page}"]`) || track.firstElementChild;
-  if (!cur) return 32;
-  if (cur.nextElementSibling) return cur.nextElementSibling.offsetLeft - cur.offsetLeft;
-  if (cur.previousElementSibling) return cur.offsetLeft - cur.previousElementSibling.offsetLeft;
-  return cur.getBoundingClientRect().width + 4;
-}
-
 // 页码样式（当前页高亮）；无构建步骤且不动 style.css，故用内联样式 + 主题变量
 function pgNumStyle(cur) {
   const base = 'display:inline-block;min-width:28px;padding:2px 8px;margin:0 2px;text-align:center;' +
@@ -520,13 +510,12 @@ function pgNumStyle(cur) {
     : base + 'color:var(--text-secondary);border:1px solid var(--border-color)';
 }
 
-// 分页条交互：点击页码/首尾快跳、按住左右拖动翻页、滚轮翻页、点当前页输入跳转。
+// 分页条交互：点击页码/首尾快跳、滚轮翻页、点当前页输入跳转。
 // 容器在静态模板里，事件只在 render() 挂一次；页码用事件委托，避免内联 onclick
 function initPager() {
   const strip = document.getElementById('pagination');
   const viewport = document.getElementById('pgViewport');
-  const track = document.getElementById('pgTrack');
-  if (!strip || !viewport || !track) return;
+  if (!strip || !viewport) return;
 
   // 翻页入口（clamp 到 [1, totalPages]，复用现有 loadData 流程）
   window.goPage = (p) => {
@@ -540,7 +529,6 @@ function initPager() {
   };
 
   strip.addEventListener('click', (e) => {
-    if (_pgSuppressClick) { _pgSuppressClick = false; return; }
     const btn = e.target.closest('#pgFirst, #pgLast');
     if (btn) {
       if (!btn.disabled) window.goPage(btn.id === 'pgFirst' ? 1 : _pgData.totalPages);
@@ -551,81 +539,6 @@ function initPager() {
     const p = Number(num.dataset.page);
     if (p === _pgData.page) beginPageInput(num);
     else window.goPage(p);
-  });
-
-  // 按住鼠标左右拖动：track 在居中基准上实时跟随。窗口跟随虚拟化——拖动中按
-  // 浮动位移算出虚拟中心页，逼近渲染窗口边缘（<3 页）时以其为中心重渲染 ±10 窗口，
-  // 并按窗口平移量补偿 transform 基准（视觉无缝）；这样任意远的落点页码始终已渲染。
-  // 视觉位移夹在 [当前页→首页, 当前页→末页] 对应区间内，拖到边界不外露空白。
-  // 拖动中浮动提示将要落到的页码；松手按同一换算落点翻页，未翻页则吸附回中
-  viewport.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    _pgSuppressClick = false;
-    const startX = e.clientX;
-    let base = _pgOffset;
-    let itemW = pgItemWidth(track);
-    let dx = 0, visDx = 0;
-    // 视觉位移 → 落点页码（浮动提示与松手翻页共用同一换算，所见即所得）
-    const targetFor = (delta) => {
-      const steps = Math.round(Math.abs(delta) / itemW);
-      return Math.max(1, Math.min(_pgData.totalPages, _pgData.page + (delta < 0 ? steps : -steps)));
-    };
-    const hint = document.createElement('div');
-    hint.style.cssText = 'position:fixed;z-index:1080;pointer-events:none;display:none;' +
-      'padding:1px 8px;font-size:0.8em;border-radius:4px;white-space:nowrap;transform:translate(-50%,-100%);' +
-      'background:var(--accent-blue-soft);color:var(--accent-blue);border:1px solid var(--accent-blue-border);';
-    document.body.appendChild(hint);
-    viewport.style.cursor = 'grabbing';
-    const onMove = (ev) => {
-      dx = ev.clientX - startX;
-      // 夹到合法落点区间：拖到首/末页后继续拖不再产生位移（也不露空白）
-      const dxMin = -(_pgData.totalPages - _pgData.page) * itemW;
-      const dxMax = (_pgData.page - 1) * itemW;
-      visDx = Math.max(dxMin, Math.min(dxMax, dx));
-      // 虚拟中心页逼近窗口边缘时重渲染 ±10 窗口并补偿基准（跨阈值才触发，天然节流）
-      const vc = targetFor(visDx);
-      const winStart = Number(track.firstElementChild?.dataset.page) || 1;
-      const winEnd = Number(track.lastElementChild?.dataset.page) || winStart;
-      if (vc - winStart < 3 || winEnd - vc < 3) {
-        const newStart = Math.max(1, Math.min(vc - 10, _pgData.totalPages - 20));
-        if (newStart !== winStart) {
-          const newEnd = Math.min(_pgData.totalPages, newStart + 20);
-          let html = '';
-          for (let i = newStart; i <= newEnd; i++) {
-            html += `<span class="pg-num" data-page="${i}" style="${pgNumStyle(i === _pgData.page)}">${i}</span>`;
-          }
-          track.innerHTML = html;
-          base += (newStart - winStart) * itemW;  // 内容平移量补回 transform，视觉无缝
-          itemW = pgItemWidth(track);
-        }
-      }
-      // 视觉位移再作边缘收敛：窗口内容比视口宽时，内容边缘不拉进视口内露空白
-      // （只影响视觉，不影响 hint/落点换算；中部拖动时 tx 本就在该区间内，无感）
-      const tx = base + visDx;
-      const contentW = track.scrollWidth, vpW = viewport.clientWidth;
-      const txVis = contentW > vpW ? Math.max(vpW - contentW, Math.min(0, tx)) : tx;
-      track.style.transform = `translateX(${txVis}px)`;
-      if (Math.abs(dx) > 5) {
-        hint.textContent = `第 ${targetFor(visDx)} 页`;
-        hint.style.left = ev.clientX + 'px';
-        hint.style.top = (viewport.getBoundingClientRect().top - 6) + 'px';
-        hint.style.display = '';
-      } else {
-        hint.style.display = 'none';
-      }
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      hint.remove();
-      viewport.style.cursor = 'grab';
-      if (Math.abs(dx) > 5) _pgSuppressClick = true;
-      const target = targetFor(visDx);
-      centerPager();  // 先吸附回当前页居中位；翻页响应到达后 renderPager 会重新居中
-      if (target !== _pgData.page) window.goPage(target);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
   });
 
   // 滚轮翻页：横向/纵向滚动都算；累积滚动量 + 最小间隔节流，避免一次滚很多页
@@ -653,7 +566,7 @@ function beginPageInput(span) {
   input.className = 'form-control form-control-sm';
   input.style.cssText = 'width:4.5em;padding:0 4px;margin:0 2px;text-align:center;font-size:0.85em';
   span.replaceWith(input);
-  // 输入框内的鼠标事件不传给分页条（避免触发拖动/点击翻页）
+  // 输入框内的鼠标事件不传给分页条（避免触发点击翻页）
   input.addEventListener('mousedown', (ev) => ev.stopPropagation());
   input.addEventListener('click', (ev) => ev.stopPropagation());
   input.focus();

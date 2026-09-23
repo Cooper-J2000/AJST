@@ -3,7 +3,7 @@
 // 状态由 detail.js render() 经 resetLCChart()/setLCSourceParams() 重置与注入；
 // window.* 全局入口依赖每轮 render 的 bands/bandNames/spectralColors，由 wireLCChartGlobals() 重挂。
 import { showToast } from '../api.js';
-import { fitLightcurveModel } from '../api.js';
+import { fitLightcurveModel, getSpectrum } from '../api.js';
 import { dragRectPlugin, attachDragZoom } from '../dragzoom.js';
 import { chartColors, ACADEMIC_FONT, academicFonts } from '../theme.js';
 import { mJyToMagAB, sortBandsByFreq, pointToMJy, LOG_AXIS_FLOOR } from '../bands.js';
@@ -321,6 +321,20 @@ function _specTipText(sp) {
   return `${date} · ${sp.instrument || '未知仪器'}`;
 }
 
+// 命中检测（悬停提示与点击弹窗共用）：返回命中的光谱项或 null
+function _hitSpecLine(chart, mx, my) {
+  const hits = chart && chart._lcSpecHits;
+  if (!chart || !hits || !hits.length || !chart.chartArea) return null;
+  const area = chart.chartArea;
+  for (const h of hits) {
+    if (h.kind === 'line') {
+      // 距竖线 ≤4px 且在绘图区纵向范围内
+      if (Math.abs(mx - h.px) <= 4 && my >= area.top && my <= area.bottom) return h.sp;
+    } else if (mx >= h.x0 - 2 && mx <= h.x1 + 2 && my >= h.y0 - 2 && my <= h.y1 + 2) return h.sp;
+  }
+  return null;
+}
+
 function _attachSpecHover(canvas) {
   if (canvas._lcSpecHoverOn) return;   // 同一 canvas 只挂一次
   canvas._lcSpecHoverOn = true;
@@ -335,26 +349,126 @@ function _attachSpecHover(canvas) {
   container.appendChild(_specTip);
   canvas.addEventListener('mousemove', (e) => {
     const chart = lcChartInstance;
-    const hits = chart && chart._lcSpecHits;
-    if (!chart || !_lcShowSpec || !hits || !hits.length || !chart.chartArea) { _hideSpecTip(); return; }
+    if (!chart || !_lcShowSpec || !chart.chartArea) { _hideSpecTip(); canvas.style.cursor = ''; return; }
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    const area = chart.chartArea;
-    let hit = null;
-    for (const h of hits) {
-      if (h.kind === 'line') {
-        // 距竖线 ≤4px 且在绘图区纵向范围内
-        if (Math.abs(mx - h.px) <= 4 && my >= area.top && my <= area.bottom) { hit = h.sp; break; }
-      } else if (mx >= h.x0 - 2 && mx <= h.x1 + 2 && my >= h.y0 - 2 && my <= h.y1 + 2) { hit = h.sp; break; }
-    }
+    const hit = _hitSpecLine(chart, mx, my);
+    canvas.style.cursor = hit ? 'pointer' : '';   // 可点击反馈
     if (!hit) { _hideSpecTip(); return; }
-    _specTip.textContent = _specTipText(hit);
+    _specTip.textContent = _specTipText(hit) + '（点击查看光谱）';
     _specTip.style.display = 'block';
     // 右半区向左展开，避免超出容器
     _specTip.style.left = (mx > rect.width / 2 ? mx - 12 - _specTip.offsetWidth : mx + 12) + 'px';
     _specTip.style.top = (my + 12) + 'px';
   });
-  canvas.addEventListener('mouseleave', _hideSpecTip);
+  canvas.addEventListener('mouseleave', () => { _hideSpecTip(); canvas.style.cursor = ''; });
+  // 点击竖线/越界三角 → 弹出 4:3 小窗绘制该光谱（记录按下位置，拖动框选缩放后松手不触发）
+  let downPos = null;
+  canvas.addEventListener('mousedown', (e) => { downPos = { x: e.clientX, y: e.clientY }; });
+  canvas.addEventListener('click', (e) => {
+    if (downPos && Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y) > 5) return;
+    const chart = lcChartInstance;
+    if (!chart || !_lcShowSpec) return;
+    const rect = canvas.getBoundingClientRect();
+    const hit = _hitSpecLine(chart, e.clientX - rect.left, e.clientY - rect.top);
+    if (hit) _openSpecPopup(hit);
+  });
+}
+
+// ─── 光谱点击弹窗（横纵比 4:3 小窗内绘制该条光谱） ───
+let _specPopupChart = null;
+let _specPopupKeyHandler = null;
+function _closeSpecPopup() {
+  if (_specPopupChart) { try { _specPopupChart.destroy(); } catch {} _specPopupChart = null; }
+  if (_specPopupKeyHandler) { document.removeEventListener('keydown', _specPopupKeyHandler); _specPopupKeyHandler = null; }
+  document.getElementById('lcSpecPopup')?.remove();
+}
+
+async function _openSpecPopup(sp) {
+  if (sp == null || sp.id == null) return;
+  _closeSpecPopup();
+  const cc = chartColors();
+  const overlay = document.createElement('div');
+  overlay.id = 'lcSpecPopup';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center;'
+    + 'background:rgba(0,0,0,0.45);';
+  // 小窗：宽 min(560px, 86vw)，高度按 4:3 宽高比
+  const win = document.createElement('div');
+  win.style.cssText = 'width:min(560px,86vw);aspect-ratio:4/3;display:flex;flex-direction:column;'
+    + 'background:var(--bg-card);border:1px solid var(--border-color);border-radius:8px;overflow:hidden;'
+    + 'box-shadow:0 8px 30px rgba(0,0,0,0.5);';
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;'
+    + 'padding:6px 12px;border-bottom:1px solid var(--border-color);font-size:0.9em;';
+  const title = document.createElement('span');
+  title.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary);';
+  title.textContent = `光谱 · ${_specTipText(sp)}`;
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'btn-close';   // bootstrap 图标按钮（随主题）
+  closeBtn.title = '关闭 (Esc)';
+  header.appendChild(title);
+  header.appendChild(closeBtn);
+  const body = document.createElement('div');
+  body.style.cssText = 'flex:1;min-height:0;position:relative;padding:8px 12px 12px;';
+  const cv = document.createElement('canvas');
+  body.appendChild(cv);
+  win.appendChild(header);
+  win.appendChild(body);
+  overlay.appendChild(win);
+  document.body.appendChild(overlay);
+  const close = () => _closeSpecPopup();
+  closeBtn.addEventListener('click', close);
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
+  _specPopupKeyHandler = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', _specPopupKeyHandler);
+
+  try {
+    const resp = await getSpectrum(sp.id);
+    if (!document.body.contains(cv)) return;   // 弹窗已关闭
+    const objName = Object.keys(resp.data)[0];
+    const spec = resp.data[objName].spectra;
+    const pts = spec.data.map(d => ({ x: Number(d[0]), y: Number(d[1]) }))
+      .filter(d => isFinite(d.x) && isFinite(d.y));
+    const errs = spec.data.map(d => (d.length > 2 && isFinite(Number(d[2]))) ? Number(d[2]) : null);
+    title.textContent = `${objName} · ${resp.meta.filename || ''} · MJD ${spec.time || '-'} · ${_specTipText(sp)}`;
+    if (!pts.length) { showToast('该光谱没有可绘制的数据点', 'warning'); return; }
+    const errBar = createYErrBarPlugin({ errOf: (ds, raw, i) => ds._errorValues ? ds._errorValues[i] : null });
+    _specPopupChart = new Chart(cv.getContext('2d'), {
+      type: 'line',
+      data: {
+        datasets: [{
+          label: resp.meta.filename || 'spectrum',
+          data: pts,
+          borderColor: SPEC_LINE_COLOR,
+          backgroundColor: SPEC_LINE_COLOR,
+          borderWidth: 1.2,
+          pointRadius: 0,
+          tension: 0.15,
+          _errorValues: errs.some(e => e != null) ? errs : null,
+        }],
+      },
+      plugins: [errBar],
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: c => `λ=${c.parsed.x.toFixed(1)} Å, F=${c.parsed.y.toExponential(3)}` } },
+        },
+        scales: {
+          x: { type: 'linear', title: { display: true, text: '波长 (Å)', color: cc.tick },
+               grid: { color: cc.grid }, ticks: { color: cc.tick } },
+          y: { type: 'linear', title: { display: true, text: spec.u_fluxes || '流量', color: cc.tick },
+               grid: { color: cc.grid }, ticks: { color: cc.tick, callback: v => v.toExponential(1) } },
+        },
+      },
+    });
+  } catch (err) {
+    showToast(`加载光谱失败: ${err.message}`, 'danger');
+    _closeSpecPopup();
+  }
 }
 
 // ─── 光变图顶部副轴（day / MJD）───

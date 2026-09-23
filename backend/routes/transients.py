@@ -60,6 +60,7 @@ def list_transients():
                     cast(Transient.aliases, String).ilike(like),
                     Transient.redshift_ref.ilike(like),
                     Transient.pos_ref.ilike(like),
+                    Transient.trigger_instrument.ilike(like),
                 )
             )
         # --- 红移范围 ---

@@ -1,5 +1,6 @@
 // === API Client ===
-const API_BASE = location.pathname.replace(/\/[^/]*$/, '') + '/api';
+// 子目录反代部署时按页面路径推导前缀（如 /AJST/xxx → /AJST/api）；根路径部署恒为 /api
+export const API_BASE = location.pathname.replace(/\/[^/]*$/, '') + '/api';
 
 let _authed = false;
 let _user = { username: null, role: null };

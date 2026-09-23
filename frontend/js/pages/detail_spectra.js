@@ -3,7 +3,7 @@
 // 页面重建前调用 resetSpectra() 销毁图表、清加载标记。
 import {
   getSpectra, getSpectrum, uploadSpectrum, updateSpectrum, deleteSpectrumApi,
-  correctSpectrumGext, isAuthed, isAdmin, showToast,
+  correctSpectrumGext, isAuthed, isAdmin, showToast, API_BASE,
 } from '../api.js';
 import { SPEC_LINE_GROUPS, createSpecLinesPlugin, buildMarkingsPanelHTML } from '../spec_lines.js';
 import { dragRectPlugin, attachDragZoom } from '../dragzoom.js';
@@ -184,7 +184,7 @@ export async function initSpectraTab(tid, redshift) {
           <input type="number" class="form-control form-control-sm d-inline-block spec-offset" data-id="${s.id}"
                  style="width:60px;display:${_specMode === 'relative' ? 'inline-block' : 'none'};font-size:0.75rem;padding:1px 4px"
                  step="0.1" value="${_specOffsets[s.id] || 0}" title="纵向偏移（相对流量模式）" onchange="setSpecOffset(${s.id}, this.value)">
-          <a class="btn btn-sm btn-outline-secondary py-0 px-1" href="/api/spectra/${s.id}/download" download
+          <a class="btn btn-sm btn-outline-secondary py-0 px-1" href="${API_BASE}/spectra/${s.id}/download" download
              title="下载光谱文本（波长Å 流量 [误差]）" onclick="event.stopPropagation()"><i class="bi bi-download"></i></a>
           ${authed && !isChild ? `<button class="btn btn-sm btn-outline-warning py-0 px-1" title="生成/重新生成银河系消光改正谱" onclick="gextCorrectSpectrum(${s.id})"><i class="bi bi-stars"></i></button>` : ''}
           ${admin ? `<button class="btn btn-sm btn-outline-danger py-0 px-1" title="删除该光谱" onclick="deleteSpectrum(${s.id})"><i class="bi bi-trash"></i></button>` : ''}

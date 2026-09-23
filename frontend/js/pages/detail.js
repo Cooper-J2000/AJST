@@ -76,7 +76,7 @@ export async function render(tid) {
       if (currentTid !== tid) return;
       const specPts = (Array.isArray(list) ? list : [])
         .filter(s => !s.parent_id)
-        .map(s => ({ mjd: s.extra_data?.mjd, instrument: s.instrument, observation_date: s.observation_date }))
+        .map(s => ({ id: s.id, mjd: s.extra_data?.mjd, instrument: s.instrument, observation_date: s.observation_date }))
         .filter(s => s.mjd != null);
       setLCSpectra(specPts);
     }).catch(() => { if (currentTid === tid) setLCSpectra(null); });
