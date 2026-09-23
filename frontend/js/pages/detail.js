@@ -98,8 +98,8 @@ export async function render(tid) {
             </small>
           </h4>
           <div class="text-secondary small">
-            ${(transient.tags || []).map(t => `<span class="badge-tag">${esc(t)}</span>`).join('')}
-            ${(transient.sub_tag || []).map(t => `<span class="badge-neutral me-1">${esc(t)}</span>`).join('')}
+            ${(transient.tags || []).map(t => `<a class="badge-tag badge-link" href="#/list?tag=${encodeURIComponent(t)}" title="筛选该标签">${esc(t)}</a>`).join('')}
+            ${(transient.sub_tag || []).map(t => `<a class="badge-neutral badge-link me-1" href="#/list?sub_tag=${encodeURIComponent(t)}" title="筛选该副标签">${esc(t)}</a>`).join('')}
           </div>
         </div>
         <div class="d-flex gap-1">

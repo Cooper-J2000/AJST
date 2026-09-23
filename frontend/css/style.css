@@ -226,6 +226,15 @@ body {
   border: 1px solid var(--border-color);
 }
 
+/* 可点击标签徽章（列表/详情页）：点击跳转列表并按该标签筛选 */
+a.badge-link { text-decoration: none; }
+a.badge-link:hover { text-decoration: none; filter: brightness(1.15); }
+/* 首页「标签分布」中可点击的标签名 */
+a.swiss-tag-name { color: inherit; text-decoration: none; }
+a.swiss-tag-name:hover { text-decoration: underline; }
+a.swiss-tag-subname { color: inherit; text-decoration: none; }
+a.swiss-tag-subname:hover { text-decoration: underline; }
+
 /* Stats cards */
 .stat-card {
   text-align: center;
