@@ -13,6 +13,7 @@ let _pgOffset = 0;    // 分页条基准平移（当前页居中位），拖动�
 let _pgSuppressClick = false; // 拖动翻页后抑制紧随的 click，避免误触页码
 let _wheelAcc = 0;      // 滚轮翻页：滚动量累积（节流用）
 let _wheelFlipAt = 0;   // 滚轮翻页：上次翻页时刻（节流用）
+let _urlQuery = {};     // URL 中的筛选/排序/页码初值（render 时解析）
 
 export async function render() {
   app.innerHTML = `
@@ -59,6 +60,10 @@ export async function render() {
             <select class="form-select form-select-sm" id="fSort" onchange="applyFilter()">
               <option value="id|asc">ID ↑</option>
               <option value="id|desc">ID ↓</option>
+              <option value="ra|asc">RA ↑</option>
+              <option value="ra|desc">RA ↓</option>
+              <option value="dec|asc">Dec ↑</option>
+              <option value="dec|desc">Dec ↓</option>
               <option value="redshift|desc">红移 ↓</option>
               <option value="redshift|asc">红移 ↑</option>
               <option value="t0|desc" selected>T0 ↓</option>
@@ -170,6 +175,10 @@ export async function render() {
     </nav>
   `;
 
+  // 从 URL 恢复筛选/排序/页码（刷新、分享链接、浏览器后退均可还原）
+  _urlQuery = parseListQuery();
+  applyQueryToInputs(_urlQuery);
+
   // Make filter & sort funcs globally accessible
   window.toggleFilter = () => {
     const el = document.getElementById('filterPanel');
@@ -234,6 +243,7 @@ export async function render() {
     const sel = document.getElementById('fTag');
     if (sel && data.tags) {
       data.tags.forEach(tag => {
+        if (Array.from(sel.options).some(o => o.value === tag)) return; // URL 预置项去重
         const opt = document.createElement('option');
         opt.value = tag;
         opt.textContent = tag;
@@ -247,6 +257,7 @@ export async function render() {
     const sel = document.getElementById('fSubTag');
     if (sel && data.sub_tags) {
       data.sub_tags.forEach(tag => {
+        if (Array.from(sel.options).some(o => o.value === tag)) return; // URL 预置项去重
         const opt = document.createElement('option');
         opt.value = tag;
         opt.textContent = tag;
@@ -280,6 +291,68 @@ export async function render() {
   loadData();
 }
 
+// ─── URL 状态同步：把筛选/排序/页码写进 hash（#/list?tag=fbot&...），刷新/分享/后退可还原 ───
+// 用 history.replaceState 而非改 location.hash，避免触发 hashchange 重渲染整个页面
+function parseListQuery() {
+  const hash = location.hash.replace(/^#/, '');
+  const qi = hash.indexOf('?');
+  if (qi < 0) return {};
+  return Object.fromEntries(new URLSearchParams(hash.slice(qi + 1)));
+}
+
+// 把 URL 初值回填到筛选控件（tag/sub_tag 的选项异步加载，见 seedSelect）
+function applyQueryToInputs(q) {
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+  setVal('fSearch', q.search);
+  setVal('fZMin', q.z_min); setVal('fZMax', q.z_max);
+  setVal('fRAMin', q.ra_min); setVal('fRAMax', q.ra_max);
+  setVal('fDecMin', q.dec_min); setVal('fDecMax', q.dec_max);
+  setVal('fT0From', q.t0_from); setVal('fT0To', q.t0_to);
+  const chk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = (v === 'true'); };
+  chk('fHasZ', q.has_z); chk('fHasHost', q.has_host); chk('fHasSpectra', q.has_spectra);
+  if (q.sort && q.order) {
+    currentState.sort = q.sort;
+    currentState.order = q.order;
+    const s = document.getElementById('fSort');
+    if (s) s.value = `${q.sort}|${q.order}`;
+    // 表头排序箭头与 URL 一致（默认 HTML 只标了 T0）
+    document.querySelectorAll('.sort-header').forEach(th => {
+      th.classList.remove('sort-asc', 'sort-desc');
+      if (th.dataset.sort === q.sort) th.classList.add(q.order === 'asc' ? 'sort-asc' : 'sort-desc');
+    });
+  }
+  const p = parseInt(q.page, 10);
+  if (Number.isFinite(p) && p > 0) currentState.page = p;
+  seedSelect('fTag', q.tag);
+  seedSelect('fSubTag', q.sub_tag);
+}
+
+// 标签下拉的选项异步加载：先把 URL 里的值预置成选项，保证首次 loadData 前 value 已生效
+function seedSelect(id, val) {
+  if (!val) return;
+  const sel = document.getElementById(id);
+  if (!sel) return;
+  if (!Array.from(sel.options).some(o => o.value === val)) {
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = val;
+    sel.appendChild(opt);
+  }
+  sel.value = val;
+}
+
+// 把当前查询参数写回 URL（省略默认值，保持链接简洁）
+function syncListUrl(params) {
+  const q = { ...params };
+  if (q.page === 1) delete q.page;              // 默认页
+  delete q.per_page;                            // 每页条数固定 50
+  // 排序缺值/默认值都不写进 URL（避免出现 ?sort=&order=undefined）
+  if (!q.sort || !q.order || (q.sort === 't0' && q.order === 'desc')) { delete q.sort; delete q.order; }
+  const qs = new URLSearchParams(q).toString();
+  const url = '#/list' + (qs ? '?' + qs : '');
+  if (location.hash !== url) history.replaceState(null, '', url);
+}
+
 async function loadData() {
   if (!document.getElementById('tableBody')) return;  // 已离开列表页（防抖回调迟到）
   const params = {
@@ -289,7 +362,7 @@ async function loadData() {
 
   // Read sort
   const sortEl = document.getElementById('fSort');
-  if (sortEl) {
+  if (sortEl && sortEl.value) {
     const v = sortEl.value.split('|');
     params.sort = v[0];
     params.order = v[1];
@@ -321,6 +394,8 @@ async function loadData() {
   if (document.getElementById('fHasZ')?.checked) params.has_z = 'true';
   if (document.getElementById('fHasHost')?.checked) params.has_host = 'true';
   if (document.getElementById('fHasSpectra')?.checked) params.has_spectra = 'true';
+
+  syncListUrl(params);  // 状态写回 URL（刷新/分享/后退可还原）
 
   try {
     const reqId = ++_listReqId;

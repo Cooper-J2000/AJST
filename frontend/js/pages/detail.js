@@ -27,10 +27,24 @@ export let currentTid = null;
 let activeTab = 'overview';
 let activeTabTid = null;
 
+// 激活的 tab 同步进 URL（#/transient/<id>?tab=xxx），刷新后可恢复
+function readUrlTab() {
+  const hash = location.hash.replace(/^#/, '');
+  const qi = hash.indexOf('?');
+  if (qi < 0) return null;
+  return new URLSearchParams(hash.slice(qi + 1)).get('tab');
+}
+function syncUrlTab(tid, tab) {
+  const base = '#/transient/' + tid;
+  const url = tab && tab !== 'overview' ? `${base}?tab=${encodeURIComponent(tab)}` : base;
+  if (location.hash !== url) history.replaceState(null, '', url);
+}
+
 // ─── 主渲染函数 ───
 export async function render(tid) {
   currentTid = tid;
-  if (activeTabTid !== tid) { activeTab = 'overview'; activeTabTid = tid; }
+  // 切源复位概览；刷新时从 URL 恢复此前激活的 tab
+  if (activeTabTid !== tid) { activeTab = readUrlTab() || 'overview'; activeTabTid = tid; }
   window.currentTid = tid;  // 供内联 onclick（如导出按钮/文章编辑取消）引用当前源
   const seq = navSeq();     // 导航序号：请求期间切到其它路由则丢弃本次渲染
   // 重置各功能区状态（DOM 即将重建）
@@ -520,6 +534,7 @@ export async function render(tid) {
         document.querySelectorAll('#detailTabs .nav-link').forEach(l => l.classList.remove('active'));
         link.classList.add('active');
         activeTab = link.dataset.tab;
+        syncUrlTab(tid, activeTab);
         document.querySelectorAll('#tabContent .tab-pane').forEach(t => t.style.display = 'none');
         const pane = document.getElementById(`tab-${link.dataset.tab}`);
         if (pane) pane.style.display = 'block';
