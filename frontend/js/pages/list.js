@@ -3,7 +3,7 @@ import { app, showLoading, showError } from './layout.js';
 import {
   getTransients, deleteTransient, showToast, isAuthed, isAdmin, runExtinction
 } from '../api.js';
-import { esc } from '../utils.js';
+import { esc, escAttr } from '../utils.js';
 
 let currentState = { page: 1, sort: 't0', order: 'desc' };
 let _listReqId = 0;     // 异步请求令牌（竞态防护）
@@ -417,6 +417,16 @@ async function loadData() {
   }
 }
 
+// 标签徽章 → 点击跳转列表并按该标签筛选（#/list?tag=.. / ?sub_tag=..，复用列表页 URL 状态同步）。
+// onclick stopPropagation：避免触发行点击（进入详情页）。
+function tagBadgeLink(tag, kind) {
+  const cls = kind === 'tag' ? 'badge-tag' : 'badge-neutral';
+  const q = kind === 'tag' ? 'tag' : 'sub_tag';
+  const mr = kind === 'tag' ? '' : ' style="margin-right:4px"';
+  return `<a class="${cls} badge-link" href="#/list?${q}=${encodeURIComponent(tag)}"${mr}` +
+    ` onclick="event.stopPropagation()" title="筛选${kind === 'tag' ? '标签' : '副标签'}：${escAttr(tag)}">${esc(tag)}</a>`;
+}
+
 function renderTable(data) {
   const tbody = document.getElementById('tableBody');
   if (!tbody) return;
@@ -431,7 +441,7 @@ function renderTable(data) {
       <td>${t.dec != null ? t.dec.toFixed(4) : '-'}</td>
       <td>${t.redshift != null ? t.redshift.toFixed(3) : '<span class="text-secondary">-</span>'}</td>
       <td class="small">${t.t0 ? esc(t.t0.replace('T', ' ').substring(0, 19)) : '-'}</td>
-      <td>${(t.tags || []).map(tag => `<span class="badge-tag">${esc(tag)}</span>`).join('')}${(t.sub_tag || []).map(tag => `<span class="badge-neutral" style="margin-right:4px">${esc(tag)}</span>`).join('')}</td>
+      <td>${(t.tags || []).map(tag => tagBadgeLink(tag, 'tag')).join('')}${(t.sub_tag || []).map(tag => tagBadgeLink(tag, 'sub_tag')).join('')}</td>
       <td class="small">${esc((t.aliases || []).join(', ')) || '-'}</td>
       <td class="small">${esc(t.trigger_instrument) || '-'}</td>
       <td>${t.lc_count || 0}</td>

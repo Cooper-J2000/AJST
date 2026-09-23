@@ -88,7 +88,7 @@ export async function render() {
           return `
         <div class="swiss-tag-item">
           <div class="swiss-tag-row" onclick="this.parentElement.classList.toggle('open')">
-            <span class="swiss-tag-name"${desc ? ` title="${esc(desc)}"` : ''}>${esc(t.tag)}</span>
+            <a class="swiss-tag-name" href="#/list?tag=${encodeURIComponent(t.tag)}" onclick="event.stopPropagation()"${desc ? ` title="${esc(desc)}"` : ''}>${esc(t.tag)}</a>
             <span class="swiss-tag-desc">${desc ? `<small class="text-secondary">${esc(desc)}</small>` : ''}</span>
             <span class="swiss-tag-count">${fmt(t.count)}</span>
             <span class="swiss-tag-toggle">+</span>
@@ -96,11 +96,15 @@ export async function render() {
           <div class="swiss-tag-subs">
             ${rows.length ? rows.map(r => {
               const sd = r.name === '未标注' ? null : (tagDesc.sub[r.name] || null);
+              // 副标签行 → 按「主标签 + 副标签」筛选（列表页 tag/sub_tag 为独立的 AND 过滤）
+              const href = r.name === '未标注'
+                ? `#/list?tag=${encodeURIComponent(t.tag)}`
+                : `#/list?tag=${encodeURIComponent(t.tag)}&sub_tag=${encodeURIComponent(r.name)}`;
               return sd
                 ? `
-            <div class="swiss-tag-subrow" style="grid-template-columns:10rem 1fr auto"><span title="${esc(sd)}">${esc(r.name)}</span><span><small>${esc(sd)}</small></span><span>${fmt(r.count)}</span></div>`
+            <div class="swiss-tag-subrow" style="grid-template-columns:10rem 1fr auto"><a class="swiss-tag-subname" href="${href}" title="${esc(sd)}">${esc(r.name)}</a><span><small>${esc(sd)}</small></span><span>${fmt(r.count)}</span></div>`
                 : `
-            <div class="swiss-tag-subrow"><span>${esc(r.name)}</span><span>${fmt(r.count)}</span></div>`;
+            <div class="swiss-tag-subrow"><a class="swiss-tag-subname" href="${href}">${esc(r.name)}</a><span>${fmt(r.count)}</span></div>`;
             }).join('')
             : '<div class="swiss-tag-subrow text-secondary"><span>（无子标签）</span><span></span></div>'}
           </div>
