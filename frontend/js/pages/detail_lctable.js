@@ -123,6 +123,34 @@ window.lcSort = (key) => {
   if (markAll) markAll.checked = !!(lcItems.length && lcItems.every(p => lcMarked.has(p.id)));
 };
 
+// ─── 整页 render 前快照/回填正在编辑（未保存）的行 ───
+// 保存某行触发整页 render 时，其它行的未保存修改不应丢失：render 前记住其输入值，
+// render 完成后重新进入编辑态并写回（波段改成新波段等情形会回退到整页 render）
+function snapshotEditingRows(exceptId) {
+  const snap = [];
+  document.querySelectorAll('#lcTableBody tr[id^="lcRow_"]').forEach(tr => {
+    const id = Number(tr.id.slice('lcRow_'.length));
+    if (id === exceptId) return;
+    const inputs = tr.querySelectorAll('.lc-edit-input');
+    if (!inputs.length) return;
+    const values = {};
+    inputs.forEach(inp => { values[inp.dataset.field] = inp.value; });
+    snap.push({ id, values });
+  });
+  return snap;
+}
+function restoreEditingRows(snap) {
+  snap.forEach(({ id, values }) => {
+    if (!document.getElementById(`lcRow_${id}`)) return;
+    window.lcEditStart(id);
+    const row = document.getElementById(`lcRow_${id}`);
+    if (!row) return;
+    row.querySelectorAll('.lc-edit-input').forEach(inp => {
+      if (values[inp.dataset.field] !== undefined) inp.value = values[inp.dataset.field];
+    });
+  });
+}
+
 // ─── 单点更新后的局部行替换：PUT 返回更新后的完整行，就地更新内存与 DOM，不整页重载 ───
 // 注意：若当前已排序，被改行的位置不随新值重排（下次点表头排序时按新值归位）
 function applyLcRowUpdate(id, pt) {
@@ -140,7 +168,11 @@ function applyLcRowUpdate(id, pt) {
   }
   // 同步光变图/拟合数据源（取消编辑时 old === pt，无实际变化，跳过）；
   // 无法局部同步的情形（如波段被改成新波段）回退整页渲染
-  if (old && old !== pt && !syncLcPoint(old, pt)) render(currentTid);
+  if (old && old !== pt && !syncLcPoint(old, pt)) {
+    // 整页 render 会重建数据表：先快照其它正在编辑的行，render 后回填，避免未保存的修改丢失
+    const snap = snapshotEditingRows(id);
+    render(currentTid).then(() => restoreEditingRows(snap));
+  }
 }
 
 // ─── 数据表行标记：勾选整行高亮，便于对比定位（仅前端状态，不写库） ───
@@ -409,7 +441,8 @@ window.lcAddNewSave = async () => {
   try {
     await createLightcurves([body]);
     showToast('已添加', 'success');
-    render(currentTid);
+    const snap = snapshotEditingRows();  // 保留其它正在编辑（未保存）的行
+    render(currentTid).then(() => restoreEditingRows(snap));
   } catch (err) {
     showToast(`添加失败: ${err.message}`, 'danger');
   }
