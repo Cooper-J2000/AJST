@@ -30,7 +30,8 @@ def _t0_mjd_of(sess, tid, cache):
 
 def _sync_time_mjd(t0_mjd, lc, body, creating=False):
     """time（相对 T0 秒数，缓存列）与 mjd（权威时间）的写入联动：
-    - 显式给了 mjd：记录之；源有 T0 时用 mjd 重算 time。
+    - 显式给了 mjd：记录之；源有 T0 时用 mjd 重算 time，无 T0 时 time 保持原值/留空
+      （允许只给 mjd 入库，time 留 NULL——这类点仅在自定义基准下可画）。
     - 只给了 time：源有 T0 时用 time 重算 mjd；无 T0 则 mjd 置 None。
     两者都没给（仅新建时）：报错。"""
     if 'mjd' in body:
@@ -40,10 +41,8 @@ def _sync_time_mjd(t0_mjd, lc, body, creating=False):
             lc.time = (lc.mjd - t0_mjd) * 86400.0
     elif 'time' in body and lc.time is not None:
         lc.mjd = (t0_mjd + lc.time / 86400.0) if t0_mjd is not None else None
-    if creating and lc.time is None:
-        if lc.mjd is not None and t0_mjd is None:
-            raise ValueError('该源没有 T0，仅给 MJD 无法推算相对时间 time，请同时提供 time（秒）')
-        raise ValueError('time is required（或提供 mjd 且该源有 T0）')
+    if creating and lc.time is None and lc.mjd is None:
+        raise ValueError('time 与 mjd 至少提供其一（time 为相对 T0 秒数；源无 T0 时可只给 mjd，time 留空）')
 
 
 # 各经验模型的自由参数数（最少点数 = 参数数；N == 参数数时为退化拟合：只给参数、不给误差）

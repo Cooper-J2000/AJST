@@ -9,7 +9,11 @@ import { showLcUpload } from './lc_upload.js';
 import { esc, escAttr, fmtNum } from '../utils.js';
 import { getFilterIdsSorted } from '../bands.js';
 import { render, currentTid } from './detail.js';
-import { syncLcPoint } from './detail_lcchart.js';
+import { syncLcPoint, t0ToMJD } from './detail_lcchart.js';
+
+// ─── 本源 T0（MJD；新增行 time ↔ MJD 实时互算用；detail.js 每轮 render 注入） ───
+let _lcT0MJD = null;
+export function setLCT0(t0) { _lcT0MJD = t0ToMJD(t0); }
 
 // ─── 数据表列显示（lcColVis[key] 显式记录用户选择；未记录的按默认子集），localStorage 持久化 ───
 export const LC_COLS = [
@@ -378,10 +382,10 @@ window.lcAddNewRow = () => {
         LC_NEW_UNITS.map(u => `<option value="${escAttr(u)}" ${u === 'mJy' ? 'selected' : ''}>${esc(u)}</option>`).join('') +
         `</select>`;
     } else if (f === 'time' || f === 'time_err') {
-      input = `<div class="d-flex gap-1 align-items-center"><input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="${f}" style="width:80px">${tfacSelect(f)}</div>`;
+      input = `<div class="d-flex gap-1 align-items-center"><input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="${f}" style="width:80px"${f === 'time' ? ' oninput="lcNewTimeSync(this)"' : ''}>${tfacSelect(f)}</div>`;
     } else if (f === 'mjd') {
-      input = `<input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="MJD" style="width:110px">` +
-        `<div class="small text-secondary text-nowrap">MJD 与相对秒数可互算，填其一即可</div>`;
+      input = `<input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="MJD" style="width:110px" oninput="lcNewTimeSync(this)">` +
+        `<div class="small text-secondary text-nowrap">MJD 与相对秒数可互算，填其一即可（源有 T0 时自动互填）</div>`;
     } else {
       input = `<input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="${f}" style="width:90px">`;
     }
@@ -403,6 +407,28 @@ window.lcAddNewRow = () => {
 window.lcAddNewCancel = () => {
   const row = document.getElementById('lcNewRow');
   if (row) row.remove();
+};
+
+// 新增行 time ↔ MJD 实时互算（仅源有 T0 时）：填一侧、另一侧为空则自动填上另一侧。
+// time 侧按当前乘积因子换算成秒再求 MJD；MJD 侧换算出秒并把因子复位为 x1
+window.lcNewTimeSync = (inp) => {
+  if (_lcT0MJD == null) return;
+  const row = document.getElementById('lcNewRow');
+  const otherField = inp.dataset.field === 'time' ? 'mjd' : 'time';
+  const otherEl = row && row.querySelector(`.lc-new-input[data-field="${otherField}"]`);
+  if (!otherEl || otherEl.value.trim()) return;   // 另一侧已有值不覆盖
+  const v = parseFloat(inp.value);
+  if (!isFinite(v)) return;
+  if (otherField === 'mjd') {
+    const facEl = inp.closest('td')?.querySelector('.lc-new-tfac');
+    const fac = facEl ? parseFloat(facEl.value) : 1;
+    const sec = v * (isFinite(fac) ? fac : 1);
+    otherEl.value = String(Number((_lcT0MJD + sec / 86400).toFixed(6)));
+  } else {
+    otherEl.value = String(Number(((v - _lcT0MJD) * 86400).toFixed(3)));
+    const facEl = otherEl.closest('td')?.querySelector('.lc-new-tfac');
+    if (facEl) facEl.value = '1';   // 自动填的是秒，因子复位 x1 避免二次换算
+  }
 };
 
 window.lcAddNewSave = async () => {

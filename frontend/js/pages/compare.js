@@ -352,13 +352,15 @@ function renderCompareChart() {
           if (absMag && clipped) return null;
           const tObs = p.time;
           // 各源基准：x = ((p.mjd ?? 该源T0 + time/86400) − 该源ref)×86400 / zfac；
-          // 源无 T0 且该点无 mjd：无法换算到该源基准，跳过该点
+          // 源无 T0 且该点无 mjd：无法换算到该源基准，跳过该点；
+          // 默认基准（=源 T0）下 time 缺失的点（如无 T0 源只录 mjd 的行）同样跳过
           let x;
           if (refMJD != null) {
             const mjd = (p.mjd != null) ? p.mjd : (t0mjd != null ? t0mjd + p.time / 86400 : null);
             if (mjd == null) return null;
             x = (mjd - refMJD) * 86400 / zfac;
           } else {
+            if (tObs == null) return null;
             x = tObs / zfac;
           }
           if (absMag) {

@@ -14,7 +14,7 @@ import { initSedTab, destroySedTab } from './sed_tab.js';
 import { ensureFilterCache, buildSpectralColors } from '../bands.js';
 import { esc, escAttr } from '../utils.js';
 import { initOverview, articlesHTML, fillHostSummary, attachEditCoordHints, attachEditTagInputs } from './detail_overview.js';
-import { LC_COLS, lcRowHTML, setLCItems, buildLcColPanel, applyLcColVis } from './detail_lctable.js';
+import { LC_COLS, lcRowHTML, setLCItems, setLCT0, buildLcColPanel, applyLcColVis } from './detail_lctable.js';
 import { setLCSourceParams, resetLCChart, initLCPlot, wireLCChartGlobals, t0ToMJD, setLCSpectra } from './detail_lcchart.js';
 import { renderDerivedCard, initDerived, resetDerived } from './detail_derived.js';
 import { renderCatalogData } from './detail_catalog.js';
@@ -66,6 +66,7 @@ export async function render(tid) {
     ]);
     if (currentTid !== tid || navStale(seq)) return;  // 请求期间已切换源/路由，丢弃过期响应
     setLCItems(lcData.items, tid);
+    setLCT0(transient.t0);   // 数据表新增行 time ↔ MJD 实时互算用
     ensureFilterCache(filtersData);
     initOverview(transient, articles);
     // 光变图用的源级参数（注入 detail_lcchart.js；模板里的开关可用性用本地副本判断）

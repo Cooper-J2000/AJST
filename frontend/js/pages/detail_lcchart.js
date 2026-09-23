@@ -1030,9 +1030,9 @@ function buildLCChart(bands, bandNames, spectralColors) {
   const useRefX = refMJD != null && refMJD !== _lcT0MJD;
   // 点的横轴 x（秒，静止系除 zfac）：默认 p.time/zfac；自定义基准时
   // x = (p.mjd − ref)×86400/zfac，无 mjd 的点回退 (T0 + time/86400)；
-  // 源无 T0 且点无 mjd：无法换算，返回 null 不绘制
+  // 源无 T0 且点无 mjd（或 time/mjd 均缺）：无法换算，返回 null 不绘制
   const toX = (p) => {
-    if (!useRefX) return p.time / zfac;
+    if (!useRefX) return (p.time != null) ? p.time / zfac : null;
     const mjd = (p.mjd != null) ? p.mjd : (_lcT0MJD != null ? _lcT0MJD + p.time / 86400 : null);
     return mjd != null ? (mjd - refMJD) * 86400 / zfac : null;
   };
