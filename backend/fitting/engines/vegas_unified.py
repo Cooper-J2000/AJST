@@ -416,7 +416,7 @@ class VegasUnifiedEngine(BaseEngine):
 
         自定义 MCMC 路径逐步检查（真中断，采样立即停止）；内置 Fitter 路径
         无法外部中断，只在 fit 前/后检查——中断后任务状态即时翻转，但本次
-        采样会算到当前段落结束才停（算力浪费不可避免，见 AGENTS.md §7）。"""
+        采样会算到当前段落结束才停（算力浪费不可避免，见 docs/ops-history/fitting.md）。"""
         os.makedirs(workdir, exist_ok=True)
         log_path = os.path.join(workdir, 'run.log')
         t_start = time.time()
