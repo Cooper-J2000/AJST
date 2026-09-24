@@ -6,6 +6,8 @@ ETL: 将 catadata/ 中的 CSV + JSON 数据导入 PostgreSQL。
   python3 etl.py                    # 全量重建（清空所有数据重灌）
   python3 etl.py --sync             # 增量同步：只更新新增或变动的源
   python3 etl.py --transient EPXXX  # 只更新指定源（支持多个）
+  python3 etl.py --dump             # 库 → 文件（纯导出，不动任何文件）
+  python3 etl.py --dump --prune     # 导出后把孤儿文件/陈旧 CSV 移到 backups/dump_prune_<时间>/
 """
 import argparse
 import csv
@@ -51,6 +53,80 @@ BOOL_FIELDS = {'gext_corr', 'upperlimit', 'discard'}
 FLOAT_FIELDS = {'time', 'time_err', 'mjd', 'flux_density', 'flux_density_err',
                 'gext_Alambda', 'mag_gextcor', 'mag_gextcor_err',
                 'flux_density_gextcor', 'flux_density_gextcor_err', 'weights'}
+# ===================== 一致性检查 / 孤儿清理（2026-09-25）=====================
+# 为什么需要：--dump 只写不删，而全量重建/--sync 以"文件存在"为触发条件
+# （needs_update() 对库里不存在的源返回 True；from_dump 对 0 点源跳过写 CSV）。
+# 于是"删掉一个源 / 删光某源的点"会被下一次重建或同步悄悄撤销。下面把识别与
+# 安全闸都做成纯函数（好测、不连库），清理动作可逆（移到 backups/ 而不是删）。
+PRUNE_MAX_ABS = 50        # 孤儿绝对数上限
+PRUNE_MAX_FRAC = 0.20     # 或"现有源数"的这个比例，取两者较大者作为阈值
+
+
+def list_data_files(info_dir=None, lc_dir=None):
+    """扫描数据目录，返回 (info 文件 dict: id->路径, lc 文件 dict: id->路径)。"""
+    info_dir = info_dir or INFO_DIR
+    lc_dir = lc_dir or LC_DIR
+
+    def scan(d, ext):
+        out = {}
+        if os.path.isdir(d):
+            for fn in os.listdir(d):
+                if fn.endswith(ext):
+                    out[fn[:-len(ext)]] = os.path.join(d, fn)
+        return out
+
+    return scan(info_dir, '.json'), scan(lc_dir, '.csv')
+
+
+def find_orphan_files(db_ids, info_files, lc_files):
+    """孤儿 = 有 info/lc 文件但库里没有该源 → 重建/--sync 会把它当新源重新建出来。"""
+    oi = sorted(pth for tid, pth in info_files.items() if tid not in db_ids)
+    ol = sorted(pth for tid, pth in lc_files.items() if tid not in db_ids)
+    return oi, ol
+
+
+def find_stale_lc_files(empty_ids, lc_files):
+    """陈旧 CSV = 库里有该源但光变点为 0，而文件里仍有数据行（读不了的文件跳过）。"""
+    stale = []
+    for tid in sorted(empty_ids):
+        pth = lc_files.get(tid)
+        if not pth:
+            continue
+        try:
+            with open(pth, newline='') as f:
+                rows = sum(1 for _ in csv.reader(f)) - 1     # 减去表头
+        except OSError:
+            continue
+        if rows > 0:
+            stale.append(pth)
+    return stale
+
+
+def prune_allowed(n_orphans, n_db, force=False):
+    """安全闸：孤儿过多时拒绝清理（防库处于半空状态时把文件库整片搬走）。
+
+    两条判据：库里 0 个源（典型的"清库后导入中断"）→ 一律拒绝；否则孤儿数不得超过
+    max(50, 现有源数×0.2)。要越过请显式加 --prune-force。
+    """
+    if force:
+        return True, ''
+    if n_db == 0:
+        return False, (f'库中 0 个源（半空状态）却有 {n_orphans} 个孤儿文件：'
+                       f'疑似清库后导入未完成，拒绝清理。确认无误后加 --prune-force')
+    frac = int(n_db * PRUNE_MAX_FRAC)
+    limit = max(PRUNE_MAX_ABS, frac)
+    if n_orphans > limit:
+        return False, (f'孤儿 {n_orphans} 个 > 阈值 {limit}'
+                       f'（= max({PRUNE_MAX_ABS}, {PRUNE_MAX_FRAC:.0%} × 现有 {n_db} 源)）：'
+                       f'拒绝自动清理。确认库不是半空状态后加 --prune-force')
+    return True, ''
+
+
+def prune_backup_dir(data_dir=None, now=None):
+    """prune 是搬家不是删除：所有文件移到 <data>/backups/dump_prune_<YYYYmmdd_HHMM>/。"""
+    stamp = (now or datetime.now()).strftime('%Y%m%d_%H%M')
+    return os.path.join(data_dir or DATA_DIR, 'backups', f'dump_prune_{stamp}')
+
 
 
 def parse_bool(val):
@@ -538,8 +614,13 @@ def dump_filters(sess):
     print(f'  [OK] Filters dumped: {len(out)} entries')
 
 
-def from_dump(sess):
-    """将数据库当前内容导出回 catadata/ 文件"""
+def from_dump(sess, prune=False, prune_force=False):
+    """将数据库当前内容导出回 catadata/ 文件。
+
+    导出后做一致性检查：报告孤儿文件（库中已无该源）与陈旧 CSV（库中 0 点但文件有行）。
+    prune=True 时把它们移到 backups/dump_prune_<时间>/（可逆）；孤儿数超过安全阈值且未给
+    prune_force 时拒绝清理并以退出码 2 结束。
+    """
     import csv as csv_mod
     import io
 
@@ -552,6 +633,7 @@ def from_dump(sess):
     transients = sess.query(Transient).order_by(Transient.id).all()
     n_info = 0
     n_lc = 0
+    empty_ids = set()
 
     for t in transients:
         # ── 写入 info JSON ──
@@ -634,10 +716,55 @@ def from_dump(sess):
                         row.append(val)
                     writer.writerow(row)
             n_lc += len(lcs)
+        else:
+            # 该源 0 个光变点：这里不写 CSV（保持原语义），旧文件会留成"陈旧 CSV"
+            empty_ids.add(t.id)
+
+
+    # ---- 一致性检查（总是报告；清理需显式 --prune）----
+    db_ids = {t.id for t in transients}
+    info_files, lc_files = list_data_files()
+    orphan_info, orphan_lc = find_orphan_files(db_ids, info_files, lc_files)
+    stale_lc = find_stale_lc_files(empty_ids, lc_files)
+    n_orph = len(orphan_info) + len(orphan_lc)
+    pending = orphan_info + orphan_lc + stale_lc
 
     print(f'\n{"=" * 50}')
     print(f'Dump complete: {n_info} info files, {n_lc} LC points')
     print(f'{"=" * 50}')
+
+    if not pending:
+        print('[OK] 一致性：文件与库一一对应（无孤儿、无陈旧 CSV）')
+        return
+
+    print(f'[WARN] 孤儿文件 {n_orph} 个（info {len(orphan_info)} / lc {len(orphan_lc)}）、'
+          f'陈旧 CSV {len(stale_lc)} 个')
+    for pth in pending[:10]:
+        print('   -', os.path.relpath(pth, DATA_DIR))
+    if len(pending) > 10:
+        print(f'   …另 {len(pending) - 10} 个')
+    print('   影响：下一次全量重建或 --sync 会把它们当"新源/旧点"灌回库。')
+    if not prune:
+        print('   清理：加 --prune（移到 backups/dump_prune_<时间>/，可逆）')
+        return
+
+    ok, why = prune_allowed(n_orph, len(db_ids), force=prune_force)
+    if not ok:
+        print(f'[REFUSE] {why}')
+        sys.exit(2)
+
+    dest = prune_backup_dir()
+    os.makedirs(os.path.join(dest, 'info'), exist_ok=True)
+    os.makedirs(os.path.join(dest, 'lc'), exist_ok=True)
+    moved = 0
+    for pth in orphan_info:
+        os.replace(pth, os.path.join(dest, 'info', os.path.basename(pth)))
+        moved += 1
+    for pth in orphan_lc + stale_lc:
+        os.replace(pth, os.path.join(dest, 'lc', os.path.basename(pth)))
+        moved += 1
+    print(f'[OK] 已移走 {moved} 个文件 -> {os.path.relpath(dest, DATA_DIR)}/'
+          f'（恢复：把 info/ lc/ 里的文件拷回原位）')
 
 
 # ===================== 主入口 =====================
@@ -654,6 +781,11 @@ def main():
                         help='强制刷新滤波器定义')
     parser.add_argument('--dump', action='store_true',
                         help='将数据库当前内容导出回 catadata/ 文件（info JSON + lc CSV + filters.json）')
+    parser.add_argument('--prune', action='store_true',
+                        help='配合 --dump：把孤儿文件与陈旧 CSV 移到 backups/dump_prune_<时间>/'
+                             '（默认只报告不清理；移到备份目录，可逆）')
+    parser.add_argument('--prune-force', action='store_true',
+                        help='孤儿数超过安全阈值（max(50, 现有源数×0.2)）时仍执行 --prune')
     args = parser.parse_args()
 
     engine = get_engine()
@@ -682,7 +814,7 @@ def main():
         # ---- dump 是纯导出：必须先处理并返回，绝不能先跑 import（否则会用
         # 文件里的旧内容覆盖库中较新的数据，例如滤光片 extra_data） ----
         if args.dump:
-            from_dump(sess)
+            from_dump(sess, prune=args.prune, prune_force=args.prune_force)
             return
 
         # ---- 滤波器（增量模式只检查 DB 中是否有，没有才从文件导入） ----
