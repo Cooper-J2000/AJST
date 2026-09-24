@@ -95,7 +95,7 @@ git 历史并 force push。
 - **`/api/stats/hosts` 的 ETag 自检**：改过 `filters` 表后，带旧 `If-None-Match` 应回 **200**；仍
   304 说明有影响输出的输入没进 token（`vega2ab` 曾漏过）。往该响应加字段前先想清楚其输入要不要进 token。
 - **验收与护栏**：`scripts/acceptance/run_all.sh`（L1 口径/坐标/时间/消光 + L2 HTTP 契约 + L3 数据
-  不变量；只读）；`preflight.sh`（9 组，退出码 1 = 有阻塞项）。
+  不变量；只读）；`preflight.sh`（10 组，退出码 1 = 有阻塞项）。
 - **环境重建**：`scripts/bootstrap_env.sh` + `requirements-lock.txt`（后者是全量锁）。
 
 ## 8. 给 agent 助手的硬性规则
@@ -116,6 +116,6 @@ git 历史并 force push。
 | 文件 | 用途 |
 |---|---|
 | `docs/TECHNICAL.md` | **技术文档唯一权威源**（表结构 / API / 公式 / ETL） |
-| `docs/COMMIT-CONVENTION.md` | 提交格式、13 个范围、tag/trailer |
+| `docs/COMMIT-CONVENTION.md` | 提交格式、14 个范围、tag/trailer |
 | `docs/ops-history/` | **本机**（不入库）：历史沿革与实现细节 |
 | `AGENTS.local.md` | **不入库**：本机路径/端口/服务/凭据位置/备份 |

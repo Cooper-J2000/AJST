@@ -398,7 +398,7 @@ if [[ $QUIET -eq 0 ]] && git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; the
   if [[ "$NUNP" -eq 0 ]]; then
     info "未推送提交" "0 条 —— 无提交约定可查"
   else
-    SCOPES='core|api|ui|data|etl|sedfit|hostfit|fitting|spectra|filters|extinction|scripts|docs'
+    SCOPES='core|api|ui|data|etl|sedfit|hostfit|fitting|spectra|filters|extinction|scripts|tests|docs'
     VNEED="$(printf '%s\n' "$UNPUSHED" | grep -vE '^(docs|scripts):' || true)"
     NVNEED="$(printf '%s\n' "$VNEED" | grep -c . || true)"
     NOVER="$(printf '%s\n' "$VNEED" | grep -vcE '[（(]v[0-9]+\.[0-9]+[）)]' || true)"

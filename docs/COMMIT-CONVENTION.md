@@ -40,6 +40,7 @@ scripts: 新增 preflight 预检（8 组护栏，对应已踩过的坑）
 | `filters` | 滤光片定义与透过率曲线 |
 | `extinction` | 银河/宿主消光改正（CSFD + P92） |
 | `scripts` | 运维与验收脚本（preflight、bootstrap、acceptance） |
+| `tests` | 验收测试套件（L1 口径 / L2 HTTP 契约 / L3 数据不变量） |
 | `docs` | 文档、口径说明、AGENTS.md |
 
 ## 3. 可选 trailer（多 agent 场景建议带）
