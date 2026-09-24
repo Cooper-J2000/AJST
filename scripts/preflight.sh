@@ -9,7 +9,7 @@
 #  每条检查都对应一次真实事故或硬约定（依据见 AGENTS.md 与 git log）：
 #    1. PGOPTIONS 残留 search_path → 命令静默写进 review 副本而不是生产库（实测踩过）
 #    2. .gitignore 本身不进 git → 换机器/新 worktree 必然缺失，
-#       之后 git add -A 会把 EP 数据、GRB251025B、备份、GCN 存档全部提交（不可逆）
+#       之后 git add -A 会把未发布源数据、备份、GCN 存档全部提交（不可逆）
 #    3. conda 26.3.2 插件故障 → 必须直接用 <env>/bin/python，不能依赖 conda run
 #    4. 服务只允许绑 127.0.0.1（硬约定，不要改回 0.0.0.0）
 #    5. 无任何定时备份 → 备份新鲜度只能靠人盯
@@ -95,11 +95,11 @@ DATA_GI="$DATA_DIR/.gitignore"
 if [[ ! -f "$ROOT_GI" ]]; then
   fail "仓库 .gitignore" "不存在！"
   note "它本身不进 git，所以 clone / 新 worktree 里必然没有。"
-  note "后果：git add -A 会把 EP、GRB251025B、backups、GCN 存档全部提交到公开仓库。"
+  note "后果：git add -A 会把未发布源数据、backups、GCN 存档全部提交到公开仓库。"
   note "修复：按 AGENTS.md §6 重建（内容可直接抄那一节）"
 else
   miss=()
-  for p in 'catadata/' 'backend/fitting_store/' '*.log' 'AGENTS.md' '技术文档.md' '.gitignore'; do
+  for p in 'catadata/' 'backend/fitting_store/' '*.log' 'AGENTS.local.md' '技术文档.md' 'docs/ops-history/' '.gitignore'; do
     grep -qxF -- "$p" "$ROOT_GI" || miss+=("$p")
   done
   if [[ ${#miss[@]} -gt 0 ]]; then
@@ -109,26 +109,45 @@ else
   fi
 fi
 
+# 具体源名不写在脚本里（公开仓库不出现源信息）：一律从本机名单文件读取。
+# 名单格式 = catadata/.gitignore 里的原样模式，逐行一条。
+SENS_LIST="$DATA_DIR/.sensitive_sources"
 if [[ ! -f "$DATA_GI" ]]; then
   fail "catadata/.gitignore" "不存在！"
-  note "后果：EP 数据、GRB251025B、backups、gcn/archive 会被提交（其中 EP/GRB251025B 不可再生）"
+  note "后果：未发布源数据、backups、gcn/archive 会被提交（其中未发布源不可再生）"
+elif [[ ! -f "$SENS_LIST" ]]; then
+  warn "未发布源名单" "缺失：$SENS_LIST"
+  note "该名单是本机文件，逐行列出"绝不允许进公开仓库"的排除模式（见 AGENTS.local.md）"
 else
   miss=()
-  for p in 'gcn/archive/' 'backups/' 'info/EP*.json' 'lc/EP*.csv' 'spectra/EP*/' \
-           'info/GRB251025B.json' 'lc/GRB251025B.csv' 'spectra/GRB251025B*/' '.gitignore'; do
+  for p in 'gcn/archive/' 'backups/' '.gitignore'; do
     grep -qxF -- "$p" "$DATA_GI" || miss+=("$p")
   done
+  while IFS= read -r pat; do
+    [[ -z "$pat" || "$pat" == \#* ]] && continue
+    grep -qxF -- "$pat" "$DATA_GI" || miss+=("$pat")
+  done < "$SENS_LIST"
+  NPAT="$(grep -cvE '^$|^#' "$SENS_LIST" || true)"
   if [[ ${#miss[@]} -gt 0 ]]; then
     fail "catadata/.gitignore 缺项" "${miss[*]}"
   else
-    pass "catadata/.gitignore" "$(wc -l < "$DATA_GI") 行，必需项齐全"
+    pass "catadata/.gitignore" "必需项 + 本机名单 $NPAT 条模式齐全"
   fi
+fi
+
+# 名单派生根式（只取 basename 作为 glob，供第 4 组比对暂存区 basename；脚本内无源名）
+SENS_GLOBS=()
+if [[ -f "$SENS_LIST" ]]; then
+  while IFS= read -r pat; do
+    [[ -z "$pat" || "$pat" == \#* ]] && continue
+    pat="${pat%/}"; SENS_GLOBS+=("${pat##*/}")
+  done < "$SENS_LIST"
 fi
 
 # 行为验证：光有文件不算数，要看 git 是否真的忽略（-q 静默，非 0 = 未忽略）
 if [[ -d "$REPO/.git" ]]; then
   notignored=()
-  for p in 'AGENTS.md' '技术文档.md' 'catadata/x' 'backend/fitting_store/x' '.gitignore'; do
+  for p in 'AGENTS.local.md' '技术文档.md' 'docs/ops-history/x' 'catadata/x' 'backend/fitting_store/x' '.gitignore'; do
     git -C "$REPO" check-ignore -q -- "$p" 2>/dev/null || notignored+=("$p")
   done
   if [[ ${#notignored[@]} -gt 0 ]]; then
@@ -183,13 +202,42 @@ fi
 section "4. 已 stage 的危险内容"
 # ============================================================================
 if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
-  SENSITIVE="$(git -C "$REPO" diff --cached --name-only | grep -E '(^|/)(EP[0-9]{6}|GRB251025B)' || true)"
-  if [[ -n "$SENSITIVE" ]]; then
-    fail "EP / GRB251025B 被 stage" ""
-    echo "$SENSITIVE" | sed 's/^/        /'
-    note "这些不进公开仓库（AGENTS.md §4）。修复：git restore --staged <文件>"
+  # 未发布源：用本机名单派生的 glob 比对暂存文件的 basename（脚本内不含源名）
+  if [[ ${#SENS_GLOBS[@]} -eq 0 ]]; then
+    warn "未发布源检查" "本机名单缺失或为空，跳过来源名级检查"
   else
-    pass "EP / GRB251025B" "未出现在暂存区"
+    SENSITIVE=""
+    while IFS= read -r f; do
+      [[ -z "$f" ]] && continue
+      base="${f##*/}"
+      for g in "${SENS_GLOBS[@]}"; do
+        # shellcheck disable=SC2053
+        if [[ "$base" == $g ]]; then SENSITIVE+="$f"$'\n'; break; fi
+      done
+    done < <(git -C "$REPO" diff --cached --name-only 2>/dev/null || true)
+    if [[ -n "$SENSITIVE" ]]; then
+      fail "未发布源数据被 stage" "命中本机名单（$SENS_LIST）"
+      printf '%s' "$SENSITIVE" | sed 's/^/        /'
+      note "修复：git restore --staged <文件>（这些不进公开仓库）"
+    else
+      pass "未发布源（按本机名单）" "未出现在代码仓库暂存区"
+    fi
+  fi
+
+  # 数据仓库：任何被 catadata/.gitignore 排除的文件都不该出现在它的暂存区
+  if [[ -d "$DATA_DIR/.git" ]]; then
+    BAD=""
+    while IFS= read -r f; do
+      [[ -z "$f" ]] && continue
+      git -C "$DATA_DIR" check-ignore -q --no-index -- "$f" 2>/dev/null && BAD+="$f"$'\n'
+    done < <(git -C "$DATA_DIR" diff --cached --name-only 2>/dev/null || true)
+    if [[ -n "$BAD" ]]; then
+      fail "数据仓库暂存了被忽略文件" ""
+      printf '%s' "$BAD" | sed 's/^/        /'
+      note "修复：git -C catadata restore --staged <文件>"
+    else
+      pass "数据仓库暂存区" "无被忽略的文件"
+    fi
   fi
 
   CATA="$(git -C "$REPO" diff --cached --name-only | grep -E '^catadata/' || true)"
@@ -240,7 +288,7 @@ if [[ -n "$PY" ]]; then
     fi
   else
     fail "解释器" "$PY 不存在或不可执行（来源：$PY_SRC）"
-    note "AGENTS.md §7：环境是 burst_advocate；start.sh 默认的 python3 是系统 Python，没有依赖"
+    note "环境与解释器约定见 AGENTS.md §7；本机具体值（conda 环境、AJST_PYTHON）见 AGENTS.local.md"
   fi
 else
   warn "解释器" "未找到 AJST_PYTHON（未设环境变量、无 systemd drop-in、无 ajst.env）"
@@ -263,7 +311,7 @@ if [[ -z "$BINDS" ]]; then
   info "端口 $PORT" "未监听"
 elif echo "$BINDS" | grep -qE '^(0\.0\.0\.0|\*|\[::\])'; then
   fail "端口 $PORT 绑定" "$(echo "$BINDS" | tr '\n' ' ')"
-  note "硬约定：只允许 127.0.0.1（AGENTS.md §7，不要移除该护栏、不要改回 0.0.0.0）"
+  note "硬约定：只允许 127.0.0.1（AGENTS.md §7；不要移除该护栏、不要改回 0.0.0.0）"
   note "需要外部可达请走 ssh -L $PORT:127.0.0.1:$PORT"
 else
   pass "端口 $PORT 绑定" "$(echo "$BINDS" | tr '\n' ' ')（仅 loopback）"
@@ -312,7 +360,7 @@ else
   BNAME="$(basename "${NEWEST#* }")"
   if [[ "$AGE_D" -gt 14 ]]; then
     warn "最近备份" "$BNAME（${AGE_D} 天前）"
-    note "备份全在同一块盘、无异地副本；不可再生的 EP/GRB251025B 数据也在里面"
+    note "备份全在同一块盘、无异地副本；不可再生的未发布源数据也在里面"
   else
     pass "最近备份" "$BNAME（${AGE_D} 天前）"
   fi
@@ -334,6 +382,62 @@ if [[ $QUIET -eq 0 ]] && git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; the
     | sed -E 's/^([a-z0-9+_-]+):.*/\1/' \
     | grep -E '^[a-z0-9+_-]+$' | sort | uniq -c | sort -rn | head -10 \
     | awk '{printf "        %-14s %s\n", $2, $1}'
+fi
+
+# ============================================================================
+section "9. 提交约定（信息项；规范 docs/COMMIT-CONVENTION.md）"
+# ============================================================================
+if [[ $QUIET -eq 0 ]] && git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
+  if git -C "$REPO" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+    RANGE='origin/main..HEAD'
+  else
+    RANGE='-10'
+  fi
+  UNPUSHED="$(git -C "$REPO" log $RANGE --format='%s' 2>/dev/null || true)"
+  NUNP="$(printf '%s\n' "$UNPUSHED" | grep -c . || true)"
+  if [[ "$NUNP" -eq 0 ]]; then
+    info "未推送提交" "0 条 —— 无提交约定可查"
+  else
+    SCOPES='core|api|ui|data|etl|sedfit|hostfit|fitting|spectra|filters|extinction|scripts|docs'
+    VNEED="$(printf '%s\n' "$UNPUSHED" | grep -vE '^(docs|scripts):' || true)"
+    NVNEED="$(printf '%s\n' "$VNEED" | grep -c . || true)"
+    NOVER="$(printf '%s\n' "$VNEED" | grep -vcE '[（(]v[0-9]+\.[0-9]+[）)]' || true)"
+    BADSC="$(printf '%s\n' "$UNPUSHED" | grep -vEc "^($SCOPES):" || true)"
+    NOAGT="$(git -C "$REPO" log $RANGE --format='%(trailers:key=Agent,valueonly)' 2>/dev/null | grep -c . || true)"
+    info "未推送提交" "$NUNP 条"
+    if [[ "$NVNEED" -eq 0 ]]; then
+      info "版本标记（vX.YZ）" "本批无功能提交（docs/scripts 豁免版本号）"
+    elif [[ "$NOVER" -eq 0 ]]; then
+      pass "版本标记（vX.YZ）" "$NVNEED 条代码域提交全带"
+    else
+      # 版本号是"发布批次"概念，机器判不出某条提交是否属于批次 → 只记录不警告
+      info "版本标记（vX.YZ）" "$NOVER/$NVNEED 条代码域提交未带（发布批次才需要带）"
+    fi
+    if [[ "$BADSC" -eq 0 ]]; then
+      pass "范围前缀" "全部在规范集合内"
+    else
+      warn "范围前缀" "$BADSC/$NUNP 条不在规范集合"
+      note "规范集合：$SCOPES（见 docs/COMMIT-CONVENTION.md）"
+    fi
+    if [[ "$NOAGT" -gt 0 ]]; then
+      info "Agent trailer" "$NOAGT/$NUNP 条带了（可选）"
+    fi
+  fi
+fi
+
+# ============================================================================
+# 入口文件必须是薄指针：内容只维护在 AGENTS.md，别在入口文件里堆正文
+if [[ $QUIET -eq 0 ]]; then
+  for f in CLAUDE.md; do
+    if [[ -f "$REPO/$f" ]]; then
+      n="$(wc -l < "$REPO/$f")"
+      if [[ "$n" -gt 15 ]] || grep -qE '^## ' "$REPO/$f"; then
+        warn "入口文件 $f" "疑似被塞入正文（$n 行）；只允许是指向 AGENTS.md 的薄指针"
+      else
+        pass "入口文件 $f" "薄指针（$n 行）"
+      fi
+    fi
+  done
 fi
 
 # ============================================================================
