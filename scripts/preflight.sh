@@ -426,6 +426,25 @@ if [[ $QUIET -eq 0 ]] && git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; the
 fi
 
 # ============================================================================
+# ============================================================================
+section "10. 数据库↔文件一致性（只读）"
+# ============================================================================
+CHK="$REPO/scripts/check_db_file_sync.py"
+if [[ ! -f "$CHK" ]]; then
+  info "一致性检查" "缺少 scripts/check_db_file_sync.py"
+elif [[ -z "$PY" || ! -x "$PY" ]]; then
+  info "一致性检查" "未解析到解释器，跳过（见第 5 组）"
+else
+  RC=0
+  OUT="$("$PY" "$CHK" --quiet 2>&1)" || RC=$?
+  case "$RC" in
+    0) pass "库↔文件" "$(printf '%s' "$OUT" | head -1 | sed 's/^\[OK\] //')" ;;
+    1) warn "库↔文件有差异" "$(printf '%s' "$OUT" | sed -n '2p' | sed 's/^ *//')"
+       note "重建/--sync 会把它们灌回库；清理：python3 backend/etl.py --dump --prune（移到 backups/，可逆）" ;;
+    *) info "一致性检查" "跳过（退出码 $RC）：$(printf '%s' "$OUT" | head -1)" ;;
+  esac
+fi
+
 # 入口文件必须是薄指针：内容只维护在 AGENTS.md，别在入口文件里堆正文
 if [[ $QUIET -eq 0 ]]; then
   for f in CLAUDE.md; do
