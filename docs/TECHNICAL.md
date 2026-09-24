@@ -213,15 +213,25 @@ python3 etl.py --sync
 # 指定源导入
 python3 etl.py --transient EP240315a GRB000131A
 
-# 数据库 → 文件回写
+# 数据库 → 文件回写（纯导出，不动任何文件；导出后报告孤儿文件/陈旧 CSV）
 python3 etl.py --dump
+
+# 导出 + 清理孤儿文件与陈旧 CSV（移到 backups/dump_prune_<时间>/，可逆）
+python3 etl.py --dump --prune
 ```
 
 > **`--dump` 覆盖范围**（2026-08-27 起）：`info/*.json`（含每源的 `articles` 研究文章字段）、
 > `lc/*.csv`、`filters.json`。光谱文件由后端在上传/删除时同步维护，全量重建会自动
-> 从 `catadata/spectra/` 重建 `spectra` 表索引。`--dump` 只写不删：删除整个源或删光
-> 某源光变点后需手动删除对应文件。info JSON 中的 `articles` 字段在导入时对该源做
-> 全量替换（缺该字段的旧格式文件不动库中条目），全量重建不丢文章数据。
+> 从 `catadata/spectra/` 重建 `spectra` 表索引。info JSON 中的 `articles` 字段在导入时对该源
+> 做全量替换（缺该字段的旧格式文件不动库中条目），全量重建不丢文章数据。
+>
+> **一致性（2026-09-25 起）**：`--dump` 依旧**只写不删**（默认不动任何文件），但会**报告**
+> 孤儿文件（有 info/lc 文件而库里没有该源）与陈旧 CSV（库里该源 0 点而文件仍有行）——
+> 这两类会被下一次全量重建或 `--sync` 当成“新源 / 旧点”重新灌回库（`needs_update()` 对
+> 库里不存在的源返回 True；`from_dump` 对 0 点源跳过写 CSV），所以删除源或删光点之后要清理。
+> 清理：`python3 etl.py --dump --prune`（移到 `backups/dump_prune_<时间>/`，可逆；库里 0 源时
+> 一律拒绝，孤儿数超过 `max(50, 现有源数×0.2)` 时拒绝，需 `--prune-force`）。只读自检：
+> `scripts/check_db_file_sync.py`（退出码 1 = 有差异；`scripts/preflight.sh` 第 10 组会跑）。
 
 ### 3.2 单位处理（导入时）
 
