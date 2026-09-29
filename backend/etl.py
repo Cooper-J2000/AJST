@@ -262,14 +262,15 @@ def import_one_transient(sess, tid):
         t.redshift_type = data.get('redshift_type')
         t.redshift_ref = data.get('redshift_ref')
         t.pos_error = parse_float(data.get('pos_error'))
-        t.pos_error_unit = data.get('pos_error_unit', 'arcsec')
+        t.pos_error_unit = data.get('pos_error_unit') or 'arcsec'
         t.pos_ref = data.get('pos_ref')
-        t.tags = data.get('tag', [])
-        t.aliases = data.get('alias', [])
+        t.tags = data.get('tag') or []
+        t.aliases = data.get('alias') or []
         t.comment = data.get('comment')
-        t.sub_tag = data.get('sub_tag', [])
-        if isinstance(data.get('extra_data'), dict):
-            t.extra_data = data['extra_data']
+        t.sub_tag = data.get('sub_tag') or []
+        # 键存在才动：dict 替换、null 清空；缺键说明是旧格式文件，保持原值
+        if 'extra_data' in data:
+            t.extra_data = data['extra_data'] if isinstance(data['extra_data'], dict) else {}
         t.updated_at = utcnow()
         extinction.refresh_ebv(t)      # 坐标建立/变更 → 刷新 E(B-V) 缓存
         refresh_distmod(t)             # 红移建立/变更 → 刷新距离模数缓存
@@ -283,10 +284,10 @@ def import_one_transient(sess, tid):
             redshift=parse_float(data.get('redshift')),
             redshift_type=data.get('redshift_type'), redshift_ref=data.get('redshift_ref'),
             pos_error=parse_float(data.get('pos_error')),
-            pos_error_unit=data.get('pos_error_unit', 'arcsec'),
-            pos_ref=data.get('pos_ref'), tags=data.get('tag', []),
-            aliases=data.get('alias', []), comment=data.get('comment'),
-            sub_tag=data.get('sub_tag', []),
+            pos_error_unit=data.get('pos_error_unit') or 'arcsec',
+            pos_ref=data.get('pos_ref'), tags=data.get('tag') or [],
+            aliases=data.get('alias') or [], comment=data.get('comment'),
+            sub_tag=data.get('sub_tag') or [],
             extra_data=data.get('extra_data') if isinstance(data.get('extra_data'), dict) else {},
         )
         sess.add(t)
@@ -637,6 +638,8 @@ def from_dump(sess, prune=False, prune_force=False):
 
     for t in transients:
         # ── 写入 info JSON ──
+        # v2.30 起：规范字段键恒在，空值显式写 null（外部校验/扩充无需猜字段存在性；
+        # 导入端按 null = 清空/不设处理，round-trip 语义不变）
         info = {
             'transient_id': t.id,
             'alias': t.aliases or [],
@@ -656,7 +659,7 @@ def from_dump(sess, prune=False, prune_force=False):
             'comment': t.comment,
             'sub_tag': t.sub_tag or [],
             'pos_error_unit': t.pos_error_unit or 'arcsec',
-            'extra_data': t.extra_data or {},
+            'extra_data': t.extra_data or None,
         }
         # 研究文章一并落盘（articles 字段始终写入，空列表表示该源无文章，
         # 导入端按此字段做全量替换，保证全量重建不丢文章数据）
@@ -669,8 +672,9 @@ def from_dump(sess, prune=False, prune_force=False):
             }.items() if v is not None}
             for a in arts
         ]
-        # 宿主星系落盘（无宿主时字段缺失，清理步骤会去掉 None）
+        # 宿主星系落盘：键恒在，无宿主显式写 null（导入端 null = 删除该源宿主记录）
         hg = sess.query(HostGalaxy).filter(HostGalaxy.transient_id == t.id).first()
+        info['host_galaxy'] = None
         if hg:
             info['host_galaxy'] = {k: v for k, v in {
                 'ra': hg.ra, 'dec': hg.dec,
@@ -680,8 +684,6 @@ def from_dump(sess, prune=False, prune_force=False):
                 'derived': hg.derived or {},
                 'comment': hg.comment, 'source': hg.source,
             }.items() if v is not None and v != {} and v != []}
-        # 去掉 None 值和空扩展字段
-        info = {k: v for k, v in info.items() if v is not None and v != {}}
         with open(os.path.join(INFO_DIR, f'{t.id}.json'), 'w') as f:
             json.dump(info, f, indent=2, ensure_ascii=False)
         n_info += 1
