@@ -31,6 +31,9 @@ catadata/ 文件  ──etl.py（全量）/ --sync（增量）──▶ PostgreS
 
 - **平时数据库是权威**；网页端改动只写库、不回写文件（例外：光谱上传/删除）。
 - **发布前**：`python3 backend/etl.py --dump` 把库导出覆盖到 `catadata/` 再提交。
+- **v2.30 起 dump 空值显式化**：info JSON 的规范字段键恒在，空值写 `null`（列表写 `[]`），
+  不再省略键；导入端把「键缺失」与「null」等价处理。对外数据契约 = `catadata/SCHEMA.md`
+  （配 `tools/validate.py` 零依赖校验器与 CI；贡献流程见 `catadata/CONTRIBUTING.md`）。
 - **危险**：裸 `python3 backend/etl.py` 会 TRUNCATE 库再从文件导入 → 未 dump 的网页端改动被文件旧
   数据覆盖；跑前想清楚哪边权威，不确定先 `pg_dump` 留底。`--sync` 也是「文件→库」。
 - **`--dump` 只写不删**：删除整个源、或把某源光变点删光后，需手动删 `catadata/info/<源名>.json`

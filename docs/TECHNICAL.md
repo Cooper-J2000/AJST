@@ -308,6 +308,7 @@ ABmag = 16.4 - 2.5 × log10(flux_density_mJy)
 - `tag`：主标签，`["fxt"]` / `["grb"]` / `["sn"]` / `["tde"]`
 - `sub_tag`：子标签，`["L"]` / `["S"]` / `["X"]` 等
 - `T0_ref` / `T0_offset` / `T0_offset_ref`（v2.23 起）：T0 引用 / T0 偏移量（秒，正=向后/负=提前）/ 偏移量引用，纯元数据，不参与任何换算
+- **v2.30 起规范键恒在**：dump 时所有规范字段（含 `pos_error_unit`、`extra_data`、`articles`、`host_galaxy`）空值显式写 `null`（列表写 `[]`），不再省略键；导入端把「键缺失」与「键 = null」等价处理，旧格式文件可正常导入。对外数据契约的权威定义在数据仓库 `SCHEMA.md`（含校验器 `tools/validate.py` 与贡献流程 `CONTRIBUTING.md`）
 
 ### 3.5 CSV 文件格式（`catadata/lc/<id>.csv`）
 
@@ -446,7 +447,7 @@ time,time_err,time_unit,mjd,band,flux_density,flux_density_err,flux_density_unit
 | PUT | `/api/hosts/<tid>` | upsert 宿主信息 `{ra?, dec?, redshift?, redshift_err?, redshift_type?, photometry?, derived?, comment?}`（`ra`/`dec` 支持十进制度或时分秒；`photometry` 项可含 `upperlimit`，`mag_err` 可空，见 §8.22；v2.15 起每行必须显式携带 `gext_corr` true/false，缺失返回 400，见 §8.24） | 登录 |
 | DELETE | `/api/hosts/<tid>` | 删除宿主信息 | 管理员 |
 | GET | `/api/export/host_photometry/<tid>` | 导出宿主测光 CSV/JSON（含实时计算的改正后星等 `mag_gextcor` 列，见 §8.24） | 登录 |
-| GET | `/api/hostfit/config` | 宿主 SED 拟合默认配置与可用波段（v2.18 起按引擎分节 `{pcigale:{defaults,modules,optional_modules,available_bands}, prospector:{defaults,optional_modules,available_bands}}`，前端兼容旧扁平结构，见 §8.20） | 否 |
+| GET | `/api/hostfit/config` | 宿主 SED 拟合默认配置与可用波段（v2.18 起按引擎分节 `{pcigale:{defaults,modules,optional_modules,available_bands}, prospector:{defaults,optional_modules,available_bands}}`，前端兼容旧扁平结构，见 §8.20；v2.30 起新增 `versions:{pcigale?,prospector?}` 安装版本字段，引擎未安装时省略对应键） | 否 |
 | POST | `/api/hostfit/jobs` | 提交宿主 SED 拟合 `{transient_id, mode, redshift?, grid, photometry, config}`（v2.18 起 config 新增 `engine`：`pcigale`（默认）/ `prospector`） | 登录 |
 | GET | `/api/hostfit/jobs` | 任务列表（`?transient_id=`；v2.18 起简报带 `engine` 字段） | 否 |
 | GET | `/api/hostfit/jobs/<id>` | 任务详情（含 best/bayes 参数与 `engine` 字段） | 否 |
@@ -570,6 +571,7 @@ curl http://localhost:27101/api/auth/status
 - 导航栏登录后显示当前账户名；管理员额外显示「管理后台」入口（`/admin`）
 - 数据表"添加记录"/"上传数据表"按钮与编辑列登录后显示；普通用户编辑列内：自己录入的记录（source=本账户）显示行内编辑按钮，其余记录只有扣点（discard 切换）按钮；单点银消/删除选中与行首删除复选框列仅管理员可见
 - 事件编辑、derived 卡片编辑、银消改正按钮仅管理员可用
+- T0 等事件字段：新建源时普通登录用户可设定；**库中已存在源的修改仅管理员**（PUT 已 `@require_admin`；POST 新建对重复 id 一律 409，无经新建覆盖已有源的旁路；契约由 tests/acceptance/test_l2_t0_permissions.py 锁定，v2.30）
 - 光学滤光片的添加按钮登录后显示，编辑仅管理员
 - 光谱的上传按钮登录后显示，删除按钮仅管理员
 - 拟合任务提交登录后可用，任务删除按钮仅管理员
@@ -597,6 +599,8 @@ frontend/
     ├── bands.js              # 波段工具：频率排序/光谱色阶/AB↔mJy/滤波器缓存（v2.14 起各图表共用）；toMJy/pointToMJy 为流量单位换算唯一实现（2026-09-12 收敛；未知单位返回 null 弃点 + console.warn，y≤0 在 log 轴截断至 1e-13 并在 tooltip 标注，绝对星等模式不绘制截断点）
     ├── digitizer_core.js     # 抠图取数核心算法（标定变换/Lab 颜色/掩膜/描线/连通域，v2.11）
     └── pages/
+        ├── home.js           # 主页（瑞士排版：标题/文案/基础统计/事实行/标签分布/入口；事件日历挂载点）
+        ├── home_calendar.js  # 主页事件日历（GitHub 贡献日历风格，按 T0 逐日计数，v2.30）
         ├── list.js           # 事件列表（筛选/排序/分页/删除）
         ├── detail.js         # 单源详情编排层（fetch → 注入子模块 → tab 切换；2026-09-12 拆分后约 500 行）
         ├── detail_overview.js    # 详情页概览卡/文章管理/基本信息编辑/全源银消改正
@@ -1924,6 +1928,25 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 ---
 
 ## 十一、版本历史
+
+### v2.30（2026-09-29）— 主页事件日历 / T0 权限锁定 / AJST-Data 规范化与开放契约
+
+- **主页事件日历**：GitHub 贡献日历风格热力格点图（新模块 `frontend/js/pages/home_calendar.js`），
+  按事件 T0 逐日计数、绿色系 5 档色阶（`--cal-0..4` 随明暗主题切换）、以有记录的年为单位翻页、
+  格点 tooltip 显示日期与事件数；数据复用 `GET /api/transients/meta`，接口失败或无 T0 记录时整卡隐藏
+- **首页文案更新**；静态事实行新增第 4 格「宿主星系拟合 Host Fitting」（pcigale · prospector，
+  版本取自 `GET /api/hostfit/config` 新增的 `versions` 字段，取不到只显示包名）
+- **T0 写权限契约锁定**：库中已存在源的 T0 等事件字段修改仅管理员（PUT 已 `@require_admin`、
+  POST 重复 id 409 无覆盖旁路）；新建源时普通用户可设定 T0。新增契约测试
+  `tests/acceptance/test_l2_t0_permissions.py`（伪造 session，不写库，6 用例）
+- **AJST-Data 规范化**：dump 时空值显式写 `null`（规范键恒在，见 §3.4）；数据仓库新增
+  `SCHEMA.md`（数据契约唯一权威）/ `CONTRIBUTING.md`（校验·扩充·提交流程）/
+  `tools/validate.py`（纯 stdlib 校验器）/ GitHub Actions CI；README 计数订正
+- **tmplib 持久化修正**：`_post_build_entry`（API-7/14 共用）对 catalog-derived 模板
+  catalog_rows 轴一致时不再持久化 `[]`（运行期探针注记），与建面路径统一登记 `None`
+  （P0 §4.1 契约；显示与状态合成行为不变，`[]`/`None` 同为"无漂移"）
+- 验收证据：T0 契约测试 6/6 过；validate.py 全量 2794 info + 2514 lc 零错误零警告；
+  浏览器实测日历明暗主题/翻页/月份标签、facts 第 4 格版本显示
 
 ### v2.27（2026-09-24）— MJD/time 口径收尾：无 T0 可只录 MJD / 新增行实时互算
 
