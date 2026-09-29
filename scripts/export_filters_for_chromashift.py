@@ -12,8 +12,8 @@ the layout ChromaShift's `FilterBank.load()` reads:
     <out>/curves/*.json    one {"name", "wl_A", "T"} file per band with a curve
 
 The output is an input to every built surface: changing it makes the surfaces in
-`backend/tmplibrary/data/surfaces/` stale, and they must be rebuilt (from the
-tmplib page or `chromashift build --root backend/tmplibrary`).
+`catadata/tmplibrary/data/surfaces/` stale, and they must be rebuilt (from the
+tmplib page or `chromashift build --root catadata/tmplibrary`).
 
 Rules, both earned in the engine's original `vendor_filters.py`:
 
@@ -43,7 +43,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SRC = REPO_ROOT / "catadata" / "filters.json"
-OUT_DIR = REPO_ROOT / "backend" / "tmplibrary" / "data" / "filters"
+OUT_DIR = REPO_ROOT / "catadata" / "tmplibrary" / "data" / "filters"
 
 # Which wavelength the record's single number refers to.  The source file's
 # `type` field is trusted only as a hint; this script recomputes pivot and
