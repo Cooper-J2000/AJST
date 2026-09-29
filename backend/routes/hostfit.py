@@ -16,6 +16,27 @@ from hostfit import jobs as hostfit_jobs
 
 hostfit_bp = Blueprint('hostfit', __name__)
 
+_engine_versions_cache = None
+
+
+def _engine_versions():
+    """两引擎的安装版本（importlib.metadata；未安装/不可用的引擎省略该键）。
+
+    结果进程内缓存：版本不随请求变化，避免每次 config 请求都扫 metadata。
+    """
+    global _engine_versions_cache
+    if _engine_versions_cache is not None:
+        return _engine_versions_cache
+    import importlib.metadata
+    versions = {}
+    for key, dist in (('pcigale', 'pcigale'), ('prospector', 'astro-prospector')):
+        try:
+            versions[key] = importlib.metadata.version(dist)
+        except Exception:
+            pass
+    _engine_versions_cache = versions
+    return versions
+
 _FILE_KINDS = {
     'results':    (os.path.join('out', 'results.txt'), 'text/plain', False),
     'sed_png':    ('sed.png', 'image/png', False),
@@ -128,6 +149,7 @@ def get_config():
         'prospector': {'defaults': _PROSPECTOR_DEFAULTS,
                        'optional_modules': _PROSPECTOR_OPTIONAL,
                        'available_bands': bands_prs},
+        'versions': _engine_versions(),
     })
 
 
