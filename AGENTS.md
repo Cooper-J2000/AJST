@@ -10,6 +10,7 @@
 ```
 AJST_Transient_lc_Cata/   ← 代码仓库（remote Cooper-J2000/AJST）
 ├── backend/ frontend/ docs/ scripts/ tests/ README.md requirements.txt
+│   （backend/ 内：tmplib/ = 模板库×K 改正功能代码；tmplibrary/ = 模板库派生数据，不进 git）
 └── catadata/             ← 数据仓库（remote Cooper-J2000/AJST-Data），就地共存
     ├── info/ lc/ spectra/ filters.json …  ← 数据文件
     ├── gcn/archive/      ← 可再生成的 GCN 存档（不进 git）
@@ -72,11 +73,12 @@ git 历史并 force push。
 | users | 纯数据库 | 无文件对应 |
 | relations.json | 代码仓库静态文件 | 非用户数据，随代码提交 |
 | 消光/距离模数缓存 | 数据库 | 不落盘；重建后跑 `backfill_gext_cache.py` |
+| tmplibrary（模板库派生数据） | 派生数据，引擎可重建 | `backend/tmplibrary/`；写盘只经 API-5/7/11（建面/重建/删除），读路径永不写；不进 git、不进 `catadata/`；`library.json` 是其目录（指纹/状态/族谱） |
 | GCN 存档 | 可再生成 | `scripts/fetch_gcn_archive.sh`；不进 git |
 
 ## 6. `.gitignore` 重建清单（换机器/新 worktree 必做）
 
-代码仓库根 `.gitignore` 必需项：`catadata/`、`backend/fitting_store/`、`*.log`、
+代码仓库根 `.gitignore` 必需项：`catadata/`、`backend/fitting_store/`、`backend/tmplibrary/`、`*.log`、
 `AGENTS.local.md`、`技术文档.md`、`docs/ops-history/`、`.gitignore`、`__pycache__/`、`*.pyc`、`.env`、`*.pem`、`*.key`。
 `catadata/.gitignore` 必需项：**见本机名单 `catadata/.sensitive_sources`**（逐行一条模式，须原样出现在 `.gitignore` 里）＋
 `gcn/archive/`、`backups/`、`.gitignore`。**公开文件里不写具体源名**。
@@ -110,6 +112,10 @@ git 历史并 force push。
 7. 开工前先跑 `preflight.sh`：有 FAIL（退出码 1）不许开工。它拦的是写错库（PGOPTIONS 残留、
    DATABASE_URL 不对）、`.gitignore`/本机名单缺失致未发布源被提交、绑非 loopback、库被清空。
 8. **入口文件（`CLAUDE.md` 等）只允许是指针**：规则、命令、说明一律写进本文件（preflight 会检查）。
+9. **模板库 × K 改正（ChromaShift）**：引擎代码任何改动 ⇒ code 指纹变 ⇒ 全部 9 面 stale ⇒
+   必须逐模板重建（API-7 或库清单批量重建）才恢复可读。该功能**只读 DB 与 catadata**；
+   写盘仅限 `backend/tmplibrary/`（且只经 API-5/7/11）；引擎是可选依赖，缺失时 tmplib 页
+   降级只读、其余功能不受影响。
 
 ## 9. 文档索引
 

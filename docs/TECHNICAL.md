@@ -197,6 +197,18 @@ BibTeX 可能很长，前端不整段展示，仅提供「复制到剪贴板」�
 | `fitting_results` | 余辉拟合任务记录（v2.5 起启用，见 §8.14） |
 | `extinction_corrections` | 银河消光改正记录（空，等待扩展） |
 
+### 2.8 模板库存储（tmplibrary，第三存储）
+
+除 PostgreSQL 与 `catadata/` 文件外，系统还有第三处存储 `backend/tmplibrary/`（模板库 ×
+K 改正功能，见 §8.34）：**派生数据**——模板 manifest（`templates/<id>.yaml`）、冻结行集
+CSV（`data/raw/<id>.csv`）、引擎曲面与 QC（`data/surfaces/<id>.{npz,qc.json}`）、滤光片
+vendor 快照（`data/filters/`），全部可由引擎重建，**不进 git、不进 `catadata/`**（代码仓库
+`.gitignore` 已排除）。`library.json` 是它的目录与唯一自有文件：登记每个模板的来源
+（出厂/向导/出厂·同源）、行集与输入指纹（含第 7 项 `rows_sha256`）、域内率、μ 分解、
+三轴 stale 状态与族谱 history（build/rebuild/delete 逐条追加）。写盘只经三个端点
+（API-5 建面 / API-7 重建 / API-11 删除），读路径永不写；覆盖写是 tmp+rename 原子写并留
+`.bak`。库根可用环境变量 `AJST_TMPLIB_DIR` 覆盖。
+
 ---
 
 ## 三、ETL 数据导入
@@ -449,6 +461,19 @@ time,time_err,time_unit,mjd,band,flux_density,flux_density_err,flux_density_unit
 | POST | `/api/sed/closure_plot` | α–β 诊断图（PNG） | 否 |
 | GET | `/api/sed/closure_relations` | 闭包关系系数表（Gao+2013 框架） | 否 |
 | POST | `/api/sed/bolometric` | 伪玻尔兹曼光变 `{transient_id, epochs?, ...}`（同步，max_epochs=30） | 否 |
+| GET | `/api/tmplib/config` | 模板库引擎自检（chromashift 版本/code 指纹/依赖下限/限额/能力面/vendor 对照；引擎不可用也恒 200 + `TL_ENGINE_UNAVAILABLE`） | 否 |
+| GET | `/api/tmplib/guards` | 三轴 staleness 独立报告（引擎输入/库行指纹/滤光片 vendor；单轴故障不拖垮其余轴） | 否 |
+| GET | `/api/tmplib/templates` | 模板列表 + 状态（含三轴 stale 概要、域内率、族谱 history；不含 rows_sha256 现算与 μ） | 否 |
+| GET | `/api/tmplib/templates/<id>` | 模板详情：manifest 摘要 + QC 全文（含波段准入）+ μ 分解 + 第 7 项指纹活库比对 | 否 |
+| POST | `/api/tmplib/templates` | 造模板向导建面（强制声明校验 → 取数 → CSV+manifest → 建面 → 实测域内率；id 冲突 409） | 登录 |
+| POST | `/api/tmplib/templates/<id>/rebuild` | 重建面（重算域内率与三轴 stale） | 登录 |
+| DELETE | `/api/tmplib/templates/<id>` | 软删（默认）/硬删（`hard=true` 需管理员密码二次校验）；出厂模板影子条目不可删 | 管理员 |
+| GET | `/api/tmplib/preview?transient_id=` | 造模板预检（行账/波段映射/系统与 gext 覆盖率/z 冲突/同事件多记录提示/域内预估） | 登录 |
+| POST | `/api/tmplib/predict` | 单条模板曲线预测（K 改正/绝对星等/域判定/时间原点建议；429 不排队） | 否 |
+| POST | `/api/tmplib/compare` | 批量对比（≤8 模板曲线 + ≤8 源，含 K 改正实测点；部分成功协议恒 200） | 否 |
+| GET | `/api/tmplib/export.csv` / `.json` | 同 compare 参数的文件形式（同一批数据两种渲染；query 编码见下） | 否 |
+| GET | `/api/tmplib/in_domain/<id>` | 单模板域内可答比例缓存值与逐带归因 | 否 |
+| POST | `/api/tmplib/budget` | 单项误差预算（四项 + 逐带色标增益 + sed_residual 逐带表 + distance 单列；`n_draws∈{0}∪[3,200]` 默认 32，429 不排队） | 否 |
 
 ### 列表查询参数
 
@@ -487,6 +512,24 @@ curl http://localhost:27101/api/auth/status
 - 权限两级：**管理员**全部操作；**普通用户**可新增/上传数据、扣点（discard）、提交拟合任务、修改自己录入的光变记录（`source`=本账户），其余删除/修改已有数据返回 403。
 - 光变表 `source` 列自动记录提交账户（ingest API 记为 `ingest-api` 或 body 指定的 `source`），`created_at`/`updated_at` 自动记录存入/最近修改时间（naive UTC）。
 
+### 模板库 × K 改正（/api/tmplib）
+
+13 个端点已并入上面的 API 表；实现见 `backend/routes/tmplib.py` 模块头注释与设计文档
+`02_功能设计方案.md` §5（该设计文档为外部协作产物，不入库）。P4 新增的两个端点细则：
+
+- `GET /api/tmplib/export.csv` / `export.json`（API-9，公开）：与 API-8 `compare` 同参数的
+  文件形式。**GET query 编码**：`curves` / `sources` 各为一个 URL 编码的 JSON 数组串，
+  元素形状与 API-8 请求体逐项相同（如 `curves=[{"template_id":"sn2006aj","band":"B","z":0.05}]`），
+  `include_measured` 取 `0`/`1`（缺省 `1`）。两种格式是同一批数据的两种渲染（内部只算一次），
+  CSV 头为 `#` 注释行（CLI 头模板 + 主机侧六项补充）+ §4.3 的 19 列。内存渲染、零写盘。
+- `POST /api/tmplib/budget`（API-10，公开）：`{template_id, band, z?, mode?, n_draws?, seed?, n_times?}`
+  → 引擎 ErrorBudget 四项（photometric/sed_residual/colour_term/distance）+ 逐带
+  `gain_mag_per_dex`/`gain_source` + sed_residual 逐带表 + distance 项单列 + 引擎 warnings 透传。
+  `n_draws ∈ {0}∪[3,200]`（0 = 只算系统项，photometric 项缺席而非 0）。
+  **默认 n_draws=32**（UNVERIFIED-2 实测：n_draws=200 每模板 13.7–18.1 s、n_draws=32
+  每模板 2.4–3.1 s，九模板 n_times=300，2026-09-29 实测）；与预测/建面共用一把
+  非阻塞信号量，占用时立即 429。
+
 ---
 
 ## 六、前端功能
@@ -499,11 +542,12 @@ curl http://localhost:27101/api/auth/status
 | `#/stats` | 全局统计 | 概览卡片 + Mollweide 全天图 + 红移直方图（按 tag 筛选）+ 波段覆盖 |
 | `#/stats/relations` | 统计关系 | GRB 瞬时辐射 6 个 2D 统计关系（Amati 等）散点 + 分组拟合（见 §8.13） |
 | `#/transient/<id>` | 单源详情 | 基本信息 + 子标签 + 光变曲线 + 全列数据表 + 行内编辑 |
-| `#/compare` | 多源对比 | 叠加对比光变曲线（含误差棒显示开关）；事件列表支持按名称/别名筛选 |
+| `#/compare` | 多源对比 | 叠加对比光变曲线（含误差棒显示开关）；事件列表支持按名称/别名筛选；模板层可叠加 K 改正引擎预测曲线（虚线），Y 轴三态流量/绝对星等/K 改正绝对星等，支持服务端 CSV/JSON 导出与复制图（见 §8.34） |
 | `#/filters` | 光学滤光片 | 81 个滤波器 CRUD（类型 mean/ref/eff/guess 齐全），可排序/添加/行内编辑 |
 | `#/new` | 新建事件 | 创建暂现源 |
 | `#/tools/gcn` | GCN 阅读工具 | 工具箱条目：GCN circular 浏览 + 源信息/测光录入直写数据库（见 §8.17） |
 | `#/tools/digitizer` | 抠图取数 | 工具箱条目：从图像提取数据点，直写 lightcurves 表（见 §8.18） |
+| `#/tools/tmplib` | 模板库与造模板 | 工具箱条目：模板清单（状态/域内率/族谱/批量重建）+ 详情 QC 与误差预算面板 + 造模板向导（4 步，见 §8.34） |
 
 ### 6.2 单源详情页标签
 
@@ -568,7 +612,9 @@ frontend/
         ├── sed_tab.js        # 详情页「SED 分析」标签页（SED 构建/拟合/结果/时间序列诊断，见 §8.27）
         ├── stats_hosts.js    # 宿主星系统计子页（覆盖率/M*/SFR/绝对星等—红移图，见 §8.22）
         ├── create.js         # 新建事件
-        ├── compare.js        # 多源对比
+        ├── compare.js        # 多源对比（Y 三态流量/绝对星等/K 改正；复制图）
+        ├── compare_template.js # 对比页模板层（K 改正预测曲线叠加/Δμ 卡/域判定条/导出入口，见 §8.34）
+        ├── tmplib.js         # 模板库与造模板向导（工具箱，见 §8.34）
         └── filters.js        # 光学滤光片 CRUD
 ```
 
@@ -642,6 +688,7 @@ drupal-settings `objectFlot.*.params.markings`），全部在前端实现，无�
 | `AJST_PCIGALE_FILTER_DIR` | pcigale 滤光片库目录覆盖项（网页端滤光片曲线注册与 `scripts/fetch_svo_filters.py` 共用） | 未设置时按已安装 pcigale 包路径 → which('pcigale') 推导 |
 | `SPS_HOME` | hostfit prospector 引擎所需的 FSPS 数据目录 | 未设置时回退读 `AJST_SPS_HOME`；prospector 为可选依赖（runner 惰性导入），未安装/未配置不影响服务启动，仅运行 prospector 任务时报错 |
 | `AJST_SPS_HOME` | `SPS_HOME` 未设置时的替代 FSPS 数据目录变量 | 无 |
+| `AJST_TMPLIB_DIR` | 模板库根目录覆盖项（模板库 × K 改正的派生数据，见 §2.8/§8.34） | `<项目根>/backend/tmplibrary` |
 
 安全相关默认行为（2026-09-12 起）：登录接口对同一 IP+账户 15 分钟内失败 5 次锁定（429）；
 `SESSION_COOKIE_SAMESITE='Lax'`；请求体上限 `MAX_CONTENT_LENGTH=32MB`（超限 413）；
@@ -1797,6 +1844,32 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
    拖不再位移），再做内容边缘收敛（内容宽于视口时 transform 夹到 [视口宽−内容宽, 0]，
    边界处内容贴齐视口边缘不露空白）；「第 X 页」跟随提示与松手落点换算不变（所见即所得）。
 
+### 8.34 模板库 × K 改正（ChromaShift 引擎）（2026-09-29 新增，P0–P4 落地）
+
+把九个超新星/千新星/余辉模板的谱能量分布曲面（ChromaShift 引擎建面）接入对比页与工具箱：
+模板曲线预测（K 改正/绝对星等/域判定）、K 改正实测点（M = m_AB − μ_engine − K）、
+造模板向导（库内行集 → manifest → 建面 → QC）、单项误差预算、CSV/JSON 导出。
+
+- **引擎依赖**：ChromaShift 是**纯计算库**（不碰 DB/网络），以 editable 方式安装
+  （`pip install -e <ChromaShift 路径>`）。它是**可选依赖**：缺失或依赖不达标时
+  `/api/tmplib/*` 恒 200 回 `TL_ENGINE_UNAVAILABLE`，`#/tools/tmplib` 整页降级为只读说明，
+  其余全部功能不受影响。要求 Python ≥ 3.12，依赖下限 numpy 2.4 / scipy 1.17 / astropy 7.2 /
+  dust_extinction 1.7 / pandas 2.3 / PyYAML 6.0（`GET /api/tmplib/config` 的 `deps` 逐项自检）。
+- **后端形态**：in-process 唯一后端（`backend/tmplib/` 编排层 + `backend/routes/tmplib.py`
+  13 个端点，见 §五 API 表）；引擎调用全程不持 DB session（先短 session 取数关闭，再进引擎）；
+  预测/建面/预算共用一把非阻塞 `BoundedSemaphore(1)`，占用时立即 429 不排队。
+- **存储**：派生数据在 `backend/tmplibrary/`（§2.8），不进 git；写盘只经 API-5/7/11。
+- **性能实测**（九模板、n_times=300、2026-09-29 本机）：误差预算 API-10 的 Monte-Carlo
+  n_draws=200 每模板 13.7–18.1 s、n_draws=32 每模板 2.4–3.1 s —— 故 API-10 默认
+  n_draws=32（上限 200，响应 provenance 显形）；单条预测约 0.05–0.5 s，单源建面 1.1–2.8 s。
+- **守卫**：三轴 staleness（引擎输入六指纹 / 第 7 项库行指纹 / 滤光片 vendor sha）+
+  `code_sha256` 钉引擎代码；读路径遇 stale 只拒绝、永不自动重建（建面唯一触发者是
+  向导/重建按钮的一次点击）。引擎代码一旦改动，code 指纹变 ⇒ 全部面 stale ⇒ 需逐模板重建。
+- **前端**：`#/tools/tmplib`（清单/详情 QC/预算面板/批量重建/族谱）与对比页模板层
+  （`compare_template.js`：预测曲线叠加、Δμ 披露卡、域判定条、导出与复制图）。
+- 详细契约与条款号（F-/T-/Q-/CA- 系列）见外部设计文档 `02_功能设计方案.md`（不入库）；
+  验收测试 `tests/acceptance/test_tmplib_p0..p4.py`（全量 326 例）。
+
 ## 九、关键技术依赖
 
 | 组件 | 版本 | 用途 |
@@ -1809,6 +1882,7 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
 | astropy / dustmaps / dust_extinction | — | 银河系消光改正（CSFD + P92） |
 | VegasAfterglow[mcmc] | 2.0.6 | 余辉正向激波拟合（含 bilby/emcee/dynesty/corner，见 §8.14） |
 | astro-prospector / astro-sedpy / python-fsps（可选） | — | hostfit prospector 宿主 SED 拟合引擎（需 FSPS 数据目录，见 §8.20） |
+| ChromaShift（可选，editable 安装） | — | 模板库 × K 改正引擎（纯计算库；缺失时 tmplib 功能降级只读，见 §8.34） |
 | JavaScript ESM | — | 前端模块系统 |
 | Bootstrap | 5.x | UI 框架 |
 | Chart.js | 4.x | 图表 |
