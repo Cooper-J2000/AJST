@@ -997,8 +997,9 @@ def _post_build_entry(lib, entry, template_id, root, cs, qc):
     catalog_rows = None
     if entry.get('rows_sha256') and entry.get('extract'):
         live = _live_rows_hash(template_id, entry, root)
-        if live is not None:
-            catalog_rows = [] if live == entry['rows_sha256'] else ['rows-drifted']
+        if live is not None and live != entry['rows_sha256']:
+            catalog_rows = ['rows-drifted']   # CA-11：仅漂移落登记；一致保持 None
+            # （[] 是运行期探针注记（F-19 口径），持久化契约同建面路径：一致 = None）
     from chromashift import registry
     npz = root / 'data' / 'surfaces' / f'{template_id}.npz'
     eng_stale = registry.stale_reasons(npz, spec, root)
