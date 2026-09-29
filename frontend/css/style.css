@@ -27,6 +27,12 @@
   --warning-border: rgba(210, 153, 34, 0.5);
   --warning-bg: rgba(210, 153, 34, 0.12);
   --warning-hover: #ffd76a;
+  /* 事件日历格点色阶（GitHub-dark 绿系，0=无事件） */
+  --cal-0: #161b22;
+  --cal-1: #0e4429;
+  --cal-2: #006d32;
+  --cal-3: #26a641;
+  --cal-4: #39d353;
 }
 
 [data-bs-theme="light"] {
@@ -55,6 +61,12 @@
   --warning-border: rgba(154, 103, 0, 0.5);
   --warning-bg: rgba(154, 103, 0, 0.1);
   --warning-hover: #7d5700;
+  /* 事件日历格点色阶（GitHub 绿系，0=无事件） */
+  --cal-0: #ebedf0;
+  --cal-1: #9be9a8;
+  --cal-2: #40c463;
+  --cal-3: #30a14e;
+  --cal-4: #216e39;
 }
 
 body {
@@ -594,6 +606,93 @@ a.swiss-tag-subname:hover { text-decoration: underline; }
   border-top: 1px dashed var(--border-color);
 }
 .swiss-tag-subrow > span:last-child { text-align: right; color: var(--text-primary); font-weight: 600; }
+
+/* ─── 主页事件日历（GitHub 贡献日历风格；色阶变量 --cal-0..4 见主题变量区） ─── */
+.cal-card {
+  margin-top: 1.75rem;
+  padding: 1rem 1.1rem 0.8rem;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+.cal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 0.6rem;
+}
+.cal-pager { display: inline-flex; align-items: baseline; gap: 0.5rem; }
+.cal-year {
+  font-weight: 700;
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+  min-width: 3.2rem;
+  text-align: center;
+}
+.cal-pg {
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-primary);
+  border-radius: 6px;
+  width: 1.6rem;
+  height: 1.6rem;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+.cal-pg:hover:not(:disabled) { background: var(--bg-hover); }
+.cal-pg:disabled { opacity: 0.35; cursor: default; }
+.cal-scroll { overflow-x: auto; }
+.cal-grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0 6px;
+  width: max-content;
+}
+.cal-months {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 11px;  /* 与格点节距一致（9px + 2px 间距） */
+  gap: 0;
+  font-size: 0.62rem;
+  color: var(--text-secondary);
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.cal-months > span { overflow: visible; white-space: nowrap; }
+.cal-dows {
+  display: grid;
+  grid-template-rows: repeat(7, 9px);
+  gap: 2px;
+  font-size: 0.62rem;
+  color: var(--text-secondary);
+  line-height: 9px;
+}
+.cal-weeks { display: flex; gap: 2px; }
+.cal-week { display: grid; grid-template-rows: repeat(7, 9px); gap: 2px; }
+.cal-day {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--cal-0);
+  display: inline-block;
+}
+.cal-l1 { background: var(--cal-1); }
+.cal-l2 { background: var(--cal-2); }
+.cal-l3 { background: var(--cal-3); }
+.cal-l4 { background: var(--cal-4); }
+.cal-empty { background: transparent; }
+.cal-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.6rem;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+.cal-legend { display: inline-flex; align-items: center; gap: 3px; }
+.cal-legend .cal-day { margin: 0 1px; }
 
 /* ─── GCN 阅读工具 ─── */
 .gcn-view {

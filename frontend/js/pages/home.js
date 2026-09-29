@@ -1,7 +1,8 @@
 // === Home Page (Swiss International Typographic Style) ===
 import { app, showLoading, showError, navSeq, navStale } from './layout.js';
-import { api, getOverview, getFittingEngines, getTags } from '../api.js';
+import { api, getOverview, getFittingEngines, getTags, getTransientMeta } from '../api.js';
 import { esc } from '../utils.js';
+import { buildCalendarData, mountCalendar } from './home_calendar.js';
 
 // 各标签页入口（编号列表式导航）
 const ENTRIES = [
@@ -26,14 +27,16 @@ function statBlock(value, label, en) {
 export async function render() {
   showLoading();
   const seq = navSeq();  // 导航序号：请求期间切到其它路由则丢弃本次渲染
-  let s, tagStats = null, relCount = null, tagIndex = null;
+  let s, tagStats = null, relCount = null, tagIndex = null, hostfitCfg = null, meta = null;
   try {
     let relData = null;
-    [s, tagStats, relData, tagIndex] = await Promise.all([
+    [s, tagStats, relData, tagIndex, hostfitCfg, meta] = await Promise.all([
       getOverview(),
       api('GET', '/stats/tags').catch(() => null),  // 标签统计失败不阻塞主页
       api('GET', '/relations').catch(() => null),   // 关系统计数失败回退静态文案
       getTags().catch(() => null),                  // 标签说明索引失败静默降级（只显示名字）
+      api('GET', '/hostfit/config').catch(() => null),  // 宿主拟合引擎版本，失败只显示包名
+      getTransientMeta().catch(() => null),         // 事件日历（T0 逐日计数），失败则不显示卡片
     ]);
     if (relData && Array.isArray(relData.relations)) relCount = relData.relations.length;
   } catch (err) {
@@ -62,6 +65,16 @@ export async function render() {
   const fittingValue = engineVer
     ? `VegasAfterglow <span class="text-secondary" style="font-size:0.7rem;font-weight:400;text-transform:none">v${engineVer}</span>`
     : 'VegasAfterglow';
+
+  // 宿主星系拟合引擎（版本取自 /api/hostfit/config 的 versions 字段；取不到只显示包名）
+  const _hfVer = (hostfitCfg && hostfitCfg.versions) || {};
+  const _hfPart = (name) => {
+    const v = _hfVer[name] ? String(_hfVer[name]).replace(/[<>&"']/g, '') : null;
+    return v
+      ? `${name} <span class="text-secondary" style="font-size:0.7rem;font-weight:400;text-transform:none">v${v}</span>`
+      : name;
+  };
+  const hostfitValue = `${_hfPart('pcigale')} · ${_hfPart('prospector')}`;
 
   const entriesHtml = ENTRIES.map(e => `
     <a class="swiss-entry" href="${e.href}">
@@ -121,7 +134,8 @@ export async function render() {
       <div class="col-lg-7">
         <div class="swiss-kicker">AJST — Transient Lightcurve Catalog</div>
         <h1 class="swiss-title">暂现源<br>光变目录</h1>
-        <p class="swiss-lede">多波段暂现源光变数据库：汇聚外部文献目录的 GRB 等暂现源光变，支持全天统计、瞬时辐射统计关系分析与 VegasAfterglow 余辉拟合。</p>
+        <p class="swiss-lede">汇聚外部文献目录的多波段暂现源光变库及常用工具网页，支持全天统计、光变与SED分析、宿主星系与余辉拟合。</p>
+        <div id="eventCalendar" class="cal-card"></div>
       </div>
       <div class="col-lg-4 offset-lg-1">
         <div class="swiss-kicker swiss-kicker-block">Overview — 基础统计</div>
@@ -136,20 +150,23 @@ export async function render() {
 
     <hr class="swiss-rule">
 
-    <!-- 三个静态事实 -->
+    <!-- 静态事实（外部目录数暂无 API 统计，保持手工维护；统计关系数取自 /api/relations） -->
     <section class="row swiss-facts">
-      <!-- 三个静态事实（外部目录数暂无 API 统计，保持手工维护；统计关系数取自 /api/relations） -->
-      <div class="col-md-4 swiss-fact">
+      <div class="col-md-3 swiss-fact">
         <div class="swiss-fact-value">14</div>
         <div class="swiss-stat-label">外部文献目录<span class="swiss-stat-en">External Catalogs</span></div>
       </div>
-      <div class="col-md-4 swiss-fact">
+      <div class="col-md-3 swiss-fact">
         <div class="swiss-fact-value">${relCount != null ? relCount : '6'}</div>
         <div class="swiss-stat-label">统计关系<span class="swiss-stat-en">Correlations</span></div>
       </div>
-      <div class="col-md-4 swiss-fact">
+      <div class="col-md-3 swiss-fact">
         <div class="swiss-fact-value">${fittingValue}</div>
         <div class="swiss-stat-label">余辉拟合<span class="swiss-stat-en">Afterglow Fitting</span></div>
+      </div>
+      <div class="col-md-3 swiss-fact">
+        <div class="swiss-fact-value">${hostfitValue}</div>
+        <div class="swiss-stat-label">宿主星系拟合<span class="swiss-stat-en">Host Fitting</span></div>
       </div>
     </section>
     ${tagsHtml}
@@ -162,4 +179,14 @@ export async function render() {
       <nav class="swiss-entries">${entriesHtml}</nav>
     </section>
   </div>`;
+
+  // 事件日历：meta 不可用（接口失败/无记录）时整张卡片隐藏，不占位
+  const calEl = document.getElementById('eventCalendar');
+  if (calEl) {
+    if (meta && Array.isArray(meta.items) && meta.items.length) {
+      mountCalendar(calEl, buildCalendarData(meta.items));
+    } else {
+      calEl.style.display = 'none';
+    }
+  }
 }
