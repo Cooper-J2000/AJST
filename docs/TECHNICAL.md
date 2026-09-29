@@ -197,17 +197,20 @@ BibTeX 可能很长，前端不整段展示，仅提供「复制到剪贴板」�
 | `fitting_results` | 余辉拟合任务记录（v2.5 起启用，见 §8.14） |
 | `extinction_corrections` | 银河消光改正记录（空，等待扩展） |
 
-### 2.8 模板库存储（tmplibrary，第三存储）
+### 2.8 模板库存储（tmplibrary，随 AJST-Data 分发）
 
-除 PostgreSQL 与 `catadata/` 文件外，系统还有第三处存储 `backend/tmplibrary/`（模板库 ×
-K 改正功能，见 §8.34）：**派生数据**——模板 manifest（`templates/<id>.yaml`）、冻结行集
+除 PostgreSQL 与 `catadata/` 的源数据文件外，模板库 × K 改正功能（见 §8.34）的数据放在
+`catadata/tmplibrary/`：模板 manifest（`templates/<id>.yaml`）、冻结行集
 CSV（`data/raw/<id>.csv`）、引擎曲面与 QC（`data/surfaces/<id>.{npz,qc.json}`）、滤光片
-vendor 快照（`data/filters/`），全部可由引擎重建，**不进 git、不进 `catadata/`**（代码仓库
-`.gitignore` 已排除）。`library.json` 是它的目录与唯一自有文件：登记每个模板的来源
-（出厂/向导/出厂·同源）、行集与输入指纹（含第 7 项 `rows_sha256`）、域内率、μ 分解、
-三轴 stale 状态与族谱 history（build/rebuild/delete 逐条追加）。写盘只经三个端点
-（API-5 建面 / API-7 重建 / API-11 删除），读路径永不写；覆盖写是 tmp+rename 原子写并留
-`.bak`。库根可用环境变量 `AJST_TMPLIB_DIR` 覆盖。
+vendor 快照（`data/filters/`）。曲面/QC 虽可由引擎重建，但体量小且无本机绝对路径，
+**整个目录随 `catadata/`（AJST-Data）进 git 分发**——克隆数据仓库即可用，不必逐台重建；
+只有软删回收站 `data/.trash/` 与 `library.json.bak` 写入备份留在本地（`catadata/.gitignore`）。
+`library.json` 是库的目录：登记每个模板的来源（出厂/向导/出厂·同源）、行集与输入指纹
+（含第 7 项 `rows_sha256`）、域内率、μ 分解、三轴 stale 状态。写盘只经四个端点
+（API-5 建面 / API-7 重建 / API-11 删除 / API-14 元数据编辑），读路径永不写；覆盖写是 tmp+rename 原子写并留
+`.bak`。库根可用环境变量 `AJST_TMPLIB_DIR` 覆盖。API-14 改 manifest 走
+`tmplib/edit.py` 直接改写：校验通过后 tmp+rename 整体重写 yaml（重写前经引擎
+`TemplateSpec.from_yaml` 自校验）；历史版本由 AJST-Data 的 git 历史承担，不再单独备份。
 
 ---
 
@@ -461,12 +464,13 @@ time,time_err,time_unit,mjd,band,flux_density,flux_density_err,flux_density_unit
 | POST | `/api/sed/closure_plot` | α–β 诊断图（PNG） | 否 |
 | GET | `/api/sed/closure_relations` | 闭包关系系数表（Gao+2013 框架） | 否 |
 | POST | `/api/sed/bolometric` | 伪玻尔兹曼光变 `{transient_id, epochs?, ...}`（同步，max_epochs=30） | 否 |
-| GET | `/api/tmplib/config` | 模板库引擎自检（chromashift 版本/code 指纹/依赖下限/限额/能力面/vendor 对照；引擎不可用也恒 200 + `TL_ENGINE_UNAVAILABLE`） | 否 |
+| GET | `/api/tmplib/config` | 模板库引擎自检（chromashift 版本/code 指纹/依赖下限/限额/能力面/vendor 对照；引擎不可用也恒 200 + `TL_ENGINE_UNAVAILABLE`）；含 `bank_bands`（滤光片库全量清单：band/mode/trust/lambda_pivot_A，前端波段下拉用——预测目标波段不限于模板实测节点波段，凡静频落在面覆盖内的库波段都可算） | 否 |
 | GET | `/api/tmplib/guards` | 三轴 staleness 独立报告（引擎输入/库行指纹/滤光片 vendor；单轴故障不拖垮其余轴） | 否 |
-| GET | `/api/tmplib/templates` | 模板列表 + 状态（含三轴 stale 概要、域内率、族谱 history；不含 rows_sha256 现算与 μ） | 否 |
+| GET | `/api/tmplib/templates` | 模板列表 + 状态（含三轴 stale 概要、域内率；不含 rows_sha256 现算与 μ） | 否 |
 | GET | `/api/tmplib/templates/<id>` | 模板详情：manifest 摘要 + QC 全文（含波段准入）+ μ 分解 + 第 7 项指纹活库比对 | 否 |
 | POST | `/api/tmplib/templates` | 造模板向导建面（强制声明校验 → 取数 → CSV+manifest → 建面 → 实测域内率；id 冲突 409） | 登录 |
 | POST | `/api/tmplib/templates/<id>/rebuild` | 重建面（重算域内率与三轴 stale） | 登录 |
+| PATCH | `/api/tmplib/templates/<id>` | 元数据编辑（API-14，白名单：label/object_class/redshift/distance/validity/epoch_zero/citation_append；校验后整体重写 manifest yaml，历史版本由 AJST-Data git 承担，默认保存后立即重建） | 管理员 |
 | DELETE | `/api/tmplib/templates/<id>` | 软删（默认）/硬删（`hard=true` 需管理员密码二次校验）；出厂模板影子条目不可删 | 管理员 |
 | GET | `/api/tmplib/preview?transient_id=` | 造模板预检（行账/波段映射/系统与 gext 覆盖率/z 冲突/同事件多记录提示/域内预估） | 登录 |
 | POST | `/api/tmplib/predict` | 单条模板曲线预测（K 改正/绝对星等/域判定/时间原点建议；429 不排队） | 否 |
@@ -547,7 +551,7 @@ curl http://localhost:27101/api/auth/status
 | `#/new` | 新建事件 | 创建暂现源 |
 | `#/tools/gcn` | GCN 阅读工具 | 工具箱条目：GCN circular 浏览 + 源信息/测光录入直写数据库（见 §8.17） |
 | `#/tools/digitizer` | 抠图取数 | 工具箱条目：从图像提取数据点，直写 lightcurves 表（见 §8.18） |
-| `#/tools/tmplib` | 模板库与造模板 | 工具箱条目：模板清单（状态/域内率/族谱/批量重建）+ 详情 QC 与误差预算面板 + 造模板向导（4 步，见 §8.34） |
+| `#/tools/tmplib` | 模板库与造模板 | 工具箱条目：模板清单（状态/域内率/批量重建）+ 详情 QC 与误差预算面板 + 造模板向导（4 步，见 §8.34） |
 
 ### 6.2 单源详情页标签
 
@@ -688,7 +692,7 @@ drupal-settings `objectFlot.*.params.markings`），全部在前端实现，无�
 | `AJST_PCIGALE_FILTER_DIR` | pcigale 滤光片库目录覆盖项（网页端滤光片曲线注册与 `scripts/fetch_svo_filters.py` 共用） | 未设置时按已安装 pcigale 包路径 → which('pcigale') 推导 |
 | `SPS_HOME` | hostfit prospector 引擎所需的 FSPS 数据目录 | 未设置时回退读 `AJST_SPS_HOME`；prospector 为可选依赖（runner 惰性导入），未安装/未配置不影响服务启动，仅运行 prospector 任务时报错 |
 | `AJST_SPS_HOME` | `SPS_HOME` 未设置时的替代 FSPS 数据目录变量 | 无 |
-| `AJST_TMPLIB_DIR` | 模板库根目录覆盖项（模板库 × K 改正的派生数据，见 §2.8/§8.34） | `<项目根>/backend/tmplibrary` |
+| `AJST_TMPLIB_DIR` | 模板库根目录覆盖项（模板库 × K 改正的数据，见 §2.8/§8.34） | `<项目根>/catadata/tmplibrary` |
 
 安全相关默认行为（2026-09-12 起）：登录接口对同一 IP+账户 15 分钟内失败 5 次锁定（429）；
 `SESSION_COOKIE_SAMESITE='Lax'`；请求体上限 `MAX_CONTENT_LENGTH=32MB`（超限 413）；
@@ -1858,14 +1862,19 @@ Times/STIX/Noto Serif SC 回退链），轴线描边、网格弱化，覆盖详�
 - **后端形态**：in-process 唯一后端（`backend/tmplib/` 编排层 + `backend/routes/tmplib.py`
   13 个端点，见 §五 API 表）；引擎调用全程不持 DB session（先短 session 取数关闭，再进引擎）；
   预测/建面/预算共用一把非阻塞 `BoundedSemaphore(1)`，占用时立即 429 不排队。
-- **存储**：派生数据在 `backend/tmplibrary/`（§2.8），不进 git；写盘只经 API-5/7/11。
+- **存储**：数据在 `catadata/tmplibrary/`（§2.8），随 AJST-Data 进 git 分发（仅软删回收站
+  与 `library.json.bak` 留本地）；写盘只经 API-5/7/11/14。
+- **元数据编辑（API-14，管理员）**：白名单字段（label/object_class/redshift/distance/
+  validity/epoch_zero/citation_append）走 `tmplib/edit.py` 直接改写（校验 + 引擎自校验
+  后才落盘，历史版本由 AJST-Data 的 git 历史承担），默认保存后立即重建；行集口径（rowset/policy/bands/CSV）是冻结
+  数据，不可编辑，须删除后重新建面。列表/详情含 T0 口径列（epoch_zero 声明 + 对应源库内 t0）。
 - **性能实测**（九模板、n_times=300、2026-09-29 本机）：误差预算 API-10 的 Monte-Carlo
   n_draws=200 每模板 13.7–18.1 s、n_draws=32 每模板 2.4–3.1 s —— 故 API-10 默认
   n_draws=32（上限 200，响应 provenance 显形）；单条预测约 0.05–0.5 s，单源建面 1.1–2.8 s。
 - **守卫**：三轴 staleness（引擎输入六指纹 / 第 7 项库行指纹 / 滤光片 vendor sha）+
   `code_sha256` 钉引擎代码；读路径遇 stale 只拒绝、永不自动重建（建面唯一触发者是
   向导/重建按钮的一次点击）。引擎代码一旦改动，code 指纹变 ⇒ 全部面 stale ⇒ 需逐模板重建。
-- **前端**：`#/tools/tmplib`（清单/详情 QC/预算面板/批量重建/族谱）与对比页模板层
+- **前端**：`#/tools/tmplib`（清单/详情 QC/预算面板/批量重建）与对比页模板层
   （`compare_template.js`：预测曲线叠加、Δμ 披露卡、域判定条、导出与复制图）。
 - 详细契约与条款号（F-/T-/Q-/CA- 系列）见外部设计文档 `02_功能设计方案.md`（不入库）；
   验收测试 `tests/acceptance/test_tmplib_p0..p4.py`（全量 326 例）。
