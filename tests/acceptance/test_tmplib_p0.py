@@ -172,8 +172,8 @@ def test_library_json_schema_and_state():  # ①  —— §4.1 schema 契约
 
 def test_library_write_atomic_and_bak_recoverable(tmp_path):  # ①  —— T-25
     root = tmp_path / 'lib'
-    v1 = {'schema': paths.SCHEMA_LIB, 'templates': {'a': {'v': 1}}, 'history': []}
-    v2 = {'schema': paths.SCHEMA_LIB, 'templates': {'a': {'v': 2}}, 'history': []}
+    v1 = {'schema': paths.SCHEMA_LIB, 'templates': {'a': {'v': 1}}}
+    v2 = {'schema': paths.SCHEMA_LIB, 'templates': {'a': {'v': 2}}}
     paths.write_library(v1, root)
     paths.write_library(v2, root)
     # 成功后无 tmp 残留；.bak 是上一代整份
@@ -223,6 +223,9 @@ def test_config_contract(client):
     assert caps['build'] is True and caps['library_admin'] is True
     assert caps['compare'] is True
     assert '/api/tmplib/compare' in caps['endpoints']
+    bank = body['bank_bands']                      # 波段下拉第二组的数据源
+    assert bank and any(b['band'] == 'B' for b in bank)
+    assert all('lambda_pivot_A' in b and 'mode' in b for b in bank)
 
 
 def test_config_engine_unavailable_still_200(client, monkeypatch):

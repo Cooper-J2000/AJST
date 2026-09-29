@@ -277,7 +277,7 @@ def test_export_t41_vendor_drift_not_blocking(client, tmp_path, monkeypatch):
         engine.reset_caches()
 
 
-# ── T-46 复核 + API-2 族谱 + 能力面 ───────────────────────────────────────
+# ── T-46 复核 + API-2 清单 + 能力面 ───────────────────────────────────────
 
 def test_t46_mu_delta_threshold_is_engine_owned(client):
     """T-46：CA-13 阈值不是自造的 —— 必须等于引擎 build 模块的
@@ -291,10 +291,11 @@ def test_t46_mu_delta_threshold_is_engine_owned(client):
         float(_MAX_COLOUR_TERM_MAG))
 
 
-def test_templates_history_and_capabilities(client):
+def test_templates_list_and_capabilities(client):
     r = client.get('/api/tmplib/templates')
     body = r.get_json()
-    assert isinstance(body.get('history'), list)      # 族谱（S4 清单页折叠区）
+    assert 'history' not in body                       # 族谱已移除
+    assert isinstance(body.get('templates'), list)
     caps = client.get('/api/tmplib/config').get_json()['capabilities']
     assert caps['export'] is True and caps['budget'] is True
     assert '/api/tmplib/export.csv' in caps['endpoints']
@@ -322,7 +323,7 @@ def test_p4_frontend_static():
     cmpjs = _read('pages', 'compare.js')
     assert 'copyCompareChart' in cmpjs and 'ClipboardItem' in cmpjs
     page = _read('pages', 'tmplib.js')
-    for fid in ('tlBatchRebuild', 'tlHistory', 'tlBudgetRun', 'tlBudgetDistOnly',
+    for fid in ('tlBatchRebuild', 'tlBudgetRun', 'tlBudgetDistOnly',
                 'gain_from_unfold', '_doBatchRebuild'):
         assert fid in page
     # 预算面板必须展示 F-36 的灰显语义与 F-39 的 warnings

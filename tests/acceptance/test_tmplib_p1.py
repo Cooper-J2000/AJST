@@ -26,7 +26,7 @@ _BACKEND = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
 if _BACKEND not in sys.path:
     sys.path.insert(0, _BACKEND)
 
-_ROOT = os.path.join(_BACKEND, 'tmplibrary')
+_ROOT = os.path.join(os.path.dirname(_BACKEND), 'catadata', 'tmplibrary')
 _NO_ABS = re.compile(r'/home/|/Users/|/root/')   # T-30：响应不得泄漏绝对路径
 
 #: golden 锚点（引擎直调逐位一致；改动引擎版本/库文件时本测试必须先红）
@@ -268,9 +268,32 @@ def test_predict_low_z_requires_distance(client):  # T-05 / F-24 / E-11
                        'mu': 31.0, 'n_times': 10})
     assert r.status_code == 200
     assert r.get_json()['curve']['distance_modulus'] == pytest.approx(31.0)
+    # allow_low_z=true 显式放行 ⇒ 200，距离模数 = 引擎宇宙学在 z 处的 distmod
+    # （放行标志必须随距离对象进引擎，否则宿主侧校验是死开关）
+    r = _post(client, {'template_id': 'sn2006aj', 'band': 'B', 'z': 0.01,
+                       'allow_low_z': True, 'n_times': 10})
+    assert r.status_code == 200
+    from astropy.cosmology import Planck18
+    assert r.get_json()['curve']['distance_modulus'] == \
+        pytest.approx(Planck18.distmod(0.01).value, abs=1e-6)
     # 模板自身 z 且声明 cosmological 时同样要声明（z=0.0331 不触发，对照组）
     r = _post(client, {'template_id': 'sn2006aj', 'band': 'B', 'n_times': 10})
     assert r.status_code == 200
+
+
+def test_predict_non_node_band(client):  # 目标波段不限于实测节点
+    """sn2006aj 从未在 g 观测，但 g 的静止频率落在面覆盖内 ⇒ 可算（面上插值），
+    mode=band（g 有实测透过率曲线）、ref=ok。超域波段仍整次拒绝（对照）。"""
+    r = _post(client, {'template_id': 'sn2006aj', 'band': 'g', 'z': 0.05,
+                       'times_rest_days': [6, 9]})
+    assert r.status_code == 200
+    c = r.get_json()['curve']
+    assert c['mode'] == 'band'
+    assert c['domain']['absolute_mag_reference'] == 'ok'
+    r = _post(client, {'template_id': 'sn1998bw', 'band': 'g', 'z': 0.3,
+                       'times_rest_days': [6, 9]})
+    assert r.status_code == 409
+    assert r.get_json()['code'] == 'TL_OUT_OF_DOMAIN'
 
 
 def test_predict_quota_refusal(client):  # T-11 / Q-5

@@ -25,7 +25,7 @@ _BACKEND = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
 if _BACKEND not in sys.path:
     sys.path.insert(0, _BACKEND)
 
-_ROOT = os.path.join(_BACKEND, 'tmplibrary')
+_ROOT = os.path.join(os.path.dirname(_BACKEND), 'catadata', 'tmplibrary')
 _FRONTEND = os.path.join(os.path.dirname(_BACKEND), 'frontend')
 
 from tmplib import extract, guard, indomain, paths  # noqa: E402
@@ -334,7 +334,7 @@ def test_build_products_and_library_entry(built):
     assert e['extract']['rowset'] == 'raw'
     assert len(e['rows_sha256']) == 64 and len(e['csv_sha256']) == 64
     assert e['in_domain']['total'] == idom['total']
-    assert lib['history'] and lib['history'][-1]['action'] == 'build'
+    assert 'history' not in lib                        # 族谱已移除
     # manifest 落盘即过引擎自校验（write_manifest 内含），此处复核关键映射
     import yaml
     m = yaml.safe_load((root / 'templates' / f'{tid}.yaml').read_text())
@@ -566,7 +566,6 @@ def test_delete_semantics(built, tmp_env, client, admin_user):
     assert (trash / f'{tid}.yaml').is_file()
     lib = json.loads(libp.read_text())
     assert lib['templates'][tid]['deleted']['mode'] == 'soft'
-    assert lib['history'][-1]['action'] == 'delete'
     # 已软删再软删 ⇒ 409
     r = client.delete(url)
     assert r.status_code == 409
