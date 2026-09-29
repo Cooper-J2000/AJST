@@ -10,10 +10,17 @@ astropy>=6.0
 
 # 银河系消光改正（CSFD 尘埃图 + P92 模型）
 dustmaps>=1.0
-dust_extinction>=1.4
+dust_extinction>=1.7
 
 # hostfit 路由启动时加载（pcigale.ini.spec 按开关裁剪），为硬依赖
 configobj>=5.0
+
+# ── 可选：模板库 × K 改正对比（多源对比页模板层 + #/tools/tmplib）──
+# 引擎 ChromaShift 是纯计算库，不进 pip 依赖，以 editable 安装：
+#   pip install -e <ChromaShift 仓库路径>
+# 启用该功能需要 Python >= 3.12 及以下下限（引擎声明）：
+#   numpy>=2.4  scipy>=1.17  astropy>=7.2  dust_extinction>=1.7  pandas>=2.3  PyYAML>=6.0
+# 未安装引擎时 tmplib 页面降级为只读说明，其余功能不受影响。
 
 # ── 可选：余辉拟合功能（体积较大，不需要拟合可不装）──
 # VegasAfterglow[mcmc]>=2.0
