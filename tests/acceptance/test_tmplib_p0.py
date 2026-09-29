@@ -157,7 +157,10 @@ def test_library_json_schema_and_state():  # ①  —— §4.1 schema 契约
         assert v['state'] == 'fresh', t                   # state 来自实际 stale 检查
         assert v['stale_because'] == {'engine_inputs': [],
                                       'catalog_rows': None, 'filter_vendor': None}
-        assert v['mu'] is None                          # P1 的 Δμ 未登记（shipped 条目）
+        mu = v['mu']                                    # Δμ 块（§4.2）：shipped 未登记为 None；
+        if mu is not None:                              # 建/重建后登记为结构化对象（μ 重算是
+            assert {'engine', 'ok'} <= set(mu), t       # _post_build_entry 的既定职责）
+            assert isinstance(mu.get('ok'), bool), t
         idom = v['in_domain']                           # P2 迁移已实测写入（F-45）
         assert idom['total'] > 0, t
         assert 0 <= idom['answered'] <= idom['total']
