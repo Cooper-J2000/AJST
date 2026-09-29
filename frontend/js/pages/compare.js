@@ -1,12 +1,13 @@
 // === Compare Page (multi-source overlay) ===
 import { app, showLoading, showError, navSeq, navStale } from './layout.js';
-import { getTransientMeta, getLightcurves, getFilters } from '../api.js';
+import { getTransientMeta, getLightcurves, getFilters, compareTmplib, showToast } from '../api.js';
 import { dragRectPlugin, attachDragZoom } from '../dragzoom.js';
 import { chartColors, academicFonts } from '../theme.js';
 import { ensureFilterCache, mJyToMagAB, pointToMJy } from '../bands.js';
 import { esc, minOf, maxOf } from '../utils.js';
 import { createYErrBarPlugin } from '../chart_plugins.js';
 import { t0ToMJD, parseRefEpoch } from './detail_lcchart.js';
+import { tplMuCardHTML, bindTplPanel, tplDatasets, tplHasCustomRef, tplRenderSidecars } from './compare_template.js';
 
 // ─── 工具函数 ───
 function sciFmt(v) {
@@ -29,6 +30,133 @@ let transientMeta = {};    // id → { z, dm }（红移 / 距离模数）
 let lastAllLC = null;      // 最近一次拉取的光变数据（与 selectedTransients 对齐）
 let bandSel = {};          // id → 已勾选波段数组（默认全选）
 let allTransients = [];    // 全部事件（供名称/别名筛选）
+let lastKcorr = null;      // 最近一次 API-8 响应 {key, curves, error}（kcorr 模式专用，T-29 不触旧路径）
+let _kcorrReqId = 0;
+
+// TXT-9（D-7：旧 absmag 保留并加标注）
+const TXT_ABSMAG = '此模式不含 K 改正：M = m_AB − μ(z)。不同源在不同静止波长上比较 —— 与「K 改正绝对星等」不可混用同一句话引用。';
+
+// ─── kcorr 模式（S3）：API-8 取数与数据集构建。只在新模式下生效（F-23 互斥切换） ───
+async function _fetchKcorr(key) {
+  const myReq = ++_kcorrReqId;
+  try {
+    const resp = await compareTmplib({
+      sources: selectedTransients.map(id => ({ transient_id: id })),
+    });
+    if (myReq !== _kcorrReqId) return;          // 已有新请求，丢弃旧结果
+    lastKcorr = { key, curves: resp.curves || [] };
+  } catch (e) {
+    if (myReq !== _kcorrReqId) return;
+    lastKcorr = { key, curves: [], error: e.message };
+  }
+  if (typeof window.renderCompareChart === 'function') window.renderCompareChart();
+}
+
+// 同源同色；measured 实心 / 上限倒三角 / K 改正空心（IA-8 三种线型不混，W-25）
+function _kcorrDatasets(restFrame, colors, bandStyles) {
+  const out = [];
+  const curves = (lastKcorr && lastKcorr.curves) || [];
+  const srcIdx = {};
+  selectedTransients.forEach((id, i) => { srcIdx[id] = i; });
+  for (const c of curves) {
+    if (c.state === 'error') continue;          // ✕ 在标注行列出，不画（F-23/W-24）
+    const color = colors[(srcIdx[c.transient_id] ?? 0) % colors.length];
+    const meta = transientMeta[c.transient_id] || {};
+    const zfac = (restFrame && meta.z != null && meta.z > -1) ? (1 + meta.z) : 1;
+    const t0mjd = t0ToMJD(meta.t0);
+    const refMJD = cmpRefMJD[c.transient_id] ?? null;
+    const xOf = (t) => {                        // 与旧分支同语义：默认基准=源 T0
+      if (t == null) return null;
+      if (refMJD != null) {
+        if (t0mjd == null) return null;
+        return (t - (refMJD - t0mjd) * 86400) / zfac;
+      }
+      return t / zfac;
+    };
+    const ptsOf = (arr, yOf, errOf) => arr.map(p => {
+      const x = xOf(p.t_obs_s), y = yOf(p);
+      if (x == null || y == null) return null;
+      return { x, y, err: errOf ? errOf(p) : null, tObs: p.t_obs_s };
+    }).filter(d => d && isFinite(d.x) && isFinite(d.y));
+    const byBand = (arr) => {
+      const g = {};
+      arr.forEach(p => { (g[p.band] = g[p.band] || []).push(p); });
+      return g;
+    };
+    if (c.kind === 'measured') {
+      const det = byBand(c.points.detections);
+      Object.keys(det).sort().forEach((band, bi) => {
+        const pts = ptsOf(det[band], p => p.m_AB, p => p.mag_err);
+        if (pts.length) out.push({
+          label: `${c.transient_id} · ${band}`, data: pts,
+          backgroundColor: color, borderColor: color,
+          showLine: false, pointRadius: 3, pointHoverRadius: 5,
+          pointStyle: bandStyles[bi % bandStyles.length], clip: true,
+        });
+      });
+      const ulPts = ptsOf(c.points.upper_limits, p => p.m_AB, null);
+      if (ulPts.length) out.push({
+        label: `${c.transient_id} · 上限`, data: ulPts,
+        backgroundColor: color, borderColor: color,
+        showLine: false, pointRadius: 5, pointHoverRadius: 5,
+        pointStyle: 'triangle', pointRotation: 180, clip: true,
+        _isUpperLimit: true, hidden: !_cmpShowUL,
+      });
+    } else if (c.kind === 'kcorrected-measured') {
+      const det = byBand(c.points.detections);
+      Object.keys(det).sort().forEach((band, bi) => {
+        const pts = ptsOf(det[band], p => p.M_meas, p => p.m_AB_err);
+        if (pts.length) out.push({               // IA-8：空心点（同色描边、透明填充）
+          label: `${c.transient_id} · ${band} K改正`, data: pts,
+          backgroundColor: 'transparent', borderColor: color, borderWidth: 1.5,
+          showLine: false, pointRadius: 4, pointHoverRadius: 6,
+          pointStyle: bandStyles[bi % bandStyles.length], clip: true,
+        });
+      });
+    }
+  }
+  return out;
+}
+
+// F-06' 计数上报 + ✕ 列表（W-24：无模板源逐条标 ✕）
+function _kcorrNoteHTML() {
+  const curves = (lastKcorr && lastKcorr.curves) || [];
+  const lines = [];
+  for (const c of curves) {
+    if (c.state === 'error') {
+      lines.push(`<div class="text-danger">✕ <b>${esc(c.transient_id || c.template_id || '?')}</b>：${esc(c.error.message)}</div>`);
+    } else if (c.kind === 'kcorrected-measured') {
+      const n = c.counts;
+      lines.push(`<div>▸ <b>${esc(c.transient_id)}</b>（模板 <code>${esc(c.template_id)}</code>，μ 取引擎值 ${c.distance_modulus_engine}）：K 改正 ${n.detections} 点；`
+        + `已剔除 discard ${n.discard} 点、上限单列 ${n.upper_limits} 点、出 t_valid 窗 ${n.clipped} 点、答不上 ${n.failed} 点</div>`);
+    } else if (c.kind === 'measured' && !curves.some(x => x.kind === 'kcorrected-measured' && x.transient_id === c.transient_id && !x.state)) {
+      const n = c.counts;
+      lines.push(`<div class="text-secondary">▸ <b>${esc(c.transient_id)}</b>：实测 ${n.detections} 点；已剔除 discard ${n.discard} 点、上限单列 ${n.upper_limits} 点</div>`);
+    }
+  }
+  if (lastKcorr && lastKcorr.error) lines.push(`<div class="text-danger">K 改正取数失败：${esc(lastKcorr.error)}</div>`);
+  return lines.join('');
+}
+
+// POS-9/W-28：kcorr 图含引擎 μ ⇒ Δμ 卡必须出现；模板行已驱动时（同 μ）不重复填
+function _kcorrMuCard() {
+  const card = document.getElementById('tplMuCard');
+  if (!card || card.style.display !== 'none') return;   // 模板行的 Δμ 卡已在
+  const mus = ((lastKcorr && lastKcorr.curves) || [])
+    .filter(c => c.kind === 'kcorrected-measured' && !c.state && c.mu && c.mu.ok);
+  if (!mus.length) return;
+  const body = document.getElementById('tplMuBody');
+  const note = document.getElementById('tplMuNote');
+  if (!body) return;
+  body.innerHTML = mus.map(c => {
+    const mu = c.mu;
+    const big = mu.alert === 'CA-13';
+    return `<div class="${big ? 'text-danger' : ''}">▸ <b>${esc(c.template_id)}</b> Δμ = ${mu.delta > 0 ? '+' : ''}${mu.delta} mag${big ? ' ⚠' : ''}<br>
+      <span class="text-secondary">引擎 ${mu.engine} / 库 ${mu.catalog}（${esc(mu.counterpart_id || '?')}）；成因：${esc(mu.cause)}</span></div>`;
+  }).join('');
+  card.style.display = '';
+  if (note) note.style.display = '';          // TXT-18 只在这里出现一次
+}
 
 // ─── 事件列表行 HTML（首绘与筛选重绘共用；勾选状态以 selectedTransients 为准） ───
 function compareRowsHTML(items) {
@@ -90,6 +218,8 @@ export async function render() {
             <div class="card-body py-2" id="bandSelectBody" style="max-height:300px;overflow-y:auto"></div>
             <div class="card-footer py-1"><small class="text-secondary">无红移的源不参与静止系改正；绝对星等模式下仅显示有红移的源</small></div>
           </div>
+          <!-- 模板口径卡（Δμ 披露，U-08；有模板曲线时由 compare_template.js 填充） -->
+          <div class="card mt-3" id="tplMuCard" style="display:none"></div>
         </div>
         <div class="col-md-8">
           <div class="card">
@@ -101,9 +231,10 @@ export async function render() {
                   <option value="linear">X: 线性</option>
                 </select>
                 <select class="form-select form-select-sm" style="width:auto" id="cmpYMode" onchange="renderCompareChart()"
-                        title="绝对星等按各源红移计算距离模数（无红移的源不显示）">
+                        title="绝对星等按各源红移计算距离模数（无红移的源不显示）；K 改正绝对星等走模板库引擎（无模板的源逐条标 ✕）">
                   <option value="flux" selected>Y: 流量密度</option>
                   <option value="absmag">Y: 绝对星等</option>
+                  <option value="kcorr">Y: K 改正绝对星等</option>
                 </select>
                 <div class="form-check form-check-inline mb-0" title="是否绘制数据点的星等/流量密度误差棒">
                   <input class="form-check-input" type="checkbox" id="cmpShowErr" checked onchange="cmpErrToggle(this.checked)">
@@ -121,6 +252,11 @@ export async function render() {
                 <span class="text-secondary small" title="在图上按住左键拖出矩形框可放大该区域，左上角按钮恢复默认"><i class="bi bi-info-circle"></i> 可框选缩放</span>
               </div>
             </div>
+            <!-- 模板层（U-02..U-07）与域判定条（IA-10）：compare_template.js 填充；无模板行时零视觉噪音 -->
+            <div id="tplPanel"></div>
+            <div id="tplDomainBar" class="alert alert-warning small mx-3 mt-2 mb-0 py-1" style="display:none"></div>
+            <!-- Y 模式标注行：absmag ⇒ TXT-9；kcorr ⇒ F-06' 剔除计数 + ✕ 列表；flux ⇒ 隐藏 -->
+            <div id="cmpYModeNote" class="small mx-3 mt-2 mb-0 py-1" style="display:none"></div>
             <div class="card-body"><div class="chart-container" style="height:auto;aspect-ratio:3/2;min-height:0;overflow:hidden"><canvas id="compareChart"></canvas></div></div>
           </div>
         </div>
@@ -168,6 +304,7 @@ export async function render() {
         );
         if (myReq !== _cmpReqId) return; // 已有新请求，丢弃旧结果
         lastAllLC = allLC;
+        lastKcorr = null;    // 源数据重拉 ⇒ kcorr 缓存一并作废（下次切 kcorr 重取）
         buildBandSelect(allLC);
         renderCompareChart();
       } catch (err) { alert(`加载数据失败: ${err.message}`); }
@@ -251,6 +388,17 @@ export async function render() {
 
     window.renderCompareChart = renderCompareChart;
 
+    // 模板层挂载（U-02）：面板骨架 + Δμ 卡占位；行状态由 compare_template.js 模块级持有，
+    // 页面重渲染（如换路由回来）后行会按状态重画并触发取数刷新
+    document.getElementById('tplMuCard').innerHTML = tplMuCardHTML();
+    bindTplPanel({
+      isStale: () => navStale(seq),
+      onChange: () => {
+        if (typeof window.renderCompareChart === 'function') window.renderCompareChart();
+      },
+      getExportSources: () => selectedTransients.slice(),   // API-9 导出的源列表
+    });
+
     window.cmpULToggle = (on) => {   // 上限点开关：只切换上限点数据集可见性，无动画重绘即可
       _cmpShowUL = on;
       if (!compareChart) return;
@@ -268,6 +416,61 @@ export async function render() {
     window.resetCmpZoom = () => {
       cmpAxisRange = { xmin: null, xmax: null, ymin: null, ymax: null };
       if (compareChart) compareChart.update();
+    };
+
+    // 复制对比图到剪贴板（F-40：沿用 detail_lcchart.js:901 copyLCChart 的离屏合成
+    // 方式 —— 临时开图例/标题同步重绘，离屏 canvas 铺底色后写剪贴板，失败回退下载 PNG）
+    window.copyCompareChart = async () => {
+      const chart = cmpChartHolder.chart;
+      if (!chart) { showToast('对比图尚未生成，请先绘制', 'warning'); return; }
+      const cc = chartColors();
+      const plg = chart.options.plugins;
+      const legend = plg.legend, title = plg.title || (plg.title = {});
+      const prev = { lg: legend.display, ti: title.display, text: title.text };
+      legend.display = true;
+      legend.position = 'top';
+      title.display = true;
+      title.text = '多源光变对比';
+      title.color = cc.legend;
+      title.font = academicFonts().title;
+      chart.update('none');
+      const restore = () => {
+        legend.display = prev.lg;
+        title.display = prev.ti;
+        title.text = prev.text;
+        chart.update('none');
+      };
+      try {
+        const src = chart.canvas;
+        const off = document.createElement('canvas');
+        off.width = src.width;
+        off.height = src.height;
+        const octx = off.getContext('2d');
+        octx.fillStyle = cc.canvasBg;
+        octx.fillRect(0, 0, off.width, off.height);
+        octx.drawImage(src, 0, 0);
+        const blob = await new Promise(r => off.toBlob(r, 'image/png'));
+        if (!blob) throw new Error('图像导出失败');
+        if (navigator.clipboard && window.isSecureContext && typeof ClipboardItem !== 'undefined') {
+          try {
+            await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+            showToast('对比图已复制到剪贴板', 'success');
+            return;
+          } catch { /* 剪贴板写图失败，回退下载 */ }
+        }
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'compare_lc.png';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        showToast('当前环境不支持剪贴板写图，已改为下载 PNG', 'warning');
+      } catch (err) {
+        showToast(`复制失败: ${err.message}`, 'danger');
+      } finally {
+        restore();
+      }
     };
 
   } catch (err) {
@@ -313,18 +516,30 @@ function renderCompareChart() {
 
   const xType = document.getElementById('cmpXScale')?.value || 'logarithmic';
   const restFrame = document.getElementById('cmpRestFrame')?.checked || false;
-  // 绝对星等模式：y = m_AB − μ(z)，仅显示有红移的源；线性反向轴
-  const absMag = document.getElementById('cmpYMode')?.value === 'absmag';
+  // Y 三态：flux(默认) / absmag(旧，μ-only) / kcorr(S3，API-8)；F-23 互斥切换，切换只重绘（U-01）
+  const yMode = document.getElementById('cmpYMode')?.value || 'flux';
+  const absMag = yMode === 'absmag';   // 绝对星等模式：y = m_AB − μ(z)，仅显示有红移的源；线性反向轴
+  const kcorr = yMode === 'kcorr';
+  const magLike = absMag || kcorr;     // 线性反向星等轴（旧 absmag 行为逐位不变，T-29）
   const cc = chartColors();
   const fonts = academicFonts();
   const colors = cc.compare;
   const bandStyles = ['circle', 'rectRot', 'triangle', 'rect', 'star', 'crossRot', 'cross', 'dash'];
 
-  // 任一源设了自定义基准时，横轴可出现负值（基准前的点）
-  const anyRef = Object.values(cmpRefMJD).some(v => v != null);
+  // kcorr：选择集变化才重新取数（key 相同 = 只重绘，U-01）
+  if (kcorr) {
+    const key = JSON.stringify(selectedTransients.slice().sort());
+    if (!lastKcorr || lastKcorr.key !== key) _fetchKcorr(key);
+  }
+
+  // 任一源设了自定义基准时，横轴可出现负值（基准前的点）；模板曲线的自定义基准同样
+  const anyRef = Object.values(cmpRefMJD).some(v => v != null) || tplHasCustomRef();
 
   const datasets = [];
-  selectedTransients.forEach((id, idx) => {
+  if (kcorr) {
+    // S3 数据来自 API-8（服务端剔 discard/上限单列/Vega→AB，ST-9）；旧分支不执行
+    datasets.push(..._kcorrDatasets(restFrame, colors, bandStyles));
+  } else selectedTransients.forEach((id, idx) => {
     const color = colors[idx % colors.length];
     const meta = transientMeta[id] || {};
     if (absMag && meta.dm == null) return; // 无红移的源无法计算距离模数
@@ -386,6 +601,27 @@ function renderCompareChart() {
     });
   });
 
+  // 模板曲线叠绘（U-04，虚线 ⌁，画在散点下层）；无模板行时返回空数组，既有两模式行为不变（T-29）
+  datasets.push(...tplDatasets({ absMag: magLike, restFrame }));
+
+  // Y 模式标注行：TXT-9（absmag）/ F-06' 计数 + ✕ 列表（kcorr）
+  const noteEl = document.getElementById('cmpYModeNote');
+  if (noteEl) {
+    if (absMag) {
+      noteEl.style.display = '';
+      noteEl.className = 'small mx-3 mt-2 mb-0 py-1 alert alert-secondary';
+      noteEl.textContent = TXT_ABSMAG;
+    } else if (kcorr) {
+      noteEl.style.display = '';
+      noteEl.className = 'small mx-3 mt-2 mb-0 py-1 alert alert-secondary';
+      noteEl.innerHTML = (lastKcorr && lastKcorr.key === JSON.stringify(selectedTransients.slice().sort()))
+        ? (_kcorrNoteHTML() || '<span class="text-secondary">K 改正数据加载中…</span>')
+        : '<span class="text-secondary">K 改正数据加载中…</span>';
+    } else {
+      noteEl.style.display = 'none';
+    }
+  }
+
   if (datasets.length === 0) return;
 
   // ── 范围计算函数 ──
@@ -397,8 +633,8 @@ function renderCompareChart() {
       ds.data.forEach(p => {
         // 自定义基准下线性轴的 x 可为负（基准前的点）；log 轴仍只取正值
         if (isFinite(p.x) && (p.x > 0 || (anyRef && xType !== 'logarithmic'))) allX.push(p.x);
-        // 绝对星等模式 y 可为负（线性轴）；流量模式仅取正值（log 轴）
-        if (absMag ? isFinite(p.y) : (isFinite(p.y) && p.y > 0)) allY.push(p.y);
+        // 绝对星等/K 改正模式 y 可为负（线性轴）；流量模式仅取正值（log 轴）
+        if (magLike ? isFinite(p.y) : (isFinite(p.y) && p.y > 0)) allY.push(p.y);
       });
     });
     if (mode === 'x') {
@@ -417,9 +653,9 @@ function renderCompareChart() {
       if (cmpAxisRange.xmax != null) r.max = cmpAxisRange.xmax;
       return r;
     } else {
-      if (allY.length === 0) return absMag ? { min: -30, max: -10 } : { min: 1e-13, max: 1 };
+      if (allY.length === 0) return magLike ? { min: -30, max: -10 } : { min: 1e-13, max: 1 };
       const mn = minOf(allY), mx = maxOf(allY);
-      const r = absMag
+      const r = magLike
         ? { min: mn - Math.max(0.3, (mx - mn) * 0.08), max: mx + Math.max(0.3, (mx - mn) * 0.08) }
         : { min: Math.max(1e-13, mn * 0.5), max: mx * 2 };
       if (cmpAxisRange.ymin != null) r.min = cmpAxisRange.ymin;
@@ -446,7 +682,7 @@ function renderCompareChart() {
               const tTxt = (restFrame && raw.tObs != null && raw.tObs !== p.x)
                 ? `t_rest=${sciFmt(p.x)}s (t_obs=${sciFmt(raw.tObs)}s)`
                 : `t=${sciFmt(p.x)}s`;
-              const yTxt = absMag
+              const yTxt = magLike
                 ? `M=${p.y.toFixed(2)}${raw.err != null ? `±${raw.err.toFixed(2)}` : ''}`
                 : `${sciFmt(p.y)}${raw.err != null ? `±${sciFmt(raw.err)}` : ''} mJy (AB=${mJyToMagAB(p.y).toFixed(2)})${raw.clipped ? ' [原始值≤0，已截断]' : ''}`;
               return `${ctx.dataset.label}: ${tTxt}, ${yTxt}`;
@@ -472,22 +708,22 @@ function renderCompareChart() {
             scale.min = r.min; scale.max = r.max;
           },
         },
-        // 左纵轴：流量密度 (mJy, log)；绝对星等模式为线性反向星等轴
+        // 左纵轴：流量密度 (mJy, log)；绝对星等/K 改正模式为线性反向星等轴
         y: {
-          type: absMag ? 'linear' : 'logarithmic',
-          reverse: absMag,
-          title: { display: true, text: absMag ? '绝对星等 M (AB)' : '流量密度 (mJy)', color: cc.tick, font: fonts.title },
+          type: magLike ? 'linear' : 'logarithmic',
+          reverse: magLike,
+          title: { display: true, text: kcorr ? 'K 改正绝对星等 M (AB)' : (absMag ? '绝对星等 M (AB)' : '流量密度 (mJy)'), color: cc.tick, font: fonts.title },
           grid: { color: cc.gridSoft },
           border: { color: cc.tick },
-          ticks: { color: cc.tick, font: fonts.tick, callback: v => absMag ? Number(v).toFixed(1) : sciFmt(v) },
+          ticks: { color: cc.tick, font: fonts.tick, callback: v => magLike ? Number(v).toFixed(1) : sciFmt(v) },
           afterDataLimits(scale) {
             const r = computeAxisRange(scale.chart, 'y');
             scale.min = r.min; scale.max = r.max;
           },
         },
-        // 右纵轴：AB 星等，与左轴 mJy 物理对应（m = 16.4 − 2.5·log10(F_mJy)）；绝对星等模式下隐藏
+        // 右纵轴：AB 星等，与左轴 mJy 物理对应（m = 16.4 − 2.5·log10(F_mJy)）；星等模式下隐藏
         y2: {
-          display: !absMag,
+          display: !magLike,
           type: 'logarithmic',
           position: 'right',
           title: { display: true, text: '星等 (AB)', color: cc.tick, font: fonts.title },
@@ -503,8 +739,10 @@ function renderCompareChart() {
     },
   });
   cmpChartHolder.chart = compareChart;
+  tplRenderSidecars();   // Δμ 卡与域判定条随图刷新（U-08 / IA-10）
+  if (kcorr) _kcorrMuCard();   // 无模板行时 K 改正曲线的 μ 也要披露（POS-9/W-28，TXT-18 只此一处）
   attachDragZoom(cmpChartHolder, ctx, (range) => {
     cmpAxisRange = range;
     compareChart.update('none');
-  });
+  }, { allowNonPositive: () => (document.getElementById('cmpYMode')?.value || 'flux') !== 'flux' });  // IA-11
 }

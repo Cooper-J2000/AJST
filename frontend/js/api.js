@@ -208,7 +208,87 @@ export const exportHostPhotometry = (tid, fmt = 'csv') => {
   window.open(`${API_BASE}/export/host_photometry/${encodeURIComponent(tid)}?format=${fmt}`, '_blank');
 };
 
-// === Toast notification ===
+// 模板库 × K 改正（/api/tmplib；设计文档 02 §5）
+export const getTmplibConfig = () => api('GET', '/tmplib/config');
+export const getTmplibGuards = () => api('GET', '/tmplib/guards');
+export const getTmplibTemplates = () => api('GET', '/tmplib/templates');
+export const getTmplibTemplate = (id) =>
+  api('GET', `/tmplib/templates/${encodeURIComponent(id)}`);
+// E-30：错误按 code 分支，故预测保留 err.code/err.context（通用 api() 只留 message）
+export async function predictTmplib(payload) {
+  const resp = await fetch(`${API_BASE}/tmplib/predict`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(payload),
+  });
+  let data = null;
+  try { data = await resp.json(); } catch {}
+  if (!resp.ok || !data || data.code !== 'TL_OK') {
+    const err = new Error((data && (data.error || data.message)) || `${resp.status} ${resp.statusText}`);
+    err.code = data && data.code ? data.code : null;
+    err.context = data && data.context ? data.context : null;
+    throw err;
+  }
+  return data;
+}
+
+// P2 造模板向导（API-4/5/7/11/12；E-30：写操作保留 err.code/context/status 供分支）
+async function _tlSend(method, path, body = null) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    credentials: 'same-origin',
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const resp = await fetch(`${API_BASE}${path}`, opts);
+  let data = null;
+  try { data = await resp.json(); } catch {}
+  if (!resp.ok || !data || data.code !== 'TL_OK') {
+    const err = new Error((data && (data.error || data.message)) || `${resp.status} ${resp.statusText}`);
+    err.code = data && data.code ? data.code : null;
+    err.context = data && data.context ? data.context : null;
+    err.status = resp.status;
+    err.payload = data || null;   // missing 逐字段回显（Q-2）等结构化内容
+    throw err;
+  }
+  return data;
+}
+
+// opts: {rowset, null_system_policy, bands[], declare{band:system}} —— U-13 改勾重算账本
+export const getTmplibPreview = (transientId, opts = {}) => {
+  const q = new URLSearchParams({ transient_id: transientId });
+  if (opts.rowset) q.set('rowset', opts.rowset);
+  if (opts.null_system_policy) q.set('null_system_policy', opts.null_system_policy);
+  if (opts.bands) q.set('bands', opts.bands.join(','));
+  if (opts.declare) {
+    const s = Object.entries(opts.declare).map(([b, s2]) => `${b}:${s2}`).join(',');
+    if (s) q.set('declare', s);
+  }
+  return api('GET', `/tmplib/preview?${q}`);
+};
+export const createTmplibTemplate = (payload) => _tlSend('POST', '/tmplib/templates', payload);
+export const rebuildTmplibTemplate = (id) =>
+  _tlSend('POST', `/tmplib/templates/${encodeURIComponent(id)}/rebuild`);
+export const deleteTmplibTemplate = (id, opts = {}) => {
+  const q = opts.hard ? '?hard=true' : '';
+  const body = opts.hard ? { hard: true, password: opts.password || '' } : null;
+  return _tlSend('DELETE', `/tmplib/templates/${encodeURIComponent(id)}${q}`, body);
+};
+export const getTmplibInDomain = (id) =>
+  api('GET', `/tmplib/in_domain/${encodeURIComponent(id)}`);
+// API-8：部分成功协议（恒 200）；配额/结构错误才抛（err.code 保留，E-30）
+export const compareTmplib = (payload) => _tlSend('POST', '/tmplib/compare', payload);
+// API-10：单项误差预算（Q-7 n_draws ∈ {0}∪[3,200]，缺省 32 = UNVERIFIED-2 实测预算值）
+export const budgetTmplib = (payload) => _tlSend('POST', '/tmplib/budget', payload);
+// API-9：API-8 同参数的文件形式（GET 直链，编码：curves/sources 各为 JSON 数组串）
+export const exportTmplib = (fmt, { curves = [], sources = [], includeMeasured = true } = {}) => {
+  const q = new URLSearchParams();
+  if (curves.length) q.set('curves', JSON.stringify(curves));
+  if (sources.length) q.set('sources', JSON.stringify(sources));
+  if (!includeMeasured) q.set('include_measured', '0');
+  window.open(`${API_BASE}/tmplib/export.${fmt}?${q}`, '_blank');
+};
 export function showToast(msg, type = 'info') {
   const colors = {
     info: 'var(--accent-blue)', success: 'var(--accent-green)',

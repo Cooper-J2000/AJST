@@ -70,7 +70,10 @@ export function attachDragZoom(holder, canvas, onZoom, opts = {}) {
       ymin: ys.getValueForPixel(Math.max(r.y0, r.y1)),
     };
     if (![range.xmin, range.xmax, range.ymin, range.ymax].every(v => isFinite(v))) return;
-    if (!opts.allowNonPositive && ![range.xmin, range.xmax, range.ymin, range.ymax].every(v => v > 0)) return;
+    // allowNonPositive 可为函数（按当前图模式求值，如 compare 页 kcorr/absmag 线性轴允许 M<0，IA-11）
+    const allowNP = typeof opts.allowNonPositive === 'function'
+      ? opts.allowNonPositive() : opts.allowNonPositive;
+    if (!allowNP && ![range.xmin, range.xmax, range.ymin, range.ymax].every(v => v > 0)) return;
     onZoom(range);
   };
   doc.addEventListener('mousemove', onMove);

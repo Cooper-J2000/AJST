@@ -27,6 +27,7 @@ const routes = {
   '/filters':  () => import('./pages/filters.js').then(m => m.render()),
   '/tools/gcn': () => import('./pages/gcn_tool.js').then(m => m.render()),
   '/tools/digitizer': () => import('./pages/digitizer.js').then(m => m.render()),
+  '/tools/tmplib': () => import('./pages/tmplib.js').then(m => m.render()),
 };
 // Dynamic route: /transient/<id>
 const detailRe = /^\/transient\/(.+)$/;
