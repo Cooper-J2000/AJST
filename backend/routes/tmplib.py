@@ -8,6 +8,7 @@ POST   /api/tmplib/predict             — API-6  单条模板曲线预测（公
 GET    /api/tmplib/preview?transient_id= — API-4  造模板预检（登录；行账+波段映射+CA-12+域内预估）
 POST   /api/tmplib/templates           — API-5  造模板向导建面（登录；写 tmplibrary/）
 POST   /api/tmplib/templates/<id>/rebuild — API-7  重建面+重算指纹（登录）
+PATCH  /api/tmplib/templates/<id>      — API-14 元数据编辑（管理员；白名单字段，校验后整体重写）
 DELETE /api/tmplib/templates/<id>      — API-11 软删/硬删（管理员；硬删需密码二次校验）
 GET    /api/tmplib/in_domain/<id>      — API-12 域内可答比例缓存值（公开，F-45）
 GET    /api/tmplib/export.csv|.json    — API-9  同 API-8 参数的文件形式（公开，F-56 单算双渲染）
@@ -20,7 +21,7 @@ POST   /api/tmplib/budget              — API-10 单项误差预算（公开；
   - 引擎异常的 message/context 统一过 _scrub()，响应不泄漏绝对路径；
   - 未知异常记 repr 到服务端日志，不外泄 traceback。
   - ST-1：任何 DB 读取都在调引擎之前完成并关闭 session；
-  - A-3：只有 API-5/7/11 写盘，且只写 tmplibrary/；读路径永不 rebuild。
+  - A-3：只有 API-5/7/11/14 写盘，且只写 tmplibrary/；读路径永不 rebuild。
 """
 import logging
 import re
@@ -33,6 +34,7 @@ from models import Transient, User
 from tmplib import engine, extract, guard, indomain, mudelta, paths, \
     budget as tl_budget, compare as tl_compare, export as tl_export, \
     predict as tl_predict, surfaces
+from tmplib import edit as tl_edit
 from tmplib import manifest as tl_manifest
 
 log = logging.getLogger(__name__)
@@ -46,7 +48,8 @@ _CAPABILITIES = {
                   '/api/tmplib/predict', '/api/tmplib/preview',
                   '/api/tmplib/compare', '/api/tmplib/export.csv',
                   '/api/tmplib/export.json', '/api/tmplib/budget',
-                  '/api/tmplib/templates/<id>/rebuild', '/api/tmplib/in_domain/<id>'],
+                  '/api/tmplib/templates/<id>/rebuild', '/api/tmplib/in_domain/<id>',
+                  '/api/tmplib/templates/<id> [PATCH]'],
     'predict': True,
     'compare': True,
     'export': True,
@@ -225,6 +228,12 @@ def config():
             'code_sha256': engine.code_sha256(),  # C_ENGINE_PIN
             'cosmology': engine.cosmology(),
         }
+        # 滤光片库清单：预测不限于模板实测节点波段——凡静频落在面覆盖内的库
+        # 波段都可算；前端据此给出「其它波段」 optgroup（带 mode/trust/pivot）。
+        try:
+            body['bank_bands'] = engine.bank_cached().summary()
+        except Exception:
+            body['bank_bands'] = None
     try:
         lib = paths.read_library()
         if lib is not None:
@@ -308,8 +317,43 @@ def templates():
                            'answered': in_domain.get('answered')}
                           if isinstance(in_domain, dict) else None),
         })
-    return jsonify({'code': 'TL_OK', 'templates': _walk(out),
-                    'history': _walk(lib.get('history') or [])})  # 族谱（S4 只读展示）
+
+    # T0 口径（U-11 列表列）：manifest 的 epoch_zero 声明摘要 + 对应源的库内
+    # t0（ST-1：单条短查询，读完即关；库暂不可达 ⇒ 该列降级为 null，不拖垮列表）
+    import yaml as _yaml
+    ez_map = {}
+    for row in out:
+        try:
+            man = _yaml.safe_load(paths.template_yaml(root, row['id'])
+                                  .read_text(encoding='utf-8')) or {}
+            ez = (((man.get('photometry') or {}).get('time') or {})
+                  .get('epoch_zero') or {})
+            ez_map[row['id']] = {'kind': ez.get('kind'), 'unit': ez.get('unit'),
+                                 'value': ez.get('value'),
+                                 'source': str(ez.get('source') or '')[:200]}
+        except Exception:
+            ez_map[row['id']] = None
+    cids = {mudelta.counterpart_of(t['id'], entries.get(t['id']) or {})
+            for t in out}
+    cids.discard(None)
+    t0_map = {}
+    if cids:
+        try:
+            sess = get_session()
+            try:
+                for r in sess.query(Transient.id, Transient.t0) \
+                        .filter(Transient.id.in_(sorted(cids))):
+                    t0_map[r.id] = r.t0.isoformat() if r.t0 else None
+            finally:
+                sess.close()
+        except Exception as e:
+            log.warning('tmplib 列表 t0 查询失败: %r', e)
+    for row in out:
+        cid = mudelta.counterpart_of(row['id'], entries.get(row['id']) or {})
+        row['epoch_zero'] = ez_map.get(row['id'])
+        row['counterpart'] = cid
+        row['catalog_t0'] = t0_map.get(cid)
+    return jsonify({'code': 'TL_OK', 'templates': _walk(out)})
 
 
 @tmplib_bp.route('/templates/<template_id>', methods=['GET'])
@@ -622,13 +666,6 @@ def _now_utc():
     return datetime.now(timezone.utc).isoformat(timespec='seconds')
 
 
-def _append_history(lib, action, tid, note=''):
-    """§4.1 history：build|rebuild|delete|declare 逐条追加。"""
-    lib.setdefault('history', []).append({
-        'at': _now_utc(), 'by': session.get('username'),
-        'action': action, 'id': tid, 'note': _scrub(note)})
-
-
 def _fresh_library(root):
     """library.json 不存在时的骨架（schema 键与出厂索引同构）。"""
     vendor = {}
@@ -643,8 +680,7 @@ def _fresh_library(root):
                    'cosmology': engine.cosmology()},
         'filters': {'source_sha256': vendor.get('recorded_source_sha256'),
                     'checked_utc': _now_utc()},
-        'templates': {}, 'history': [],
-    }
+        'templates': {}}
 
 
 def _engine_unavailable_response(avail, http=200):
@@ -921,8 +957,6 @@ def create_template():
                                    in_domain=None, mu=None, state='refused',
                                    extra_rejected=rows)
                 lib['templates'][tid] = entry
-                _append_history(lib, 'build', tid,
-                                note=f"refused: {getattr(e, 'code', '?')}")
                 paths.write_library(lib, root)
                 return _engine_error(e)
             raise
@@ -937,8 +971,6 @@ def create_template():
                            in_domain=in_domain, mu=mu, state='fresh',
                            extra_rejected=rows)
         lib['templates'][tid] = entry
-        _append_history(lib, 'build', tid,
-                        note=f"rows={ledger['kept']}/{ledger['total']}")
         paths.write_library(lib, root)
         return jsonify(_walk(tl_predict._sanitize({
             'code': 'TL_OK', 'id': tid, 'state': 'fresh',
@@ -952,6 +984,32 @@ def create_template():
         })))
     finally:
         surfaces.BUILD_SEM.release()
+
+
+def _post_build_entry(lib, entry, template_id, root, cs, qc):
+    """建面/重建成功后的条目刷新（API-5/7/14 共用）：in_domain 实测、μ 重算、
+    三轴 stale 合成。返回 (in_domain, mu)。"""
+    in_domain = indomain.compute(template_id, root)
+    spec = cs.TemplateSpec.from_yaml(paths.template_yaml(root, template_id))
+    catalog = _fetch_counterpart(template_id, entry)
+    mu = mudelta.compute_mu(spec, catalog, entry)
+
+    catalog_rows = None
+    if entry.get('rows_sha256') and entry.get('extract'):
+        live = _live_rows_hash(template_id, entry, root)
+        if live is not None:
+            catalog_rows = [] if live == entry['rows_sha256'] else ['rows-drifted']
+    from chromashift import registry
+    npz = root / 'data' / 'surfaces' / f'{template_id}.npz'
+    eng_stale = registry.stale_reasons(npz, spec, root)
+    entry['inputs_sha256'] = qc.get('inputs_sha256')
+    entry['in_domain'] = in_domain
+    entry['mu'] = mu
+    entry['stale_because'] = {'engine_inputs': eng_stale,
+                              'catalog_rows': catalog_rows,
+                              'filter_vendor': None}
+    entry['state'] = 'stale' if (eng_stale or catalog_rows) else 'fresh'
+    return in_domain, mu
 
 
 @tmplib_bp.route('/templates/<template_id>/rebuild', methods=['POST'])
@@ -992,29 +1050,8 @@ def rebuild_template(template_id):
             if isinstance(e, chromashift.ChromaShiftError):
                 return _engine_error(e)
             raise
-        in_domain = indomain.compute(template_id, root)
-        spec = cs.TemplateSpec.from_yaml(paths.template_yaml(root, template_id))
-        catalog = _fetch_counterpart(template_id, entry)
-        mu = mudelta.compute_mu(spec, catalog, entry)
-
-        catalog_rows = None
-        if entry.get('rows_sha256') and entry.get('extract'):
-            live = _live_rows_hash(template_id, entry, root)
-            if live is not None:
-                catalog_rows = [] if live == entry['rows_sha256'] else ['rows-drifted']
-        from chromashift import registry
-        npz = root / 'data' / 'surfaces' / f'{template_id}.npz'
-        eng_stale = registry.stale_reasons(npz, spec, root)
-        entry['inputs_sha256'] = qc.get('inputs_sha256')
-        entry['in_domain'] = in_domain
-        entry['mu'] = mu
-        entry['stale_because'] = {'engine_inputs': eng_stale,
-                                  'catalog_rows': catalog_rows,
-                                  'filter_vendor': None}
-        entry['state'] = 'stale' if (eng_stale or catalog_rows) else 'fresh'
+        in_domain, mu = _post_build_entry(lib, entry, template_id, root, cs, qc)
         lib['templates'][template_id] = entry
-        _append_history(lib, 'rebuild', template_id,
-                        note=f"state={entry['state']}")
         paths.write_library(lib, root)
         return jsonify(_walk(tl_predict._sanitize({
             'code': 'TL_OK', 'id': template_id, 'state': entry['state'],
@@ -1023,6 +1060,113 @@ def rebuild_template(template_id):
         })))
     finally:
         surfaces.BUILD_SEM.release()
+
+
+@tmplib_bp.route('/templates/<template_id>', methods=['PATCH'])
+@require_admin
+def edit_template(template_id):
+    """API-14：管理员编辑模板元数据（白名单字段；默认保存后立即重建面）。
+
+    写盘面的第四个入口（A-3 扩展为 API-5/7/11/14）：manifest 直接改写
+    （载入 → 改字段 → 规范 dump → 引擎自校验通过才替换，M_SCHEMA 同一道门）；
+    模板库随 AJST-Data 进 git，版本历史由 git 承担，本层不做额外备份。
+    library.json 只同步 label 与状态。行集口径（rowset/policy/bands/CSV）是
+    冻结数据，不在白名单：改动须删除后重新建面。重建请求下先拿信号量再落盘
+    （429 无半路副作用，T-31）。
+    """
+    if not paths.valid_id(template_id):
+        return _err('TL_TEMPLATE_UNKNOWN', f'非法模板 id: {template_id!r}', 404)
+    avail = engine.available()
+    if not avail['ok']:
+        return _engine_unavailable_response(avail, http=409)
+    cs = engine.require()
+    root = paths.library_root()
+    if template_id not in cs.manifests(root):
+        return _err('TL_TEMPLATE_UNKNOWN',
+                    f'模板 {template_id!r} 不存在（或已删除）', 404)
+    try:
+        lib = paths.read_library(root) or _fresh_library(root)
+    except ValueError as e:
+        return _err('TL_DATA', str(e), 500)
+    entry = (lib.get('templates') or {}).get(template_id)
+    if entry is None:
+        return _err('TL_TEMPLATE_UNKNOWN', f'模板 {template_id!r} 不在索引中', 404)
+    if entry.get('deleted'):
+        return _err('TL_TEMPLATE_DELETED',
+                    f'模板 {template_id} 已删除（软删），不能编辑', 409)
+
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return _err('TL_INCONSISTENT_ARGS', '请求体必须是 JSON 对象', 400)
+    body = dict(body)
+    rebuild = bool(body.pop('rebuild', True))
+    import yaml as _yaml
+    yaml_path = paths.template_yaml(root, template_id)
+    try:
+        current = _yaml.safe_load(yaml_path.read_text(encoding='utf-8'))
+    except Exception as e:
+        return _err('TL_DATA', f'manifest 不可读: {e}', 422)
+    try:
+        sets, deletes, appends, changed = tl_edit.validate_edit(body, current)
+    except tl_manifest.DeclError as e:
+        return _err('TL_DECLARE_MISSING', str(e), 400,
+                    missing=e.missing, **e.context)
+    if not changed:
+        return _err('TL_INCONSISTENT_ARGS',
+                    '没有任何字段变化（所给值与现状相同）', 400)
+    new_manifest = tl_edit.apply_to_dict(current, sets, deletes, appends)
+
+    acquired = False
+    if rebuild:
+        # 先拿信号量再落盘：429 时编辑一字节未写（T-31）
+        if not surfaces.BUILD_SEM.acquire(blocking=False):
+            return _err('TL_BUSY',
+                        '引擎正忙于另一条预测/建面，请稍后重试（编辑尚未落盘）', 429)
+        acquired = True
+    try:
+        tl_edit.write_manifest_checked(root, template_id, new_manifest)
+        if ('label',) in sets:
+            entry['label'] = sets[('label',)]
+        engine.reset_caches()
+        if not rebuild:
+            sb = entry.get('stale_because') or {}
+            entry['stale_because'] = {
+                'engine_inputs': ['manifest'],
+                'catalog_rows': sb.get('catalog_rows'),
+                'filter_vendor': sb.get('filter_vendor')}
+            entry['state'] = 'stale'
+            lib['templates'][template_id] = entry
+            paths.write_library(lib, root)
+            return jsonify(_walk({
+                'code': 'TL_OK', 'id': template_id, 'state': 'stale',
+                'changed': changed, 'rebuilt': False}))
+        # 编辑已落盘、面已过期：先如实记 stale，再尝试重建
+        entry['stale_because'] = {'engine_inputs': ['manifest'],
+                                  'catalog_rows': None, 'filter_vendor': None}
+        entry['state'] = 'stale'
+        try:
+            surf, qc, _ = surfaces.build_surface(template_id, root)
+        except surfaces.SingleFlight as e:
+            return _err('TL_BUILD_IN_PROGRESS', str(e), 409)
+        except Exception as e:
+            lib['templates'][template_id] = entry
+            paths.write_library(lib, root)
+            import chromashift
+            if isinstance(e, chromashift.ChromaShiftError):
+                return _engine_error(e)
+            raise
+        in_domain, mu = _post_build_entry(lib, entry, template_id, root, cs, qc)
+        lib['templates'][template_id] = entry
+        paths.write_library(lib, root)
+        return jsonify(_walk(tl_predict._sanitize({
+            'code': 'TL_OK', 'id': template_id, 'state': entry['state'],
+            'changed': changed, 'rebuilt': True,
+            'stale_because': entry['stale_because'],
+            'in_domain': in_domain, 'mu': mu, 'qc': qc,
+        })))
+    finally:
+        if acquired:
+            surfaces.BUILD_SEM.release()
 
 
 @tmplib_bp.route('/templates/<template_id>', methods=['DELETE'])
@@ -1075,7 +1219,6 @@ def delete_template(template_id):
             import shutil as _sh
             _sh.rmtree(d, ignore_errors=True)
         del lib['templates'][template_id]
-        _append_history(lib, 'delete', template_id, note='hard')
         paths.write_library(lib, root)
         engine.reset_caches()
         return jsonify({'code': 'TL_OK', 'id': template_id, 'mode': 'hard'})
@@ -1092,8 +1235,6 @@ def delete_template(template_id):
                         'mode': 'soft'}
     entry['state'] = 'deleted'
     lib['templates'][template_id] = entry
-    _append_history(lib, 'delete', template_id,
-                    note=f"soft; files→.trash/{trash.name}")
     paths.write_library(lib, root)
     engine.reset_caches()
     return jsonify({'code': 'TL_OK', 'id': template_id, 'mode': 'soft',

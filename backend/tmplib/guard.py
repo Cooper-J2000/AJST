@@ -156,8 +156,8 @@ def _catadata_filters(data_dir: str | Path | None = None) -> Path:
     env = os.environ.get("AJST_DATA_DIR")
     if env:
         return Path(env) / "filters.json"
-    # default root is <repo>/backend/tmplibrary -> repo is two levels up
-    return paths.default_root().parents[1] / "catadata" / "filters.json"
+    # default root is <repo>/catadata/tmplibrary -> catadata is its parent
+    return paths.default_root().parent / "filters.json"
 
 
 def vendor_axis(root: str | Path | None = None,

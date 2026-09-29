@@ -392,6 +392,11 @@ def predict_curve(body: dict, *, catalog: dict | None = None,
     elif d_l_in is not None:
         distance = cs.Distance(d_L_Mpc=d_l_in, kind="measured", z=z,
                                source="api caller d_L_Mpc")
+    elif allow_low_z and z < lim["low_z"] and not declared_low_ok:
+        # F-24 的放行必须随距离对象进引擎：引擎对 relocated / 声明 cosmological
+        # 的模板自建距离时不带 allow_low_z（template.py），不在此显式构造，
+        # 上面的宿主侧校验就是一道死开关。
+        distance = cs.Distance.cosmological_at(z, allow_low_z=True)
 
     pred = cs.predict_template(tid, band, z=z, root=base,
                                times_obs_days=times_obs_days,

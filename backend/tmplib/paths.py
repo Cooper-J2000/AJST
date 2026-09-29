@@ -3,7 +3,8 @@
 Owns three things and nothing else:
 
 * where the library root is (`AJST_TMPLIB_DIR` overrides the default
-  ``backend/tmplibrary`` next to this package);
+  ``catadata/tmplibrary`` in the co-located data repo, so the template
+  library ships with AJST-Data);
 * how `library.json` is read and written -- the write is tmp+rename atomic and
   keeps the previous full copy as ``library.json.bak`` (F-50), so a crash
   mid-write leaves either the old file or the new one, never a torn one;
@@ -37,8 +38,8 @@ LIBRARY_JSON = "library.json"
 
 
 def default_root() -> Path:
-    """``<repo>/backend/tmplibrary`` -- this package's sibling directory."""
-    return Path(__file__).resolve().parent.parent / "tmplibrary"
+    """``<repo>/catadata/tmplibrary`` -- the data repo next to the code repo."""
+    return Path(__file__).resolve().parents[2] / "catadata" / "tmplibrary"
 
 
 def library_root() -> Path:
