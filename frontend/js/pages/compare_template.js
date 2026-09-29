@@ -7,7 +7,7 @@
 // 横轴零点平移由服务端直接给出（points.time_rel_s），前端不做 MJD 运算。
 //
 // 状态保持在模块级（页面内不随 render() 丢，主题切换 location.reload() 才清，IA-6）。
-import { getTmplibTemplates, predictTmplib, exportTmplib, showToast } from '../api.js';
+import { getTmplibTemplates, getTmplibConfig, predictTmplib, exportTmplib, showToast } from '../api.js';
 import { parseRefEpoch } from './detail_lcchart.js';
 import { sortBandsByFreq, magABtoMJy } from '../bands.js';
 import { chartColors } from '../theme.js';
@@ -17,22 +17,25 @@ import { esc } from '../utils.js';
 export const TXT = {
   prediction: '虚线为预测：把模板当作谱模型搬到指定 z，不是对某个源实测光变的插值。',
   mono: 'K 改正按单色（delta 波段）近似，与波段积分不可互换；本条曲线不得被引用为带积分 K 改正结果。',
-  outOfCoverage: '该波段是此面的边缘波段：视星等 m 可给，K 与 M 按定义无法给。这不是程序错误。',
+  outOfCoverage: '该波段是此面的边缘波段：视星等 m 可给，K（K 改正：把观测波段星等折算到静止系波段的改正项）与 M（绝对星等）按定义无法给。这不是程序错误。',
+  partialCoverage: '该波段在此面的部分时刻没有静止系参考覆盖（那些时刻该波段或其邻波段没有实测节点）：那些时刻 K（K 改正）与 M（绝对星等）为空、图上留断点，其余时刻正常给出。这不是程序错误。',
   clipped: (n) => `${n} 个请求时刻超出模板适用窗，已剔除不画（引擎对此类请求整次拒绝，此处按设计改为逐点裁剪）。`,
   refUser: '本条曲线的横轴零点 = 用户设定的基准时刻，不是该模板的 T0；同图其它曲线的零点各自独立设定。',
   firstRow: '本模板的 t=0 是表内最早一行，不是事件时刻：与同图其它曲线的 T0 不是同一瞬间。可用「基准时刻」填入一个 epoch 覆盖；不确定填什么就别填，改比形状。',
   restFrame: '本模板原始表已声明为静止系时间；引擎的入参/出参一律观测系，本条曲线与其它曲线时间轴口径一致，无需换算。',
-  muNote: '本图绝对星等来自两个不同的距离：模板曲线的 μ 由引擎给出，库内源的 μ 来自本库 gext_distmod（=Planck18.distmod(红移)）。当 Δμ 超过 0.15 mag 时，两条曲线的相对高度主要反映距离口径之差，不是天体性质。',
+  muNote: 'μ = 距离模数（单位 mag，数值越大距离越远）。本图绝对星等来自两个不同的距离：模板曲线的 μ 由引擎按模板声明的距离/红移给出，库内源的 μ 来自本库 gext_distmod（=Planck18.distmod(红移)）。当 Δμ 超过 0.15 mag 时，两条曲线的相对高度主要反映距离口径之差，不是天体性质。',
   muBig: 'Δμ 超过引擎色标 cap 0.15 mag',
   muNone: '该模板在库里没有可用对应源，Δμ 无对照（不是 0）。',
   engineDown: 'K 改正引擎当前不可用。其余对比功能不受影响。',
+  lowz: (z) => `z=${z} < 0.02：星系本征速度（通常数百 km/s）造成的距离不确定度已超过哈勃流本身，由红移推出的宇宙学距离在此不是一个测量。请在本行「μ / mag」填入该源的实测距离模数（最稳妥）；或勾选「低z放行」——表示你明知此限制仍要用宇宙学距离，距离误差自担。`,
 };
 
 const MAX_ROWS = 8;  // C_MAX_CURVES / ST-3
 
 // ─── 模块级状态 ───
-let _rows = [];        // {uid, template_id, band, z, mode, refRaw, refMJD, curve, error, reqId}
+let _rows = [];        // {uid, template_id, band, z, mode, refRaw, refMJD, mu, muRaw, allowLowZ, drawn, curve, error, reqId}
 let _templates = null; // API-2 列表缓存（stale 的置灰，U-03）
+let _bankBands = [];   // API-1 bank_bands：库滤光片全量（band/mode/trust/lambda_pivot_A）
 let _templatesFailed = false;
 let _ctx = { isStale: () => false, onChange: () => {} };
 let _uid = 0;
@@ -59,7 +62,7 @@ export function tplPanelHTML() {
 
 export function tplMuCardHTML() {
   return `
-    <div class="card-header py-1">模板口径卡（Δμ 披露）</div>
+    <div class="card-header py-1">模板距离口径对照（Δμ；μ = 距离模数）</div>
     <div class="card-body py-2 small" id="tplMuBody"></div>
     <div class="card-footer py-1 small text-secondary" id="tplMuNote" style="display:none">${esc(TXT.muNote)}</div>`;
 }
@@ -67,28 +70,53 @@ export function tplMuCardHTML() {
 // ─── 行渲染 ───
 function _rowHTML(r) {
   const t = (_templates || []).find(x => x.id === r.template_id);
-  const bands = sortBandsByFreq((t && t.bands) || []);
+  const nodeBands = sortBandsByFreq((t && t.bands) || []);
+  const nodeSet = new Set(nodeBands);
   const modes = (t && t.modes) || {};
-  const opts = (_templates || []).map(x =>
-    `<option value="${esc(x.id)}" ${x.id === r.template_id ? 'selected' : ''}
-      ${x.state === 'stale' ? 'disabled' : ''}>${esc(x.id)}${x.state === 'stale' ? '（需重建）' : ''}</option>`).join('');
-  const bandOpts = bands.map(b =>
+  // 波段不限于实测节点：凡静频落在面覆盖内的库滤光片波段都可算（超域会被
+  // 引擎明确拒绝并给出可用 z 区间）。两组分开展示，节点组优先。
+  const otherBands = _bankBands.filter(x => !nodeSet.has(x.band))
+    .sort((a, b) => a.lambda_pivot_A - b.lambda_pivot_A);
+  const nodeOpts = nodeBands.map(b =>
     `<option value="${esc(b)}" ${b === r.band ? 'selected' : ''}>${esc(b)}${modes[b] === 'mono' ? '（mono）' : ''}</option>`).join('');
+  const otherOpts = otherBands.map(x =>
+    `<option value="${esc(x.band)}" ${x.band === r.band ? 'selected' : ''}>${esc(x.band)}${x.mode === 'mono' ? '（mono）' : ''}</option>`).join('');
+  const bandOpts = `<optgroup label="实测波段（面上有节点）">${nodeOpts}</optgroup>` +
+    (otherOpts ? `<optgroup label="库中其它波段（须在面覆盖范围内）">${otherOpts}</optgroup>` : '');
+  const lowzShow = r.z != null && r.z < 0.02;
   return `
     <div class="tpl-row d-flex flex-wrap align-items-center gap-1 px-3 py-1 border-top" data-uid="${r.uid}">
-      <select class="form-select form-select-sm tpl-tmpl" style="width:auto" title="模板">${opts}</select>
-      <select class="form-select form-select-sm tpl-band" style="width:auto" title="观测波段（该面真有节点的波段）">${bandOpts}</select>
+      <select class="form-select form-select-sm tpl-tmpl" style="width:auto" title="模板">${opts_(r)}</select>
+      <select class="form-select form-select-sm tpl-band" style="width:auto"
+              title="目标波段：实测波段面上有节点最稳；库中其它波段只要红移后的静止频率落在面覆盖内也可计算，超出会被拒绝并提示可用 z 区间">${bandOpts}</select>
       <input type="text" class="form-control form-control-sm tpl-z" style="width:84px" value="${r.z ?? ''}" title="红移（默认模板自身 z）" placeholder="z">
-      <select class="form-select form-select-sm tpl-mode" style="width:auto" title="auto：有曲线走波段积分，无曲线降级单色">
+      <select class="form-select form-select-sm tpl-mode" style="width:auto" title="auto：有实测透过率曲线走波段积分（band），无曲线降级单色近似（mono）">
         ${['auto', 'band', 'mono'].map(m => `<option ${m === r.mode ? 'selected' : ''}>${m}</option>`).join('')}
       </select>
-      <input type="text" class="form-control form-control-sm tpl-ref-epoch cmp-ref-epoch" style="width:150px"
-             value="${esc(r.refRaw || '')}" placeholder="留空=模板T0；MJD 或 UTC"
+      <span class="d-inline-flex align-items-center gap-1" style="display:${lowzShow ? '' : 'none'}">
+        <input type="text" class="form-control form-control-sm tpl-mu" style="width:96px"
+               value="${esc(r.muRaw || '')}" placeholder="μ / mag"
+               title="实测距离模数 μ（单位 mag）：z<0.02 时宇宙学距离不可靠，填 μ 最稳妥；留空则由红移/模板声明决定">
+        <label class="form-check form-check-inline small mb-0 text-secondary text-nowrap"
+               title="z<0.02 时星系本征速度（通常数百 km/s）造成的距离不确定度超过哈勃流本身，宇宙学距离在此不是一个测量。勾选 = 明知此限制仍用宇宙学距离，距离误差自担；更稳妥是在左边填实测距离模数 μ">
+          <input type="checkbox" class="form-check-input tpl-lowz" ${r.allowLowZ ? 'checked' : ''}> 低z放行
+        </label>
+      </span>
+      <span class="text-secondary small text-nowrap">基准时刻</span>
+      <input type="text" class="form-control form-control-sm tpl-ref-epoch cmp-ref-epoch" style="width:96px"
+             value="${esc(r.refRaw || '')}" placeholder="留空=T0"
              title="${esc(_refTitle(r))}">
+      <button class="btn btn-sm btn-outline-success py-0 tpl-draw" title="按当前设置计算并绘制该模板曲线">${r.drawn ? '重绘' : '绘制'}</button>
       <span class="tpl-badges small">${_badgesHTML(r)}</span>
       <button class="btn btn-sm btn-outline-danger py-0 tpl-del" title="移除该模板曲线">✕</button>
     </div>
     <div class="tpl-err small text-danger px-3 ${r.error ? '' : 'd-none'}" data-uid="${r.uid}">${esc(r.error || '')}</div>`;
+}
+
+function opts_(r) {
+  return (_templates || []).map(x =>
+    `<option value="${esc(x.id)}" ${x.id === r.template_id ? 'selected' : ''}
+      ${x.state === 'stale' ? 'disabled' : ''}>${esc(x.id)}${x.state === 'stale' ? '（需重建）' : ''}</option>`).join('');
 }
 
 function _refTitle(r) {
@@ -105,6 +133,7 @@ function _badgesHTML(r) {
   const out = [];
   const c = r.curve;
   if (r.error) return '<span class="text-danger">✕ 被拒</span>';
+  if (!r.drawn) return '<span class="text-secondary">未绘制</span>';
   if (!c) return '<span class="text-secondary">…</span>';
   if (c.mode === 'mono') out.push('<span class="badge text-bg-secondary" title="' + esc(TXT.mono) + '">mono</span>');
   if (c.time_origin && c.time_origin.kind === 'table-first-row') {
@@ -135,6 +164,8 @@ async function _fetchRow(r) {
     const body = { template_id: r.template_id, band: r.band, mode: r.mode };
     if (r.z != null) body.z = r.z;
     if (r.refMJD != null) body.time_origin = r.refMJD;
+    if (r.mu != null) body.mu = r.mu;
+    if (r.allowLowZ) body.allow_low_z = true;
     const resp = await predictTmplib(body);
     if (reqId !== r.reqId || _ctx.isStale()) return;  // IA-7：旧回调直接丢
     r.curve = resp.curve;
@@ -146,6 +177,8 @@ async function _fetchRow(r) {
     const ctx = e.context || {};
     if (e.code === 'TL_OUT_OF_DOMAIN' && ctx.z_max_for_band != null) {
       r.error = `z=${r.z} 超出 ${r.band} 波段的适用域 [${ctx.z_min_for_band}, ${ctx.z_max_for_band}]（band 积分口径）。需要更蓝/更红的静止频率 ⇒ 换波段或换模板。`;
+    } else if (e.code === 'TL_LOW_Z_DISTANCE') {
+      r.error = TXT.lowz(r.z);
     } else if (e.code === 'TL_ENGINE_UNAVAILABLE') {
       r.error = TXT.engineDown;
     } else {
@@ -190,13 +223,14 @@ export function tplRenderSidecars() {
   if (bar) {
     const lines = [];
     for (const r of _rows) {
-      if (r.error) { lines.push(`<div>✕ <b>${esc(r.template_id)}·${esc(r.band)}</b>：${esc(r.error)}</div>`); continue; }
+      if (r.error) continue;  // 错误已在行内红字展示，判定条不重复
       const c = r.curve;
       if (!c) continue;
       const d = c.domain || {};
       const notes = [];
       if ((d.reasons || []).includes('mode-downgraded-to-mono')) notes.push(TXT.mono);
-      if ((d.reasons || []).some(x => x.includes('out-of-coverage'))) notes.push(TXT.outOfCoverage);
+      if ((d.reasons || []).includes('out-of-coverage')) notes.push(TXT.outOfCoverage);
+      else if ((d.reasons || []).includes('partial-out-of-coverage')) notes.push(TXT.partialCoverage);
       if ((d.clipped_epochs || []).length) notes.push(TXT.clipped(d.clipped_epochs.length));
       if ((d.reasons || []).includes('table-time-frame-rest')) notes.push(TXT.restFrame);
       if (notes.length || d.state === 'extrapolated') {
@@ -209,8 +243,11 @@ export function tplRenderSidecars() {
 }
 
 // ─── 数据集（compare.js 的 renderCompareChart 在源数据集之后追加） ───
+// 模板曲线用专属 templates 调色板（与 compare 源色零重叠）+ 逐条不同虚线线型，
+// 双编码保证与实测源曲线、以及模板曲线彼此之间都能区分。
+const TPL_DASHES = [[6, 4], [2, 2], [9, 3, 2, 3], [4, 3], [12, 4], [2, 3, 6, 3], [7, 2], [10, 3, 3, 3]];
 export function tplDatasets({ absMag, restFrame }) {
-  const colors = chartColors().bands;  // 模板用 bands 调色板，与 compare 源色循环不冲突
+  const colors = chartColors().templates;
   return _rows.filter(r => r.curve).map((r, i) => {
     const c = r.curve, p = c.points;
     const zfac = restFrame ? (1 + c.z) : 1;   // 各自曲线自己的 z（设计决策）
@@ -226,7 +263,7 @@ export function tplDatasets({ absMag, restFrame }) {
       borderColor: colors[i % colors.length],
       backgroundColor: colors[i % colors.length],
       showLine: true, pointRadius: 0, pointHoverRadius: 3,
-      borderDash: [6, 4], borderWidth: 1.5,
+      borderDash: TPL_DASHES[i % TPL_DASHES.length], borderWidth: 1.5,
       order: -1, spanGaps: true, _isTemplate: true,
     };
   });
@@ -251,6 +288,14 @@ export async function bindTplPanel(ctx) {
       console.warn('模板库列表不可用:', e.message);
     }
   }
+  // 库滤光片全量清单（波段下拉第二组用；失败则只给实测节点波段，功能不受损）
+  if (!_bankBands.length) {
+    try {
+      const cfg = await getTmplibConfig();
+      if (_ctx.isStale()) return;
+      _bankBands = cfg.bank_bands || [];
+    } catch (e) { /* 降级：只列节点波段 */ }
+  }
 
   document.getElementById('tplAdd').addEventListener('click', () => {
     if (_rows.length >= MAX_ROWS) { showToast(`模板曲线最多 ${MAX_ROWS} 条`, 'warning'); return; }
@@ -261,11 +306,11 @@ export async function bindTplPanel(ctx) {
     const band = bands.find(b => (t.modes || {})[b] !== 'mono') || bands[0];
     const r = {
       uid: ++_uid, template_id: t.id, band, z: t.z, mode: 'auto',
-      refRaw: '', refMJD: null, curve: null, error: null, reqId: 0,
+      refRaw: '', refMJD: null, mu: null, muRaw: '', allowLowZ: false,
+      drawn: false, curve: null, error: null, reqId: 0,
     };
     _rows.push(r);
-    _renderRows();
-    _fetchRow(r);
+    _renderRows();   // 先设置后绘制：加行只出控件，点「绘制」才请求引擎
   });
 
   document.getElementById('tplClear').addEventListener('click', () => {
@@ -277,10 +322,12 @@ export async function bindTplPanel(ctx) {
 
   // API-9 导出（F-40 前端不重算：参数原样发给服务端，文件由服务端渲染）
   const _exportPayload = () => {
-    const curves = _rows.filter(r => !r.error).map(r => {
+    const curves = _rows.filter(r => r.drawn && !r.error).map(r => {
       const c = { template_id: r.template_id, band: r.band, mode: r.mode };
       if (r.z != null) c.z = r.z;
       if (r.refMJD != null) c.time_origin = r.refMJD;
+      if (r.mu != null) c.mu = r.mu;
+      if (r.allowLowZ) c.allow_low_z = true;
       return c;
     });
     const sources = ((_ctx.getExportSources && _ctx.getExportSources()) || [])
@@ -316,10 +363,25 @@ export async function bindTplPanel(ctx) {
       r.template_id = t.id;
       r.band = bands.find(b => (t.modes || {})[b] !== 'mono') || bands[0];
       r.z = t.z; r.mode = 'auto'; r.refRaw = ''; r.refMJD = null;
+      r.mu = null; r.muRaw = ''; r.allowLowZ = false;
     } else if (e.target.classList.contains('tpl-band')) {
       r.band = e.target.value;
     } else if (e.target.classList.contains('tpl-mode')) {
       r.mode = e.target.value;
+    } else if (e.target.classList.contains('tpl-lowz')) {
+      r.allowLowZ = e.target.checked;
+    } else if (e.target.classList.contains('tpl-mu')) {
+      const v = e.target.value.trim();
+      if (v === '') { r.mu = null; r.muRaw = ''; }
+      else {
+        const n = Number(v);
+        if (!isFinite(n) || n <= 0) {
+          showToast('μ 必须是正数（距离模数，单位 mag；约 5·log₁₀(d_L/10pc)）', 'warning');
+          e.target.value = r.muRaw || '';
+          return;
+        }
+        r.mu = n; r.muRaw = v;
+      }
     } else if (e.target.classList.contains('tpl-ref-epoch')) {
       const p = parseRefEpoch(e.target.value);
       if (p.err) {
@@ -343,10 +405,25 @@ export async function bindTplPanel(ctx) {
       return;
     }
     r.curve = null; r.error = null;
-    _fetchRow(r);
+    if (r.drawn) {
+      _fetchRow(r);              // 已绘制的行：改设置即重算
+    } else {
+      _renderRows();             // 未绘制：只更新控件（如低 z 时显出 μ/放行）
+      tplRenderSidecars();
+    }
   });
 
   document.getElementById('tplRows').addEventListener('click', (e) => {
+    const draw = e.target.closest('.tpl-draw');
+    if (draw) {
+      const rowEl = draw.closest('.tpl-row');
+      const r = _rows.find(x => x.uid === Number(rowEl.dataset.uid));
+      if (!r) return;
+      r.drawn = true;
+      r.curve = null; r.error = null;
+      _fetchRow(r);
+      return;
+    }
     const del = e.target.closest('.tpl-del');
     if (!del) return;
     const rowEl = del.closest('.tpl-row');

@@ -270,6 +270,9 @@ export const getTmplibPreview = (transientId, opts = {}) => {
 export const createTmplibTemplate = (payload) => _tlSend('POST', '/tmplib/templates', payload);
 export const rebuildTmplibTemplate = (id) =>
   _tlSend('POST', `/tmplib/templates/${encodeURIComponent(id)}/rebuild`);
+// API-14：管理员编辑模板元数据（白名单字段；payload 带 rebuild 控制是否立即建面）
+export const editTmplibTemplate = (id, payload) =>
+  _tlSend('PATCH', `/tmplib/templates/${encodeURIComponent(id)}`, payload);
 export const deleteTmplibTemplate = (id, opts = {}) => {
   const q = opts.hard ? '?hard=true' : '';
   const body = opts.hard ? { hard: true, password: opts.password || '' } : null;

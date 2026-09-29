@@ -6,7 +6,7 @@
 import {
   getTmplibConfig, getTmplibGuards, getTmplibTemplates, getTmplibTemplate,
   getTmplibPreview, createTmplibTemplate, rebuildTmplibTemplate,
-  deleteTmplibTemplate, budgetTmplib, isAuthed, isAdmin, showToast,
+  editTmplibTemplate, deleteTmplibTemplate, budgetTmplib, isAuthed, isAdmin, showToast,
 } from '../api.js';
 import { esc } from '../utils.js';
 import { sortBandsByFreq } from '../bands.js';
@@ -36,6 +36,7 @@ let _guards = null;      // API-13
 let _templates = null;   // API-2
 let _wiz = null;         // 向导状态（见 _wizReset）
 let _detailId = null;
+let _detailData = null;   // 当前详情响应（编辑表单预填 / 取消后回填）
 
 function _wizReset() {
   _wiz = {
@@ -52,7 +53,7 @@ export async function render() {
   _wizReset(); _detailId = null;
   const app = document.getElementById('app');
   app.innerHTML = `
-    <h4 class="mb-3"><i class="bi bi-grid-3x3-gap"></i> 模板库与造模板</h4>
+    <h4 class="mb-3"><i class="bi bi-grid-3x3-gap"></i> 创建光变模板 / 模板库</h4>
     <div id="tlGuards" class="mb-3"><span class="text-secondary small">守卫状态加载中…</span></div>
     <div id="tlMain" style="display:none">
       <div class="card mb-3">
@@ -68,23 +69,18 @@ export async function render() {
           <table class="table table-sm table-hover mb-0 small" id="tlLibTable">
             <thead><tr>
               <th></th><th>id</th><th>名称</th><th>来源</th><th>z</th><th>距离 kind</th>
-              <th>波段</th><th>t_valid (d)</th><th>域内率</th><th>状态</th><th></th>
+              <th>T0 口径</th><th>波段</th><th>t_valid (d)</th><th>域内率</th><th>状态</th><th></th>
             </tr></thead>
-            <tbody id="tlLibBody"><tr><td colspan="11" class="text-secondary">加载中…</td></tr></tbody>
+            <tbody id="tlLibBody"><tr><td colspan="12" class="text-secondary">加载中…</td></tr></tbody>
           </table>
         </div></div>
-        <div class="card-footer py-1">
-          <details id="tlHistory"><summary class="small">族谱（library.json history：build / rebuild / delete / declare，只读）</summary>
-            <div class="small mt-1" id="tlHistoryBody"><span class="text-secondary">加载中…</span></div>
-          </details>
-        </div>
       </div>
       <div class="card mb-3" id="tlDetailCard" style="display:none">
         <div class="card-header py-1">模板详情 / QC（④）<span id="tlDetailTitle"></span></div>
         <div class="card-body py-2 small" id="tlDetailBody"></div>
       </div>
       <div class="card mb-3" id="tlWizardCard">
-        <div class="card-header py-1">造模板向导（S2；4 步，任一跳过都会被拦）</div>
+        <div class="card-header py-1">创建光变模板向导（S2；4 步，任一跳过都会被拦）</div>
         <div class="card-body py-2" id="tlWizardBody"></div>
       </div>
     </div>
@@ -149,41 +145,17 @@ function _renderGuards() {
 }
 
 // ─── ② 库清单（U-11） ───
-let _history = [];       // library.json history（族谱，S4 只读展示）
-
 async function _loadLibrary() {
   try {
     const data = await getTmplibTemplates();
     _templates = data.templates || [];
-    _history = data.history || [];
   } catch (e) {
     _templates = null;
-    _history = [];
     const tb = document.getElementById('tlLibBody');
-    if (tb) tb.innerHTML = `<tr><td colspan="11" class="text-danger">${esc(e.message)}</td></tr>`;
+    if (tb) tb.innerHTML = `<tr><td colspan="12" class="text-danger">${esc(e.message)}</td></tr>`;
     return;
   }
   _renderLibrary();
-  _renderHistory();
-}
-
-function _renderHistory() {
-  const body = document.getElementById('tlHistoryBody');
-  if (!body) return;
-  if (!_history.length) {
-    body.innerHTML = '<span class="text-secondary">尚无历史记录</span>';
-    return;
-  }
-  const ACTION_LABEL = { build: '建面', rebuild: '重建', delete: '删除', declare: '声明' };
-  body.innerHTML = `<table class="table table-sm small mb-0" style="max-width:760px">
-    <thead><tr><th>时刻 (UTC)</th><th>动作</th><th>id</th><th>操作者</th><th>备注</th></tr></thead>
-    <tbody>${_history.slice().reverse().map(h => `<tr>
-      <td class="text-nowrap">${esc(h.at || '')}</td>
-      <td>${esc(ACTION_LABEL[h.action] || h.action || '')}</td>
-      <td><code>${esc(h.id || '')}</code></td>
-      <td>${esc(h.by || '—')}</td>
-      <td class="text-secondary">${esc(h.note || '')}</td>
-    </tr>`).join('')}</tbody></table>`;
 }
 
 function _staleTitle(sb) {
@@ -195,11 +167,27 @@ function _staleTitle(sb) {
   return parts.join('；');
 }
 
+// T0 口径列：epoch_zero 声明（kind/unit/value）+ 对应源库内 t0（API-2 给出）
+function _t0CellHTML(t) {
+  const ez = t.epoch_zero || {};
+  const dateTxt = t.catalog_t0 ? String(t.catalog_t0).slice(0, 10) : null;
+  const src = ez.source || '';
+  if (ez.kind === 'first_point')
+    return `<span title="零点 = 表内最早一行，不是事件时刻（对比页会提示）。${dateTxt ? `库内对应源 t0 = ${t.catalog_t0}，可作建议基准。` : '库内无对应源 t0。'}声明原文：${esc(src)}">表内首行${dateTxt ? `（源 t0 ${dateTxt}）` : ''}</span>`;
+  if (ez.kind === 'fixed' && ez.unit === 'mjd')
+    return `<span title="绝对零点声明。${esc(src)}">MJD ${ez.value != null ? ez.value : '?'}</span>`;
+  if (ez.kind === 'fixed')
+    return `<span title="相对零点（value=${ez.value ?? 0}，单位 ${ez.unit || '继承时间列'}）；向导模板的绝对 T0 = 库内源的 transients.t0。声明原文：${esc(src)}">${dateTxt ? `源 t0 ${dateTxt}` : '相对零点'}</span>`;
+  if (ez.kind === 'column')
+    return `<span title="${esc(src)}">由时间列给出</span>`;
+  return '—';
+}
+
 function _renderLibrary() {
   const tb = document.getElementById('tlLibBody');
   if (!tb) return;
   if (!_templates.length) {
-    tb.innerHTML = '<tr><td colspan="11" class="text-secondary">库为空</td></tr>';
+    tb.innerHTML = '<tr><td colspan="12" class="text-secondary">库为空</td></tr>';
     return;
   }
   tb.innerHTML = _templates.map(t => {
@@ -207,20 +195,22 @@ function _renderLibrary() {
     const idom = t.in_domain;
     const idomTxt = idom && idom.total ? `${idom.answered}/${idom.total}` : '—';
     const tv = t.t_valid_days ? `${t.t_valid_days[0].toFixed(1)}…${t.t_valid_days[1].toFixed(1)}` : '—';
-    const canRebuild = isAuthed() && t.state === 'stale';
+    const canRebuild = isAuthed() && t.state !== 'deleted';   // 常驻：按当前 manifest+CSV 重建
+    const canBatch = isAuthed() && t.state === 'stale';       // 勾选批量只收 stale
     const canDelete = isAdmin() && t.origin === 'catalog';
     return `<tr class="tl-row ${t.state === 'stale' ? 'opacity-75' : ''}" data-id="${esc(t.id)}" style="cursor:pointer">
-      <td>${canRebuild ? `<input type="checkbox" class="form-check-input tl-batch-cb" data-id="${esc(t.id)}" title="勾选后可批量重建">` : ''}</td>
+      <td>${canBatch ? `<input type="checkbox" class="form-check-input tl-batch-cb" data-id="${esc(t.id)}" title="勾选后可批量重建">` : ''}</td>
       <td><code>${esc(t.id)}</code></td>
       <td>${esc(t.label || '')}</td>
       <td>${esc(ORIGIN_LABEL[t.origin] || t.origin)}</td>
       <td>${t.z != null ? t.z : '—'}</td>
       <td>${esc(t.distance_kind || '—')}</td>
+      <td class="text-nowrap small">${_t0CellHTML(t)}</td>
       <td>${(t.bands || []).length ? esc(sortBandsByFreq(t.bands).join(' ')) : '—'}</td>
       <td>${tv}</td><td>${idomTxt}</td>
       <td><span class="badge ${cls}" title="${esc(_staleTitle(t.stale_because))}">${label}</span></td>
       <td class="text-nowrap">
-        ${canRebuild ? `<button class="btn btn-sm btn-outline-warning py-0 tl-rebuild" data-id="${esc(t.id)}" title="重建面（API-7）">重建</button>` : ''}
+        ${canRebuild ? `<button class="btn btn-sm btn-outline-warning py-0 tl-rebuild" data-id="${esc(t.id)}" title="按当前 manifest+CSV 重建面（API-7）：重算指纹、域内率与 Δμ。stale 模板必须重建才恢复预测">重建</button>` : ''}
         ${canDelete ? `<button class="btn btn-sm btn-outline-danger py-0 tl-delete" data-id="${esc(t.id)}" title="删除（API-11）">删除</button>` : ''}
       </td></tr>`;
   }).join('');
@@ -265,6 +255,7 @@ async function _doBatchRebuild() {
 // ─── ④ 模板详情 / QC ───
 async function _loadDetail(id) {
   _detailId = id;
+  _detailData = null;
   const card = document.getElementById('tlDetailCard');
   const body = document.getElementById('tlDetailBody');
   card.style.display = '';
@@ -272,6 +263,7 @@ async function _loadDetail(id) {
   body.innerHTML = '<span class="text-secondary">加载中…</span>';
   try {
     const d = await getTmplibTemplate(id);
+    _detailData = d;
     body.innerHTML = _detailHTML(d);
   } catch (e) {
     body.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`;
@@ -279,11 +271,20 @@ async function _loadDetail(id) {
 }
 
 // ─── ④b 误差预算面板（API-10；F-34/35/36/37/39） ───
+const BUDGET_INTRO = '这是什么：对「该模板搬到红移 z 后、波段 X 的预测光变」，在其峰值处把星等的不确定度（1σ）拆成几个互相独立的来源，逐项给出（单位 mag），平方和合成 total。回答的问题是「这条模板曲线的星等可信到多少、最大的误差来自哪里」——它不是对某个实测源的拟合优度。';
+const BUDGET_TERM_NOTE = {
+  photometric: '测光误差传播：把每个实测点的星等误差当噪声做 Monte-Carlo 重建面，看预测星等晃多少。n_draws=0 时本项缺席（不可测，不是 0，F-34）',
+  sed_residual: 'SED 残差：建面后模型面与实测点之间没追平的部分，逐带列出；折算到非节点带靠下面的增益表',
+  colour_term: '模式选择：波段积分（band）与单色近似（mono）两种算法之差带来的不确定度',
+  distance: '距离：μ/d_L 或红移（经 Planck18 + 本征速度项）的不确定度折算成星等；很多模板里这是最大项',
+};
+
 function _budgetCtlHTML(d) {
   const bands = sortBandsByFreq((d.surface && d.surface.bands) || Object.keys(d.per_band || {}));
   const z = (d.manifest || {}).z;
   return `
     <div class="fw-bold mt-2">误差预算（API-10）</div>
+    <div class="small text-secondary mb-1" style="max-width:860px">${esc(BUDGET_INTRO)}</div>
     <div class="d-flex flex-wrap gap-1 align-items-center mb-1">
       <select class="form-select form-select-sm" id="tlBudgetBand" style="width:auto" title="预算针对的观测波段">
         ${bands.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('')}
@@ -291,7 +292,7 @@ function _budgetCtlHTML(d) {
       <input class="form-control form-control-sm" id="tlBudgetZ" style="width:90px"
              value="${z != null ? z : ''}" placeholder="z" title="红移（默认模板自身 z）">
       <input class="form-control form-control-sm" id="tlBudgetDraws" style="width:150px"
-             placeholder="n_draws 默认 32" title="Monte-Carlo 次数：0=只算系统项；3–200；默认 32（实测 2.4–3.1 s；200 实测 13.7–18.1 s）">
+             placeholder="n_draws 默认 32" title="Monte-Carlo 次数：0=只算系统项（此时测光项缺席而非 0）；3–200；默认 32（实测 2.4–3.1 s；200 实测 13.7–18.1 s）">
       <button class="btn btn-sm btn-outline-primary py-0" id="tlBudgetRun">计算预算</button>
     </div>
     <div id="tlBudgetOut"></div>`;
@@ -306,14 +307,15 @@ function _budgetHTML(d) {
   const sed = comps.sed_residual || {};
   const allBands = sed.all_bands_mag || {};
   const dist = d.distance || {};
-  const TERM_LABEL = { photometric: 'photometric（测光 MC）', sed_residual: 'sed_residual（SED 残差）',
+  const TERM_LABEL = { photometric: 'photometric（测光误差传播）', sed_residual: 'sed_residual（SED 残差）',
                        colour_term: 'colour_term（模式选择）', distance: 'distance（距离）' };
   const termRows = Object.entries(TERM_LABEL).map(([k, label]) => {
+    const note = `<br><span class="text-secondary">${esc(BUDGET_TERM_NOTE[k])}</span>`;
     if (!(k in terms))  // F-34：不可测项缺席而非 0
-      return `<tr class="tl-budget-term" data-term="${k}"><td>${label}</td><td class="text-secondary">缺席（不可测，不是 0）</td></tr>`;
+      return `<tr class="tl-budget-term" data-term="${k}"><td>${label}${note}</td><td class="text-secondary">缺席（不可测，不是 0）</td></tr>`;
     const dom = b.dominant === k;
-    return `<tr class="tl-budget-term" data-term="${k}"><td>${label}${dom ? ' <span class="badge text-bg-danger">dominant</span>' : ''}</td>
-      <td>${terms[k]}</td></tr>`;
+    return `<tr class="tl-budget-term" data-term="${k}"><td>${label}${dom ? ' <span class="badge text-bg-danger" title="最大误差来源">最大项</span>' : ''}${note}</td>
+      <td class="text-nowrap">${terms[k]} mag</td></tr>`;
   }).join('');
   const gainRows = Object.entries(perBand).map(([band, g]) => {
     // F-36：gain_source 不是 unfold fit 的标灰 —— 那个 −2.5 是定义不是测量
@@ -340,15 +342,15 @@ function _budgetHTML(d) {
       <br><span class="text-secondary">kind=${esc(desc.kind || '?')}，z=${desc.z != null ? desc.z : '—'}，z_err=${desc.z_err != null ? desc.z_err : '不传播'}，
       d_L=${desc.d_L_Mpc != null ? Number(desc.d_L_Mpc).toFixed(1) : '—'} Mpc${desc.cosmology ? `（${esc(desc.cosmology)}）` : ''}</span>
     </div>
-    ${gainRows ? `<div class="fw-bold small">逐带实测色标增益（F-36；灰行 = 非 unfold fit，−2.5 是定义不是测量）</div>
+    ${gainRows ? `<div class="fw-bold small">逐带实测色标增益（把 SED 残差折算到相邻非节点带的斜率 dM/d(log₁₀Lν)，单位 mag/dex；灰行 = 非 unfold fit，−2.5 是定义不是测量）</div>
       <table class="table table-sm small mb-1" style="max-width:560px">
-        <thead><tr><th>波段</th><th>gain (mag/dex)</th><th>gain_source</th></tr></thead><tbody>${gainRows}</tbody></table>` : ''}
-    ${sedRows ? `<details open class="mb-1"><summary class="small fw-bold">sed_residual 逐带表（F-37；本带 ${sed.band_value_mag ?? '—'}，${esc(sed.source || '')}）</summary>
+        <thead><tr><th>波段</th><th>gain (mag/dex)</th><th>gain_source（增益从哪个拟合来）</th></tr></thead><tbody>${gainRows}</tbody></table>` : ''}
+    ${sedRows ? `<details open class="mb-1"><summary class="small fw-bold">SED 残差逐带表（建面后面与实测点没追平的部分，逐带列出；本带 ${sed.band_value_mag ?? '—'}，${esc(sed.source || '')}）</summary>
       <table class="table table-sm small" style="max-width:400px">
         <thead><tr><th>波段</th><th>residual (mag)</th></tr></thead><tbody>${sedRows}</tbody></table></details>` : ''}
     ${(b.warnings || []).length ? `<div class="fw-bold small">引擎 warnings（F-39 原样透传）</div>
       <ul class="small text-warning-emphasis mb-1">${b.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
-    <div class="small text-secondary">n_draws=${b.n_draws}，seed=${b.seed}（固定可复现）；峰值处 ${b.at_peak ? `${b.at_peak.mag_AB} ± ${b.at_peak.mag_AB_err} AB` : '—'}</div>`;
+    <div class="small text-secondary">n_draws=${b.n_draws}（Monte-Carlo 重建次数），seed=${b.seed}（随机种子固定，同参数结果可复现）；峰值处 ${b.at_peak ? `${b.at_peak.mag_AB} ± ${b.at_peak.mag_AB_err} AB` : '—'}</div>`;
 }
 
 async function _doBudget() {
@@ -402,6 +404,27 @@ function _qcHTML(qc) {
     </details>`;
 }
 
+// T0 / 时间零点的可读化（详情卡）：epoch_zero 声明 + time_origin_defaults 口径
+function _timeHTML(d) {
+  const m = d.manifest || {};
+  const t = m.time || {};
+  const ez = t.epoch_zero || {};
+  const od = d.time_origin_defaults || {};
+  const KIND_LABEL = { fixed: '固定零点', first_point: '表内首行', column: '由列给出' };
+  let ezTxt = KIND_LABEL[ez.kind] || ez.kind || '—';
+  if (ez.kind === 'fixed')
+    ezTxt += `（值 ${ez.value ?? '—'}，单位 ${ez.unit || `继承时间列 ${t.unit || ''}`}）`;
+  const ezSrc = (ez.source || '').trim();
+  const ORIGIN_TXT = {
+    'epoch-zero-value': `绝对零点已在 manifest 声明（MJD ${od.t_zero_mjd ?? '—'}）`,
+    'epoch-zero-source': `零点只有文字声明；对比页建议基准取自 ${esc(od.suggested_source || '—')}${od.suggested_mjd != null ? `（MJD ${od.suggested_mjd}）` : ''}`,
+    'table-first-row': `零点是表内最早一行（不是事件时刻）${od.t_zero_mjd != null ? `，首行 MJD ${od.t_zero_mjd}` : ''}；${esc(od.suggested_source || '')}${od.suggested_mjd != null ? `（MJD ${od.suggested_mjd}）` : ''}`,
+  };
+  return `列 ${esc(t.column || '')} / ${esc(t.unit || '')} / ${esc(t.frame || '')}；零点：${esc(ezTxt)}
+    ${ezSrc ? `<br><span class="text-secondary">声明：${esc(ezSrc.length > 180 ? ezSrc.slice(0, 180) + '…' : ezSrc)}</span>` : ''}
+    ${ORIGIN_TXT[od.kind] ? `<br><span class="text-secondary">对比页口径：${ORIGIN_TXT[od.kind]}</span>` : ''}`;
+}
+
 function _detailHTML(d) {
   const m = d.manifest || {};
   const mu = d.mu;
@@ -410,16 +433,22 @@ function _detailHTML(d) {
              : `Δμ 无对照（${esc(mu.message || '库内无对应源')}）`)
     : '';
   return `
+    <div class="d-flex justify-content-between align-items-center">
+      <div><span class="badge ${(STATE_BADGE[d.state] || ['text-bg-secondary'])[0]}">${esc(d.state)}</span>
+        <span class="text-secondary">${esc(ORIGIN_LABEL[d.origin] || d.origin || '')}</span></div>
+      ${isAdmin() ? `<button class="btn btn-sm btn-outline-primary py-0 tl-edit" data-id="${esc(d.id)}"
+        title="编辑模板元数据（API-14，管理员）：显示名/类别/红移/距离/T0 零点声明/require_min_bands/引用。行集口径不可编辑，须删除后重新建面">编辑元数据</button>` : ''}
+    </div>
     <div class="row">
       <div class="col-md-6">
-        <div><span class="badge ${(STATE_BADGE[d.state] || ['text-bg-secondary'])[0]}">${esc(d.state)}</span>
-          <span class="text-secondary">${esc(ORIGIN_LABEL[d.origin] || d.origin || '')}</span></div>
         <table class="table table-sm small mt-1">
           <tbody>
+            <tr><td>显示名</td><td>${esc(d.label || '')}</td></tr>
             <tr><td>object_class</td><td>${esc(m.object_class || '')}</td></tr>
             <tr><td>z</td><td>${m.z != null ? m.z : '—'}（${esc((m.redshift || {}).source || '')}）</td></tr>
-            <tr><td>距离</td><td>${esc((m.distance || {}).kind || '')}</td></tr>
-            <tr><td>时间</td><td>列 ${esc((m.time || {}).column || '')} / ${esc((m.time || {}).unit || '')} / ${esc((m.time || {}).frame || '')}；零点 ${esc(JSON.stringify((m.time || {}).epoch_zero || {}))}</td></tr>
+            <tr><td>距离</td><td>${esc((m.distance || {}).kind || '')}${(m.distance || {}).mu != null ? `，μ=${m.distance.mu}` : ''}${(m.distance || {}).d_L_Mpc != null ? `，d_L=${m.distance.d_L_Mpc} Mpc` : ''}</td></tr>
+            <tr><td>T0 / 时间零点</td><td>${_timeHTML(d)}</td></tr>
+            <tr><td>require_min_bands</td><td>${(m.validity || {}).require_min_bands ?? '—'}</td></tr>
             <tr><td>消光</td><td>mw_removed=${(m.reddening || {}).mw_removed}，host=${esc((m.reddening || {}).host_removed || '')}</td></tr>
             ${muTxt ? `<tr><td>Δμ</td><td>${muTxt}</td></tr>` : ''}
           </tbody></table>
@@ -430,12 +459,184 @@ function _detailHTML(d) {
     </div>`;
 }
 
+// ─── ④c 元数据编辑（API-14，管理员） ───
+function _edFld(id, label, value, opts = {}) {
+  const input = opts.textarea
+    ? `<textarea class="form-control form-control-sm font-monospace" id="${id}" rows="${opts.rows || 3}"
+        ${opts.title ? `title="${esc(opts.title)}"` : ''}>${esc(value ?? '')}</textarea>`
+    : `<input class="form-control form-control-sm" id="${id}" value="${esc(value ?? '')}"
+        ${opts.ph ? `placeholder="${esc(opts.ph)}"` : ''} ${opts.title ? `title="${esc(opts.title)}"` : ''}>`;
+  return `<div class="mb-1" style="max-width:${opts.width || 460}px">
+    <label class="form-label small mb-0">${label}</label>
+    ${input}
+    ${opts.note ? `<div class="form-text">${esc(opts.note)}</div>` : ''}
+  </div>`;
+}
+
+function _editFormHTML(d) {
+  const m = d.manifest || {};
+  const red = m.redshift || {};
+  const dist = m.distance || {};
+  const val = m.validity || {};
+  const ez = (m.time || {}).epoch_zero || {};
+  const zkinds = (_cfg.enums && _cfg.enums.z_error_kinds) ||
+    ['line-precision', 'line-scatter', 'unestablished'];
+  const dkinds = (_cfg.enums && _cfg.enums.distance_kinds) ||
+    ['cosmological', 'measured', 'measured-secondary', 'redshift-velocity-field'];
+  const ezKind = ez.kind === 'first_point' ? 'first_point' : 'fixed';
+  return `
+    <div class="alert alert-light border py-1 small mb-2">
+      保存即直接改写 <code>templates/${esc(d.id)}.yaml</code>：写入前先做合法性校验，失败则原文件不动。
+      历史版本由 AJST-Data 仓库的 git 历史承担，不再单独备份。manifest 一变指纹即变、面过期，
+      默认「保存后立即重建」（1–3 s）恢复可读。
+      行集口径（rowset / 缺系统处置 / 波段选择 / CSV）是冻结数据，不在此编辑——要改须删除后走「创建光变模板」向导重建。
+    </div>
+    <div class="row small">
+      <div class="col-lg-6">
+        ${_edFld('tlEdLabel', '显示名 label', d.label, { width: 560 })}
+        ${_edFld('tlEdClass', 'object_class', m.object_class, { width: 560 })}
+        ${_edFld('tlEdZ', 'redshift.value', red.value, { width: 560 })}
+        ${_edFld('tlEdZSrc', 'redshift.source（必填，出处）', red.source, { textarea: true, rows: 4, width: 560 })}
+        <div class="d-flex gap-1 mb-1" style="max-width:560px">
+          <div style="flex:1">${_edFld('tlEdZErr', 'redshift.error（可空；清空=删声明）', red.error)}</div>
+          <div style="flex:1">
+            <label class="form-label small mb-0">error_kind（有 error 必选）</label>
+            <select class="form-select form-select-sm" id="tlEdZKind">
+              <option value="">—</option>
+              ${zkinds.map(k => `<option value="${esc(k)}" ${red.error_kind === k ? 'selected' : ''}>${esc(k)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="fw-bold mt-2 mb-1">T0 / 时间零点声明（epoch_zero）</div>
+        <div class="form-text mb-1">只声明「零点是什么」，不改 CSV 数值。向导模板的绝对 T0 = 库内源的 transients.t0（在源详情页改）；first_point = 零点是表内最早一行（不是事件时刻）。</div>
+        <div class="d-flex gap-1 mb-1" style="max-width:560px">
+          <div style="flex:1">
+            <label class="form-label small mb-0">kind</label>
+            <select class="form-select form-select-sm" id="tlEdEzKind">
+              <option value="fixed" ${ezKind === 'fixed' ? 'selected' : ''}>fixed（固定零点）</option>
+              <option value="first_point" ${ezKind === 'first_point' ? 'selected' : ''}>first_point（表内首行）</option>
+            </select>
+          </div>
+          <div style="flex:1">${_edFld('tlEdEzValue', 'value（fixed 必填）', ez.value)}</div>
+          <div style="flex:1">
+            <label class="form-label small mb-0">unit（空=继承时间列 ${esc((m.time || {}).unit || '?')}）</label>
+            <select class="form-select form-select-sm" id="tlEdEzUnit">
+              ${[['', '（继承）'], ['s', 's'], ['day', 'day'], ['mjd', 'mjd']].map(([v, l]) =>
+                `<option value="${v}" ${(ez.unit || '') === v ? 'selected' : ''}>${l}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        ${_edFld('tlEdEzSrc', 'epoch_zero.source（零点含义的文字声明，对比页提示引用它）', ez.source, { textarea: true, rows: 4, width: 560 })}
+      </div>
+      <div class="col-lg-6">
+        <div class="mb-1" style="max-width:560px">
+          <label class="form-label small mb-0">distance.kind</label>
+          <select class="form-select form-select-sm" id="tlEdDistKind">
+            ${dkinds.map(k => `<option value="${esc(k)}" ${dist.kind === k ? 'selected' : ''}>${esc(k)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="d-flex gap-1 mb-1" style="max-width:560px">
+          <div style="flex:1">${_edFld('tlEdMu', 'μ（距离模数 mag）', dist.mu)}</div>
+          <div style="flex:1">${_edFld('tlEdDL', 'd_L（Mpc）', dist.d_L_Mpc)}</div>
+          <div style="flex:1">${_edFld('tlEdDLErr', 'd_L_err（Mpc，可空）', dist.d_L_err_Mpc)}</div>
+        </div>
+        <div class="form-check mb-1">
+          <input class="form-check-input" type="checkbox" id="tlEdLowZ" ${dist.allow_low_z ? 'checked' : ''}>
+          <label class="form-check-label small" for="tlEdLowZ">allow_low_z（z&lt;0.02 且 cosmological 时必须勾，否则引擎拒）</label>
+        </div>
+        ${_edFld('tlEdDistSrc', 'distance.source（距离出处）', dist.source, { textarea: true, rows: 3, width: 560 })}
+        ${_edFld('tlEdRmb', 'require_min_bands（≥2；>2 时下面 notes 必填理由）', val.require_min_bands, { width: 560 })}
+        ${_edFld('tlEdNotes', 'validity.notes', val.notes, { textarea: true, rows: 4, width: 560 })}
+        ${_edFld('tlEdCite', '追加一条引用（进 provenance.citations；已有条目请直接改 YAML）', '', { textarea: true, rows: 2, width: 560 })}
+        <div class="form-check mt-2">
+          <input class="form-check-input" type="checkbox" id="tlEdRebuild" checked>
+          <label class="form-check-label small" for="tlEdRebuild">保存后立即重建面（推荐；不勾则模板进入 stale，需在清单里手动重建）</label>
+        </div>
+      </div>
+    </div>
+    <div class="mt-2 d-flex gap-2 align-items-center">
+      <button class="btn btn-sm btn-primary" id="tlEdSave" data-id="${esc(d.id)}">保存（API-14）</button>
+      <button class="btn btn-sm btn-outline-secondary" id="tlEdCancel">取消</button>
+      <span class="small text-danger" id="tlEdMsg"></span>
+    </div>`;
+}
+
+function _showEditForm() {
+  if (!_detailData || !isAdmin()) return;
+  document.getElementById('tlDetailBody').innerHTML = _editFormHTML(_detailData);
+}
+
+async function _doEdit(id) {
+  const g = (x) => { const el = document.getElementById(x); return el ? el.value.trim() : ''; };
+  const numOrNull = (v) => (v === '' ? null : Number(v));
+  const msg = document.getElementById('tlEdMsg');
+  const payload = {
+    label: g('tlEdLabel'),
+    object_class: g('tlEdClass'),
+    redshift: {
+      value: numOrNull(g('tlEdZ')),
+      source: g('tlEdZSrc'),
+      error: numOrNull(g('tlEdZErr')),
+      error_kind: g('tlEdZErr') ? (document.getElementById('tlEdZKind').value || null) : null,
+    },
+    distance: {
+      kind: document.getElementById('tlEdDistKind').value,
+      mu: numOrNull(g('tlEdMu')),
+      d_L_Mpc: numOrNull(g('tlEdDL')),
+      d_L_err_Mpc: numOrNull(g('tlEdDLErr')),
+      allow_low_z: document.getElementById('tlEdLowZ').checked,
+      source: g('tlEdDistSrc'),
+    },
+    validity: {
+      require_min_bands: parseInt(g('tlEdRmb'), 10),
+      notes: g('tlEdNotes'),
+    },
+    epoch_zero: {
+      kind: document.getElementById('tlEdEzKind').value,
+      value: numOrNull(g('tlEdEzValue')),
+      unit: document.getElementById('tlEdEzUnit').value || null,
+      source: g('tlEdEzSrc'),
+    },
+    rebuild: document.getElementById('tlEdRebuild').checked,
+  };
+  const cite = g('tlEdCite');
+  if (cite) payload.citation_append = cite;
+  if (payload.redshift.value == null || !isFinite(payload.redshift.value) || payload.redshift.value < 0) {
+    msg.textContent = 'redshift.value 必须是 ≥0 的数值'; return;
+  }
+  if (!payload.redshift.source) { msg.textContent = 'redshift.source 必填'; return; }
+  if (payload.redshift.error != null && !payload.redshift.error_kind) {
+    msg.textContent = '填了 redshift.error 必须选 error_kind（Q-12）'; return;
+  }
+  if (payload.distance.kind !== 'cosmological'
+      && payload.distance.mu == null && payload.distance.d_L_Mpc == null) {
+    msg.textContent = '非 cosmological 距离必须填 μ 或 d_L（U-22）'; return;
+  }
+  if (!(payload.validity.require_min_bands >= 2)) {
+    msg.textContent = 'require_min_bands 必须是 ≥2 的整数'; return;
+  }
+  const btn = document.getElementById('tlEdSave');
+  btn.disabled = true; msg.textContent = '';
+  try {
+    const res = await editTmplibTemplate(id, payload);
+    showToast(res.rebuilt
+      ? `${id} 已保存并重建（state=${res.state}；改动：${(res.changed || []).join('、')}）`
+      : `${id} 已保存（未重建，模板已 stale）`, res.rebuilt ? 'success' : 'warning');
+    _loadDetail(id);
+    _loadLibrary();
+  } catch (e) {
+    btn.disabled = false;
+    const missing = e.payload && e.payload.missing;
+    msg.textContent = e.message + (missing && missing.length ? `（缺：${missing.join('、')}）` : '');
+  }
+}
+
 // ─── ③ 向导 ───
 function _renderWizard() {
   const body = document.getElementById('tlWizardBody');
   if (!body) return;
   if (!isAuthed()) {
-    body.innerHTML = '<div class="text-secondary small">造模板需要登录（API-4/5/7 均要求登录；删除需管理员）。</div>';
+    body.innerHTML = '<div class="text-secondary small">创建光变模板需要登录（API-4/5/7 要求登录）；编辑模板元数据与删除需管理员（API-14/11）。</div>';
     return;
   }
   const steps = ['选源', '行账与波段', '强制声明', '建面与 QC'];
@@ -895,6 +1096,14 @@ document.addEventListener('click', async (ev) => {
   if (t.id === 'tlBuild') { _doBuild(); return; }
   if (t.id === 'tlBudgetRun') { _doBudget(); return; }
   if (t.id === 'tlBatchRebuild') { _doBatchRebuild(); return; }
+  const editBtn = t.closest('.tl-edit');
+  if (editBtn) { ev.stopPropagation(); _showEditForm(); return; }
+  if (t.id === 'tlEdSave') { _doEdit(t.dataset.id); return; }
+  if (t.id === 'tlEdCancel') {
+    if (_detailData)
+      document.getElementById('tlDetailBody').innerHTML = _detailHTML(_detailData);
+    return;
+  }
   if (t.classList.contains('tl-batch-cb')) { ev.stopPropagation(); return; }  // 不触发行点击详情
   const rebuildBtn = t.closest('.tl-rebuild');
   if (rebuildBtn) {
