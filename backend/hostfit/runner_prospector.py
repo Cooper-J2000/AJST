@@ -37,11 +37,12 @@ from app import get_session
 from models import FilterDef
 from hostfit.runner import _apply_gext_correction, _mag_to_mjy
 
-# FSPS 数据目录解析优先级：已设 SPS_HOME > AJST_SPS_HOME > 本机硬编码回退
-# （对照 runner.py 的 pcigale 二进制解析模式；换机器时必须设环境变量）。
+# FSPS 数据目录解析优先级：已设 SPS_HOME > AJST_SPS_HOME > ~/local/fsps 约定位置
+# （对照 runner.py 的 pcigale 二进制解析模式；换机器时按需设环境变量覆盖）。
 # 必须在 import prospect/fsps 之前设置，故放在模块级。
 os.environ.setdefault('SPS_HOME',
-                      os.environ.get('AJST_SPS_HOME') or '/home/ajst/local/fsps')
+                      os.environ.get('AJST_SPS_HOME')
+                      or os.path.expanduser('~/local/fsps'))
 
 _MJY_PER_MAGGIE = 3.631e6   # 1 maggie = 3631 Jy
 _GYR_PER_YR = 1e9

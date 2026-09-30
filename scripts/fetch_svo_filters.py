@@ -18,10 +18,11 @@
       'svo_id': '...' | None,         # None 表示用 pcigale 自带库
     }
 
-用法（在仓库根目录或任意目录运行均可）：
-    /home/ajst/miniconda3/envs/burst_advocate/bin/python scripts/fetch_svo_filters.py
-    /home/ajst/miniconda3/envs/burst_advocate/bin/python scripts/fetch_svo_filters.py --force
-    /home/ajst/miniconda3/envs/burst_advocate/bin/python scripts/fetch_svo_filters.py uvot-uvw2 uvot-v
+用法（在仓库根目录或任意目录运行均可，用项目所用的 Python 解释器，例如
+`<conda-env>/bin/python`）：
+    python scripts/fetch_svo_filters.py
+    python scripts/fetch_svo_filters.py --force
+    python scripts/fetch_svo_filters.py uvot-uvw2 uvot-v
 
 幂等：已有 transmission 且已注册 pcigale 的默认跳过，--force 覆盖重做。
 """

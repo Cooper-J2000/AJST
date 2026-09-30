@@ -1,13 +1,12 @@
 # AJST 运行环境锁定（全量快照，供 scripts/bootstrap_env.sh 重建）
 #
-# 来源：pip freeze @ /home/ajst/miniconda3/envs/burst_advocate/bin/python
-#       Python 3.12.13
+# 来源：pip freeze @ <conda 环境>/bin/python（本项目用 burst_advocate 环境，Python 3.12.13）
 # 生成：2026-09-25（实测可用；requirements.txt 是人工维护的
 #       直接依赖与版本下界，本文件是"这套环境实际装了什么"的完整记录）
 #
 # ⚠ 已剔除的僵尸条目（源码目录早已不存在，出现在这里会让新机器装不上）：
-#   -e /home/ajst/Astro_Script/ajst_phot   ← 路径不存在，且生产代码不 import
-#   -e /home/ajst/Astro_Script/photometry_ajst   ← 路径不存在，且生产代码不 import
+#   -e <本地路径>/ajst_phot   ← 路径不存在，且生产代码不 import
+#   -e <本地路径>/photometry_ajst   ← 路径不存在，且生产代码不 import
 #
 # 未覆盖（重建时需要单独处理，见 bootstrap_env.sh 末尾的打印）：
 #   - 数据库内容（catadata/ 与 ajst_catalog 库，不在本仓库）

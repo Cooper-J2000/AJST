@@ -43,4 +43,4 @@ configobj>=5.0
 # corner>=2.2      # 后验角图
 # matplotlib>=3.8
 # 运行前需设 SPS_HOME 指向 FSPS 数据目录（未设时后端回退 AJST_SPS_HOME，
-# 再回退本机默认 /home/ajst/local/fsps）
+# 再回退 ~/local/fsps 约定位置）
