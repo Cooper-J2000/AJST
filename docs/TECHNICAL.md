@@ -2410,6 +2410,47 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 
 ## 十一、版本历史
 
+### v2.31（2026-10-02）— 光谱 × 滤光片工具（specphot，P1–P3 分期交付）
+
+- **新工具条目「光谱 × 滤光片」**：`backend/specphot/` 十六个模块（逻辑下沉、路由薄，见本文
+  「光谱 × 滤光片」小节）+ `frontend/js/specphot/` 九个模块；页面 `#/tools/specphot`
+  （空工作台）与 `#/tools/specphot/<spectrum_id>`（直达库内谱）共用一个路由分支
+  （`app.js` 的 `specphotRe`），详情页光谱行加直达入口（仅装载，不自动计算），
+  工具箱菜单加条目
+- **八个端点**（`/api/specphot`）：`GET meta` / `curve/<filter_id>` / `health`，
+  `POST parse` / `ebv` / `photometry` / `continuum` / `line`。所有响应（含错误）带
+  `spec_phot_version`（口径版本戳，当前 `1.0.0`，与站点版本 vX.YZ 无关）与 `warnings[]`；
+  未到期子功能一律 501 `feature_disabled` 占位（响应含 `phase`）；宿主无 501/504 兜底
+  handler，一律显式 jsonify
+- **S1 合成测光（P1 已上线）**：库内谱或上传件 × 波段曲线 → 合成星等，photon/energy 加权、
+  direct/anchored/model 定标、锚点集、银河消光、AR(1) 误差放大
+- **S2 连续谱（P2 切片 2b + P2b）**：六模型 pl/pl_dust/pl2/bb/pl_bb/dbb + poly 基线、
+  `host_ext` 三态（off/fit/prescribe）、模型比较（F 检验 / ΔBIC；pl→pl2 走 Davies 参数化
+  自助）、闭包三候选、`de_reddened` 纯派生曲线
+- **S3 谱线（P3 切片 2）**：三步向导的计算核（线区 + `line_kind` 必选 → 基线 → 轮廓拟合
+  gauss1/gauss2/lorentz/voigt，voigt 仅当 R 可得）、单线 `LineResult`（EW 三项分解 /
+  线流量与 depth 互斥空值 / snr_res 门 / 自助对照）、`frame_gates` 两道独立的门；
+  `vel_*`/`z_fit` 恒 null（M-6 未复核，强提交 `velocity_output=true` ⇒ E-14）
+- **P1b 预处理读侧**（`preprocess.py` 是 F-80 序列化与 PreprocessedSpectrum 唯一载体）：
+  响应谱级 `preprocess{}` 18 键恒在、`mask_hash`/`preprocess_hash` 双哈希进摘要行与缓存键、
+  四类掩膜并集（不截断、不插值）、误差列退化判定六值闭集 {ok, all_zero, constant, nonfinite,
+  negative, flat_relative}、离群点只找候选绝不自动剔除；因子/平滑的**算术**属 P2（E-13）
+- **P2+ FITS/ECSV 上传分支**（F-76 / T-81，零新增依赖）：`reader.py` 增 `load_upload_fits`
+  （BINTABLE/TABLE 按列名/TUNIT 识别；一维 ImageHDU 走线性 WCS，LOG/缺 WCS ⇒ E-14）与
+  `load_upload_ecsv`；λ 单位换算一律 `astropy.units`，波长列无单位 ⇒ E-14（不按 Å 猜）
+- **全链只读**：不写库、上传件不落盘、不改 `filters` 表——曲线口径 `curve_kind` 登记在代码侧
+  `specphot/registry.py`（`etl.py --filters` 会整块覆盖 `extra_data`）
+- 验收证据：`AJST_PYTHON=<conda env>/bin/python scripts/acceptance/run_all.sh` →
+  **830 passed, 4 skipped in 230.26 s**（首轮曾因整轮负载让
+  `test_l2_specphot_p2b_pl2.py::test_q13_pl2_vocabulary` 撞上 ST-5 5 s 硬超时拿到 504，
+  单跑该文件 6 passed，重跑全绿）；`GET /api/specphot/health` → 200
+  （`spec_phot_version 1.0.0`，deps astropy/dust_extinction/dustmaps 全 true）；验收资产 =
+  `tests/acceptance/` 下 `conftest.py`（T-24 周期级只读快照）+ `regen_specphot_golden.py` +
+  `golden_specphot_p1/*.json`（T-75① 基线）+ 24 个 `test_l1/l2_specphot_*`（L1 12 / L2 12）
+- 标记与 tag：tag 打**批次末提交**（本轮四条 = `bf0b332` 后端 / `f21416c` 前端 /
+  `4b03226` 验收 / 本条目所在提交）。理由见 `docs/COMMIT-CONVENTION.md` §5：标记提交在
+  批次中间时，tag 会漏掉同批的后续提交
+
 ### v2.30（2026-09-29）— 主页事件日历 / T0 权限锁定 / AJST-Data 规范化与开放契约
 
 - **主页事件日历**：GitHub 贡献日历风格热力格点图（新模块 `frontend/js/pages/home_calendar.js`），
@@ -2428,6 +2469,50 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
   （P0 §4.1 契约；显示与状态合成行为不变，`[]`/`None` 同为"无漂移"）
 - 验收证据：T0 契约测试 6/6 过；validate.py 全量 2794 info + 2514 lc 零错误零警告；
   浏览器实测日历明暗主题/翻页/月份标签、facts 第 4 格版本显示
+
+### v2.29（2026-09-29）— 模板库直改写 / 库根迁 catadata / 对比页模板层与模板库管理页
+
+- **后端（`90d9475`）**：模板元数据编辑改直改写——校验 → 引擎自校验 → `tmp+rename` 原子
+  整写，不再按行号外科改写、不再逐次 `templates/.bak`（库随 AJST-Data 进 git 后历史交由 git）；
+  库根默认 `backend/tmplibrary` → `catadata/tmplibrary`（`paths.default_root` 与 guard
+  vendor 轴同步），随 AJST-Data 分发；移除 `library.json` 的 history 族谱记录（7 个调用点），
+  API-2 不再返回 `history`；predict 补 `mu`/`d_l_mpc` 直达输入与低 z 放行等口径修订
+- **前端（`104f2d9`）**：多源对比页加模板层（虚线叠加 ≤8 条、逐曲线基准时刻复用既有控件、
+  Δμ 口径卡、域判定条）、Y 轴新增 kcorr 模式（K 改正实测点空心 + 模板 M 曲线同图，
+  dragzoom 支持负 M 框选）、`#/tools/tmplib` 新页（守卫状态条三轴分色 / 库清单 /
+  四步造模板向导 / QC 与误差预算面板）；既有 flux/absmag 两模式行为逐位不变（T-29）
+- **验收（`0623785`）**：tmplib 五期用例 P0–P4 共 75 条，覆盖 design 文档 T-01…T-46 的
+  可执行子集——golden 锚点、三轴守卫、时间原点六类、Δμ 对账、行账/建面/软删硬删、
+  部分成功协议、CSV/JSON 同批互比、无自动建面三件套、只读快照
+- **文档（`5878489`）**：TECHNICAL 补 `/api/tmplib` 十三端点与 ChromaShift 依赖说明；
+  AGENTS 加 tmplibrary 规则
+- 验收证据：三个代码提交的正文均记录 `run_all.sh` → 335 passed（`90d9475` / `86a95cd` /
+  `ab3e595`）；`ab3e595` 另记录 P5 单跑 `53 passed`
+- 标记口径：tag v2.29 打在标记提交 `90d9475` 上，**不含**其后的收尾四条——`86a95cd`
+  （模板库/对比页交互修订、误差预算白话注释）、`ab3e595`（P5 编辑期验收）、`aef7a2b`
+  （export_filters 输出目录随迁）、`1fd2985`（文档同步迁库）——它们从 v2.30 的 tag 起进入
+
+### v2.28（2026-09-29）— 三层验收套件与预检入库 / 模板库 ×K 改正后端（ChromaShift）
+
+- **三层验收套件入库（`ab58757`）**：L1 纯口径 / L2 HTTP 契约 / L3 数据不变量共 251 条，
+  落在 `tests/acceptance/`；新增入口 `scripts/acceptance/run_all.sh`（`1d6173b`，解释器解析
+  `AJST_PYTHON` → systemd 用户单元 drop-in → `python3` 回退，绕开 conda 插件故障）
+- **preflight 预检（`2ab6ef1` / `64fbc1d` / `e717de3`）**：`scripts/preflight.sh` 十组护栏，
+  逐组对应已踩过的坑；改「本机名单驱动」（公开脚本不再出现源名）；新增库↔文件一致性只读检查
+- **仓库治理（`7fb7d34` / `347df71`）**：AGENTS.md 拆两份（入库通用规则 / 本机信息
+  `AGENTS.local.md`）；新增 `docs/COMMIT-CONVENTION.md` 提交约定与 `CLAUDE.md` 薄指针
+- **etl / sedfit**：`--dump` 增一致性报告与 `--prune`（默认不清理、有安全闸、可逆，`670f42b`，
+  口径见 `588e8fe`）；sedfit 闭包关系系数表复核原文后升 v1.2（系数未动，只补说明与 ref，`c16815f`）
+- **模板库 ×K 改正后端（`e033872`，ChromaShift 引擎）**：`backend/tmplib/` 包 +
+  `/api/tmplib` 十三个端点（config/guards/templates/predict/preview/compare/export/budget/
+  rebuild/delete/in_domain 等）；三轴 stale 守卫（引擎输入六指纹 / 库行指纹 `rows_sha256` /
+  vendor 滤光片 sha）、Δμ 成因归因、域内可答比例、强制声明向导建面、响应零绝对路径（T-30）；
+  ChromaShift 为可选依赖（editable 安装），旧引擎 `SN_redshift_v2` 保留为对照组
+- 验收证据：提交正文记录 `run_all.sh` → 326 passed；与旧引擎数值等价 375/375 golden 逐点一致
+  （锚点 sn2006aj B z=0.05 ⇒ [18.9688, 18.9459]）；生产实例重启后 API-1/2/6 实测通过
+- 标记口径：tag v2.28 打在标记提交 `e033872`（后端）上，**不含**同批三条后续——`104f2d9`
+  （对比页模板层 + 模板库管理页）、`0623785`（tmplib 五期验收）、`5878489`（文档）——
+  它们从 v2.29 的 tag 起进入
 
 ### v2.27（2026-09-24）— MJD/time 口径收尾：无 T0 可只录 MJD / 新增行实时互算
 
