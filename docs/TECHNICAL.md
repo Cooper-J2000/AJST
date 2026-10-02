@@ -479,6 +479,14 @@ time,time_err,time_unit,mjd,band,flux_density,flux_density_err,flux_density_unit
 | GET | `/api/tmplib/export.csv` / `.json` | 同 compare 参数的文件形式（同一批数据两种渲染；query 编码见下） | 否 |
 | GET | `/api/tmplib/in_domain/<id>` | 单模板域内可答比例缓存值与逐带归因 | 否 |
 | POST | `/api/tmplib/budget` | 单项误差预算（四项 + 逐带色标增益 + sed_residual 逐带表 + distance 单列；`n_draws∈{0}∪[3,200]` 默认 32，429 不排队） | 否 |
+| GET | `/api/specphot/meta?spectrum_id=` | 光谱×滤光片首屏 meta：全部波段 + 曲线覆盖/注册表指纹；带 `spectrum_id` 追加该谱口径两键/流量中位数/波长框架/读侧统计/可配对锚点数 | 否 |
+| GET | `/api/specphot/curve/<filter_id>` | 透射曲线点集（Å 升序、峰值归一）+ 登记口径 `curve_kind` | 否 |
+| GET | `/api/specphot/health` | specphot 版本戳、计算闸门余量、结果缓存条目数、`deps{astropy, dust_extinction, dustmaps}` 可用性 | 否 |
+| POST | `/api/specphot/parse` | 上传/粘贴光谱只解析（规范化数组 + `spec_hash` + 读侧统计；不落盘不入库）；文本与 `/api/spectra/upload` 同一语法；P2+ 起另收 `.fits`（`content_b64`）与 `.ecsv`（`text`），格式探测分发（F-76/T-81） | 登录 |
+| POST | `/api/specphot/ebv` | 按坐标（HMS 或十进制度字符串）查银河 E(B−V)（CSFD+P92；图不可用 ⇒ 200 + `available=false`，不 500） | 登录 |
+| POST | `/api/specphot/photometry` | S1 合成测光（**P1 已上线**）：库内谱或上传件 × 波段曲线的 S1 合成星等（photon/energy 加权、direct/anchored/model 定标、锚点集、银河消光、AR(1) 误差放大）；诊断六开关随 P2c/P3c 开放（501 `feature_disabled`） | 登录 |
+| POST | `/api/specphot/continuum` | S2 连续谱拟合（**P2 切片 2b 已上线；P2b 起 pl2 + Davies 参数化自助上线**）：六模型（pl/pl_dust/pl2/bb/pl_bb/dbb）+ poly 基线、host_ext 三态（off/fit/prescribe）、模型比较（F 检验/ΔBIC；pl→pl2 走 Davies 参数化自助）、闭包三候选、de_reddened 纯派生曲线；写法见下 specphot 小节「P2 切片 2b（API-3 + 宿主消光三态）」与「P2b 切片」 | 登录 |
+| POST | `/api/specphot/line` | S3 谱线测量（**P3 切片 2 已上线**）：三步向导的计算核（线区+`line_kind` 必选 U-30/E-09 → 基线 F-36 → 轮廓拟合 gauss1/gauss2/lorentz/voigt——voigt 仅当 R 可得，F-39 闸）；单线 `LineResult`（EW 三项分解/线流量与 depth 互斥空值/snr_res 门/自助对照）、`frame_gates`（W-25①② 两道独立的门）、`diagnostics.absorber_systems` 恒在场占位；`vel_*/z_fit` 恒 null（M-6 未复核，强提交 `velocity_output=true` ⇒ E-14）；写法见下 specphot 小节「P3 切片 2（API-4 + 三步向导 + 线表导出）」 | 登录 |
 
 ### 列表查询参数
 
@@ -535,6 +543,478 @@ curl http://localhost:27101/api/auth/status
   每模板 2.4–3.1 s，九模板 n_times=300，2026-09-29 实测）；与预测/建面共用一把
   非阻塞信号量，占用时立即 429。
 
+### 光谱 × 滤光片（/api/specphot，分期交付中）
+
+「一条谱 → 一组数」：库内谱或上传/粘贴文本谱 × 滤光片透射曲线的合成测光、
+连续谱拟合与谱线测量。代码全在 `backend/specphot/`（逻辑下沉、路由薄），全链只读：
+不写库、上传件不落盘、不改 `filters` 表（曲线口径 `curve_kind` 登记在代码侧
+`specphot/registry.py`，因为 `etl.py --filters` 会整块覆盖 `extra_data`）。
+
+- 响应契约：所有响应（含错误）带 `spec_phot_version` 与 `warnings[]`；错误为
+  `{error, code, reason?}`（宿主无 501/504 兜底 handler，一律显式 jsonify）。
+- 库内谱装载与 `GET /api/spectra/<id>` 同口径：字符串行 float() 清洗、波长列已是
+  真空（不再二次空气→真空）；上传文本与 `/api/spectra/upload` 同一语法（`#` 头键、
+  2/3 列、逗号或空白分隔），差异仅在重复 λ 聚合求均值（而非覆盖）与乱序拒绝（而非代排序）。
+- 分期状态（未到期子功能 501 `feature_disabled` 占位，响应含 `phase`）：S1 合成
+  测光 **P1 已上线**（API-2 `POST /photometry`，前端 `#/tools/specphot` 工作台
+  已挂载，S0 装载 + S1 计算 + 诊断占位 `diagnostics{}` 恒在场）；S2 连续谱 **P2
+  切片 2b 已上线**（API-3，见下）；**P2c 诊断增强 S1/S2 侧已上线**（见下方
+  专条）；**S3 谱线 P3 切片 2 已上线**（API-4，见下）；当前已上线 meta/curve/
+  health/parse/ebv/photometry/continuum/line 八个端点。
+  P1 验收测试见 `tests/acceptance/test_l1_specphot_*`、`test_l2_specphot_*`
+  （含 `test_l2_specphot_p1_acceptance.py` 收口补遗）；P2 2b 验收 =
+  `test_l2_specphot_p2b.py`；P3 切片 2 验收 = `test_l2_specphot_lines_api.py`。
+- **P1b 预处理读侧半段已上线**（02b §3.14，`backend/specphot/preprocess.py` 是
+  F-80 序列化与 PreprocessedSpectrum 的唯一载体）：
+  - 响应谱级 `preprocess{}` 18 键恒在（§4.2 键集唯一载体），P2 侧键取 null/[]；
+    `mask_hash`/`preprocess_hash` 双哈希进 TXT-27 摘要行、导出 `#` 头与 ST-3
+    缓存键；`preprocess_hash` 输入键序 = {factor, mask_hash, errcol_verdict,
+    errcol_accepted, spec_hash, 版本戳}（可复算的规则，T-75②）。
+  - 四类掩膜并集（F-107①）：大气吸收表/天光发射表（F-72①② 默认剔除）+ 用户
+    数值段（U-13 框选 `mask` + U-50 手输 `preprocess.ranges`，同一用户类）；
+    V-13 过滤、精确同段去重（W-36：斜纹只画一次、n_masked_pixels 不翻倍）、
+    逐类与并集后都受 C_MAX_EXCLUDE。掩膜是布尔标志位数组：不截断、不插值。
+  - 误差列退化判定（F-110/V-22）：`errcol_verdict` 六值闭集 {ok, all_zero,
+    constant, nonfinite, negative, flat_relative}，判定序唯一命中即停；
+    n_err<30 时相对散布步跳过并挂 CA-21。非 ok ⇒ `errcol_choice` 二选一
+    （Q-33 词表 {auto, proxy, as_provided}）：回落 F-54 代理（CA-47②，
+    sigma_method='second_diff'）或坚持原列（CA-47①，sigma_method='spec_err'、
+    errcol_accepted=true；部分行不可用仍按 F-23 走 'mixed' 回填）。`as_provided`
+    仅在 verdict≠ok 时允许；API-7 解析响应即回显 `errcol_verdict`（U-53 必须在
+    算之前给出，W-37）。读侧 V-9 保留 σ≤0 列值进 `flux_err`（不参与逆方差权重），
+    使 T-78②③ 的判定域与 V-8 行宽语义成立。
+  - 离群点（F-111②③/T-79③）：C_BASE_ITER 次 σ 裁剪在二阶差分残差上只**找候选**
+    （S1 无基线，F-36 属 S3；登记的实现约定），回显 `n_outlier_flagged` 并把候选
+    段随 CA-10(reason=outlier_flagged) 摆在告警区；绝不自动剔除，U-52 逐段确认
+    后写入用户掩膜。占比 > C_CLIP_MAX_FRAC ⇒ CA-47④、不提供剔除按钮。
+  - 因子/平滑的**算术**属 P2：factor>1 与 smooth 开启 ⇒ E-13（501 phase='P2'）；
+    factor 表外值 ⇒ E-14(rebin_factor)；前端 U-49/U-51 渲染但禁用（A-3/E-15）。
+  - P1 基线固化：`tests/acceptance/test_l1_specphot_p1b_baseline.py` +
+    `golden_specphot_p1/*.json`（T-75①，比较域按 F-113③ 排除 preprocess{} 与
+    掩膜/离群新行为族键，理由见该文件 docstring）；P1b 验收 =
+    `test_l2_specphot_p1b.py`（T-75②③、T-78、T-79①③、Q-33、W-36 服务端半段）。
+- **P2+ FITS/ECSV 上传分支已上线**（F-76，验收 T-81；前置 M-7 `astropy` 实测在栈内，
+  零新增依赖）：`backend/specphot/reader.py` 增 `load_upload_fits`（两种形态：
+  BINTABLE/TABLE 表格按列名/TUNIT 识别 λ/流量/误差列；一维 ImageHDU 走线性 WCS
+  `CTYPE1 波长型 + CRVAL1/CRPIX1/CDELT1|CD1_1 + CUNIT1`，LOG/缺 WCS ⇒ E-14）与
+  `load_upload_ecsv`（`astropy.table.Table.read`，λ 单位取列 unit、头键取 YAML meta）。
+  - λ 单位换算一律 `astropy.units`（TUNIT/CUNIT1/列单位 → Å，不自写公式）；
+    波长列无单位 ⇒ E-14（不按 Å 猜，V-19 同纪律）；头键映射对齐文本路径头键集
+    （ra/dec/redshift/time/mjd/lambda_frame/name/instrument，含 z→redshift、
+    OBJECT→name 别名），共用 `_finalize_upload` 规范化管线（V-18…V-20、F-77 缺省
+    矩阵、F-79② 帧处理、spec_hash），⇒ T-81① 跨格式不变量（三载体 spec_hash
+    三串相同）成立。
+  - F-76 不猜纪律：多扩展（E-14 `ambiguous_hdu`）/ 多候选列（`ambiguous_columns`）/
+    WCS 无法唯一判定（`no_lambda_axis`/`nonlinear_wcs`）⇒ E-14 且错误点名候选
+    扩展与列名；请求可用 `hdu`/`col_lambda`/`col_flux`/`col_err` 指定。
+  - 传输形态（登记的裁量）：FITS 二进制走 `content_b64`（标准 base64），ECSV 本是
+    ASCII 走 `text`；`format_hint ∈ {txt, fits, ecsv}`（表外值 ⇒ E-14
+    `upload_format_unsupported`），缺省按内容探测（`SIMPLE=` magic bytes /
+    `# %ECSV` 头行），显式 hint 与探测不符 ⇒ E-14。点数 `C_MAX_SPECPOINTS` 与
+    单件 `C_MAX_UPLOAD_BYTES` 对三格式同值生效；请求体 32 MB（ST-13）未动。
+  - 前端 `source_panel.js`：file input `accept` 增 `.fits/.fit/.ecsv`，按扩展分发
+    （.fits 读为 dataURL 取 base64，其余 readAsText），全程内存不落盘（RO-5）。
+  - 验收：`test_l1_specphot_upload_fits_ecsv.py`（T-81①②③④ 逐条，FITS/ECSV 均
+    astropy 现造于内存 BytesIO）+ `test_l2_specphot_api.py` 的 API-7 分支用例。
+- **P2 切片 2b（API-3 + 宿主消光三态 + model 定标）已上线**：纯函数层在
+  `backend/specphot/continuum.py`（fit_spectrum/fit_poly/compare_models/
+  closure_from_fit/profile/bootstrap，引擎 = `least_squares.trf`，T-79① 全目录
+  扫描禁 `loss=`/`f_scale`/`'lm'`/`curve_fit`），路由编排在其旁
+  `continuum_api.py`（upload.py 同款薄壳）：
+  - 装载与预处理管线与 API-2 **同源**（merge_masks/F-110 判定/去偏 σ/合束同一
+    批 preprocess 函数，无第二套实现）；但 API-3 **不构造
+    PreprocessedSpectrum**（未走 `build_spectrum`——S2 只消费掩膜布尔与逐点 σ，
+    不需要合束后的谱对象；factor=1 时两侧逐点数值等价，factor>1 时各自经
+    `rebin_stage` 同一算术）。拟合区选段按 §3.8 窗口语义（四类掩膜并集外、
+    非正流量剔除并回显 `fit_region.n_nonpos`）。
+  - **宿主消光三态**（F-87…F-90，唯一入口 `host_ext_mode`，Q-32）：`off` ⇒
+    A_V≡0 钉死分支（pl_dust 退化、n_par 少一）；`fit`（缺省）⇒ A_V 自由，
+    事后 `ebv_display` 只显示不回灌（F-90②）；`prescribe` ⇒ `ebv` 必填
+    （≤ `C_HOST_EBV_MAX`=2.0，§7.5），A_V ≡ R_V·E(B−V) 钉死、退出自由参数表
+    （n_par 少一）并挂 CA-43。off/fit 带 `ebv` ⇒ 忽略并回显 `ebv_ignored=true`，
+    数值与不带逐字节相同（T-58；ebv 仍进缓存键 ⇒ 标志按请求正确回显）。
+  - **T-55 单一算术**：全模块唯一一条 A_V↔E(B−V) 换算在
+    `continuum.av_ebv`（单一函数、单向给定），fit 反算与 prescribe 钉死都经它；
+    `host_ext_basis{}` 七键全必填（T-56），R_V 基准取宿主 `sedfit/laws.py` 的
+    `_NOMINAL_RV`/`_INTRINSIC_RV`（lmc 3.16 vs 3.41，重标定只准走内禀）。
+  - **de_reddened 曲线 B 是纯派生件**（F-89）：derivation_depth 恒 1、不落盘、
+    不入库、不生成子谱（T-57 快照测试承载），响应附 TXT-22 逐字节文案。
+  - **模型比较与 best（F-29/T-17）**：嵌套对（NESTED_PAIRS）F 检验判定 +
+    ΔBIC 并列信息**各按各自门限回显、不强求一致**——`verdict.ftest[]` 记
+    {F, p, verdict, alpha=C_FTEST_ALPHA}，`verdict.dbic[]` 对嵌套对与非嵌套对
+    都记 {dbic, verdict, threshold=C_BIC_MIN}（非嵌套对不输出 F 检验字段）。
+    `verdict.best` 的判定依据是 F 检验：**嵌套对 p < C_FTEST_ALPHA ⇒ 取繁者**
+    （即使纯 BIC 偏好简者；迭代到不动点以覆盖嵌套链）；纯 BIC 兜底（BIC 最小者）
+    只在非嵌套对或 F 不显著时生效。
+  - **P2b 切片（pl2 断折幂律 + Davies 参数化自助）已上线**：`pl2` = 宿主
+    `powerlaw_2seg`（§3.8 表：两段平滑幂律 + 宿主消光，s 固定 3.0，硬约束
+    β1≤β2）——内部参数化 (β1, Δβ=β2−β1≥0, ν_b, A[, A_V])，报告口径补 β2=β1+Δβ
+    （β2 的 σ/区间走 delta_method 精确线性映射）；ν_b 先验域 = 宿主
+    params_schema [1e8,1e20] Hz（log 网格，F-65），搜索界按 F-91② 收窄到谱
+    频率覆盖内，触网格端点走既有 CA-24 机器（grid_boundary_params 回显）。
+    `pl⊂pl2` 是嵌套对但断点 ν_b 在零假设下不可识别（Davies 问题，F-29③）⇒
+    该对**不出 F 检验字段/ΔBIC**，`verdict.davies[]` 记参数化自助判定：
+    以 pl 拟合曲线为均值按同一白化通路重抽残差、pl/pl2 双双重拟的 T=Δχ²
+    经验零分布，p = (1+#{T*≥T_obs})/(1+n)（加 1 式），p_method=
+    'parametric_bootstrap'；边界 χ² 混合 50:50（p_chi2mix）仅自检旁证
+    （T-18）。ST-10 口径登记（P2b 评审）：davies_bootstrap 的 n_boot **不计入**
+    C_BOOT_N_BUDGET 预算池——原文口径分歧（ST-10 行写「单次请求全部自助次数
+    之和 ≤ C_BOOT_N_BUDGET」，Q-15/F-28/F-95③ 却把同一池绑定**误差推断**，
+    F-29③ 又把参数化自助定为 pl→pl2 的唯一判定通路；若混算，剖面重拟合会把
+    判定通路的必需次数挤到不可用）⇒ 裁量：误差推断预算在 fit_spectrum 内照旧
+    硬封顶，检验 n_boot 只受 C_MAX_BOOT 与 ST-5 重档 5 s 硬超时兜底（tick 逐次
+    检查点，超时 E-11）。三态同步作用于 pl2（Q-32「凡含尘埃的模型」）：off/prescribe 下
+    A_V 钉死退出自由参数表（n_par 少一）。拟合侧两处实现裁量（均不触规格
+    常量）：① trf 在 pl2 退化谷/准触界分量上 xtol 早停后从返回解**续跑**同一
+    引擎形态至多 2 轮（nfev 累计回显）；② 事后最优性门限（F-91⑦）对超限
+    分量做可行下降探针——数值零列（F-93① 同形阈值）或任何 ±{1e-3,1e-2,
+    1e-1}·域宽探针都降不了 1e-3 χ² 的「数值平台」不构成未收敛证据（Davies
+    脊上剩余改善 ~1e-4 χ²，240 点谱的统计分辨单位是 Δχ²=1），真被困局部
+    极小（下降收益 O(1) χ²）仍触发 CA-44①。消光求值 memo：A(λ_rest)/A(V)
+    数组按 (law, rv, z, ν 网格) 缓存（miss 仍走 `sedfit.laws.get_law` 现算，
+    乘式与 `laws.extinguish` 逐项同式同序 ⇒ 数值逐字节同）——宿主
+    dust_extinction 的 G03/P92 曲线每次求值重建样条，不缓存会烧穿 ST-5 的
+    5 s 重档预算。测试：`test_l1_specphot_p2b_pl2.py`（T-18 回收/自检/检出、
+    钉死态、T-31 cond_2 数值纪律）+ `test_l2_specphot_p2b_pl2.py`（Q-13 词表、
+    davies 装配、W-24、三态）。
+  - **P2 切片 2d（specplot/export 增量，无新端点）已上线** —— de-reddened 导出
+    闭环 + 双曲线叠加（原「登记遗留」块至此闭环）：
+    - **CSV 导出**（`export.js` `exportContinuumCsv`，纯前端 Blob 下载，不落盘
+      服务端、不入库、不生成子谱）：列序 = §4.3「宿主 de-reddened 曲线导出」块
+      逐字（发布即冻结）；逐点列取自响应 `de_reddened`（`lam_rest_vac_aa` 由
+      2d 起随响应给出），参数映射按 §3.9.3.1——`av`=A_V、`ebv`=`ebv_display`，
+      误差列**直接搬运 FitResult**（`av_err_lo/hi`=`err_low/high{Av}`、
+      `ebv_err`=`ebv_display_err`，不得另算）；prescribe 下 av/ebv 是输入 ⇒
+      误差列空字段 + CA-43 书面原因；`rv` 为所选律常数 ⇒ `rv_err_*` 恒空字段。
+      `#` 头：TXT-11 首行 + TXT-22 全文逐字（含末句「宿主与银河之间那段路径上
+      的消光未计」）+ `host_ext_basis` 七键（未平铺进表体的
+      `rv_source_note`/`lam_axis`/`form` 三键写注释行）+ `derivation_depth` +
+      `curve_hash` + preprocess 双哈希（mask_hash/preprocess_hash）；文件名
+      F-44 口径 `<src><id>_<host_ext_mode>_dered_<UTC>.csv`。触发点 = S2 动作区
+      「导出 CSV（曲线 B）」按钮（无 de_reddened / host_ext_mode=off 时禁用 +
+      说明）；JSON 导出（响应原文）整体携带 `host_ext_basis` 与 `de_reddened`。
+    - **双曲线叠加**（`specplot.js` + `continuum_ui.attachCurveOverlay` 实装）：
+      U-47 开（S2 面板开关，默认开、纯显示不转 stale）且 `host_ext_mode ≠ off`
+      ⇒ 谱图上曲线 A（`flux_before`）与曲线 B（`flux_after`）同轴同单位绘制、
+      legend 写明「改正后 = 派生件、未入库」（F-89①）；TXT-22 全文常驻图注
+      （W-33 的图注位）；U-47 关/off ⇒ 只画 A 并清除叠加（F-89⑤ 不留孤立旧 B）。
+    - **TXT-22 三处逐字**（W-33）：结果卡、图注、导出件头共用
+      `export.js txt22Text` 单一构造器，保证一字不差；TXT-22 五个数
+      （A_V/E(B−V)/R_V/rv_source/screen_z）同行同屏（F-88）。
+    - **U-46 fit 态**：E(B−V) 框转只读，显示由拟合 A_V 反算的 `ebv_display`
+      （只作显示、禁回喂，F-88/F-90②）；prescribe 态维持常驻换算行。
+  - **model 定标解锁**（§3.3 model 行，F-33 单向耦合）：photometry 的
+    `mode='model'`/auto 落 model 携 `use_model`（Q-9：mask_hash/frame/
+    flux_transform_applied/comparable 必带 + Q-34 preprocess_hash）⇒ 用 S2
+    模型曲线代替观测谱积分（覆盖外可外推 + CA-12；comparable=false ⇒ E-14，
+    F-91⑦）；无 `use_model` 的 model 路径保持 501 phase='P2'；model 定标下
+    mag_err_stat/f_err_mjy/delta_m_err 按 null 出（S2 参数误差传播不在本期）。
+  - 前端：`frontend/js/specphot/continuum_ui.js`（S2 参数面板 + 结果卡 +
+    TXT-22），S2 页签解禁（S3 当时保持禁用，随 P3 切片 2 解禁），S1 定标模式
+    radio 的 model 支解禁；
+    新发 CA-11/12/43 归「结果解释」、CA-24 归「近似」（§5.4 末权威分档行，
+    results.js `groupOf` 已登记）。
+- `/api/specphot/ebv` 是全站第一个按坐标（而非 DB id）查消光的端点；首次调用触发
+  尘埃图惰性装载（可达数秒，回显 `cold_start_ms`），重复坐标走宿主 `_ebv_cache`。
+- 代理 σ 的去偏与双 j（F-97①⑤，T-61/T-62）：二阶差分/滑窗 MAD 代理先除
+  `k_proxy(ρ, j_used)`（`errors.k_proxy`）去偏，再进 F-55 的 AR(1) 积分放大；
+  误差列（实测误差）不去偏。`|ρ|>C_RHO_MIN` 时双 `j` 对照取较大者（`ρ>0` 即
+  stride 支），`|ρ|≤C_RHO_MIN` 允许 `j=1`（白噪声豁免，双 j 差 <3%）；响应顶层
+  回显 `sigma_px_j1`/`sigma_px_j2`（去偏后的两个 σ_px）/`sigma_stride_used`
+  （代理不可用或走误差列时为 null，不冒充），`CA-06` 呈现含双 j 两值与所取者。
+- `mw.correct` 缺键默认 `true`（§5.2.1 规范默认；显式 `false` 仍不改正；缺坐标
+  ⇒ `CA-23 ext_no_coords`）。请求只携带 `spec_hash` 而不带谱数组 ⇒ `E-01`
+  （404 `spectrum_not_found`，A-7②：hash 只用于结果缓存命中，不作为谱身份）。
+- **P3 切片 2（API-4 + 三步向导 + 线表导出）已上线**：纯函数层
+  `backend/specphot/lines.py`（P3 切片 1 交付）由新路由编排层
+  `backend/specphot/lines_api.py` 装配（`POST /line`，meta.py 的 501 占位删除）：
+  - 请求校验（§5.2.3）：`line_kind` 必填无默认（Q-18 ⇒ E-09
+    `metadata_required/line_kind_required`）、Q-23 来源二选一、Q-21 voigt 无 R
+    拒（P3b 起按 F-39 闸：R 可得 ⇒ 放行，见下 P3b 段）、U-31
+    `sky_handling='subtract'` 随 P3c 的 F-86 真解锁（见下 P3c 段）、Q-15
+    n_boot/基线阶、Q-35 err_seed（PCG64，缺省 spec_hash 派生）、Q-27 诊断布尔
+    （U-48 三键 ⇒ 501 phase='P3d'）；`baseline.side_px/iter` 钉死
+    C_BASE_SIDE/C_BASE_ITER（改值显式拒，U-25 手改属 P3c 通路）。装载与
+    API-2/3 同源（merge_masks/F-110/去偏 σ/双哈希/ST-3 缓存/ST-5 超时）。
+  - **Q-20 vs F-72③ 掩膜冲突调和决定**（登记在 lines_api.py 模块 docstring 与
+    `select_window` 注）：Q-20 字面「线心落 C_MASK_ABS 或 C_MASK_EMIS 命中区
+    ⇒ 拒」（wire reason 钉死 `mask_conflict`）与 F-72③ 分档（只拒发射×吸收带、
+    吸收×气辉两支；发射×气辉、吸收×吸收带不拒）并存 ⇒ **以 F-72③ 的分档语义
+    实现 Q-20**：wire `reason='mask_conflict'` 一张脸（Q-20 字面成立），类属
+    可辨性由 details 的 `mask_conflict_kind ∈ {abs_band, skyline}` 与
+    `f72_reason`（原双 reason 透传）承担，message 逐字保留 F-72③ 的两类措辞
+    （"大气吸收带"/"天光发射线"，T-20/W-25 末句：不得混用）；发射×气辉整窗
+    被剔光的空窗支路 ⇒ E-04 too_few_pixels（不冒充 mask_conflict）。
+  - frame 闸门（W-25 **两条独立**，不得合并表述）：①线表侧——请求
+    `velocity_output=true`（强提交开关，实现裁量键名）而 `line_frame` 未核对
+    ⇒ E-14 `line_frame_unverified`（文案说**线表** 82–87 km/s 系统差）；
+    ②谱级——`lambda_frame='unknown'` ⇒ E-14 `lambda_frame_unknown`（文案说
+    **谱的波长轴**）。①②同违先判①。M-6 未复核 ⇒ 响应 `vel_*/z_fit` 恒 null
+    + `velocity_family_note` 留位、`frame_gates.vel_outputs_enabled=false`
+    （闸门结构先就位，P3c 已实现、M-6 未复核 ⇒ 维持 null，见下 P3c 段）。
+  - 响应装配（§4.2 LineResult 键集，F-94⑤ 值键与误差键同批）：单线一行，
+    线比 ratio 族恒 null + 书面原因（§3.9.3.1 单线请求退化支）、柱密度族恒
+    null（M-6 振子强度库未备，F-71）、`diagnostics.absorber_systems` 恒在场
+    空数组（F-105①）。
+  - 前端 `frontend/js/specphot/lines_ui.js`：U-23 三步向导（步 1 选线区——宿主
+    `spec_lines.js` 候选**只作位置标记**（M-6/F-38）+ line_kind 必选（U-30，
+    未确认「下一步」禁用 E-09，W-23）；步 2 基线形态说明随 line_kind 同步切换
+    加性/乘性 + EW 符号说明（TXT-15，W-23）；步 3 轮廓/R/n_boot/line_frame +
+    `vel_*` 控件禁用 + tooltip 指 M-6），S3 页签解禁（U-03），结果卡复用
+    results 机器形态（err_source/err_scope 逐键 + TXT-8/TXT-15 常驻）。
+  - 导出：`export.js` 增 `exportLinesCsv`（§4.3 谱线块列序逐字冻结，F-45），
+    `#` 头 = TXT-11 + TXT-23 + 双哈希（mask_hash/preprocess_hash）+ W-25①②
+    各一行的框架闸门声明；文件名 F-44（`<src><id>_line_<UTC>.csv`）。
+  - 验收：`tests/acceptance/test_l2_specphot_lines_api.py`（校验拒绝族、
+    Q-20/F-72③ 三层断言、frame 闸门双支 + 先判序、端到端真值回收、§4.2 键集、
+    ST-3 缓存确定性、§4.3 列序源码级冻结断言）。
+- **P2c 诊断增强 S1/S2 侧已上线**（02b §3.12 / §9 P2c 行；实现全在
+  `backend/specphot/diagnostics.py`，U-44 前三键，API-2 `photometry` 接线）：
+  - 公共纪律：三开关全关时 diagnostics.py **不进入任何计算路径** ⇒ 响应与不含
+    本实现逐字节相同（T-48①，`diagnostics{}` 恒在场为空对象、不在比较域内，
+    与 preprocess{} 的 F-113③ 同形）；开启只增 `diagnostics{}` 子键与
+    `warnings[]`（diag 已入 ST-3 缓存键）。后三键 z_from_lines/frame_probe/
+    sky_subtract：消费点在 S3 步 1 的 U-31（F-86），本 S1/S2 路径 501
+    `phase='P3c'` reason=`sky_subtract_use_u31`（指路不冒充，见下 P3c 段）；
+    z_from_lines/frame_probe P3c 起走真实现 + M-6 闸（null 块）。
+  - `resp_perturb`（F-83）：`results[i].mag_err_resp` 换通带形状扰动散布口径
+    （实现取 max(扰动散布, 两加权之差下限)，T-49「扰动不得让误差变小」），
+    `results[i].resp_method ∈ {lower_bound, perturbation}`；`diagnostics.resp_perturb
+    = {perturb_n, perturb_n_requested, downscaled, eps, resp_method}`，开启挂
+    CA-39。扰动 = 在 ln λ 上以该波段自身 σ_lnl（band_integrals 的 `sigma2_lnl`
+    回显值，F-2 定义）为相关长度的高斯核平滑白噪声、支撑内 RMS 归一到
+    C_SHAPE_PERT_EPS=0.05；随机流种子 = `default_rng([spec_hash 前 8 位,
+    crc32(band), 组号])` ⇒ 同一输入逐字节可复算（F-93⑤ 同族，实现登记）。
+    CA-02 行级文案随 resp_method 分档（§5.4）：lower_bound 恒
+    「σ_resp 为两加权之差的下限（F-57）」，perturbation 换
+    「σ_resp 为扰动散布与两加权之差下限的较大者（F-83）」。
+    组数 C_SHAPE_PERT_P=60，预算触顶（deadline − 0.25 s 预留，实现补名
+    `_C_SHAPE_PERT_RESERVE_S`）降规模并回显（Q-27/ST-9）；band_mode=mono 不
+    适用（CA-15 reason=resp_perturb_mono，reason 扩展登记 §7 日志）。
+  - `beta_matrix`（F-82）：`diagnostics.beta_matrix = {cells[{band_i, band_j,
+    beta, sigma_beta, color, color_err_stat, color_err_cal, dt_d}],
+    causal_use:'diagnostic_only', note}`（note 常驻「只用于发现不一致、不得作为
+    物理 β 报告」声明）。**输出块的 `causal_use` 键是 §4.2 `beta_matrix` 键集的
+    良性超集**：§4.2 行只列 cells 字段，而 F-82 明文「矩阵旁常驻此声明」、F-84
+    硬约束同要求 `causal_use='diagnostic_only'` 写入响应 ⇒ 该键是声明载体，非
+    键集漂移（T-63⑦ 按超集读）。β_ij = (ΔC_obs − ΔC_syn)/log10(λ_j/λ_i)（「用
+    合成值与实测值各算」：两支色各取合成/实测，纯幂律 ⇒ 全格 ≈0）；成格条件 =
+    两支锚点对谱时刻 |Δt| ≤ dt_tol_eff（F-61 生效容差），格内 dt_d =
+    |mjd_i − mjd_j|；σ_β 走 delta_method 且 κ* 协方差项按两行参与分档
+    （F-94⑤「同波段对的 −2Cov」，对角 C 下一阶精确、MC 实测）：两行都参与
+    anchored ⇒ +2·Var(κ)_mag（GLS 残差反相关，Cov(dm_i,dm_j) = −Var(κ)_mag ⇒
+    修正方向为放大 σ_β；三波段等权全参与例 σ_β 由 0.00135 归位 0.00405 量级）；
+    恰一行参与 ⇒ 0（非参与行的 κ* 误差与参与行被 GLS 吸收后的残差分量精确定
+    消）；两行都不参与 ⇒ −2·Var(κ)_mag（两行 delta_m_err 各含 +Var(κ)_mag，
+    −2 恰好抵消）。Var(κ)_mag = (2.5/ln10·σ_κ/κ*)²，非 anchored 时为 0；
+    参与判定与 anchored GLS 同通道（h_map）。color_err_cal 按 §3.9.3.1 颜色行
+    杠杆式：同一 κ* 的定标偏移在色（两行之差）中**精确定消** ⇒ 两行
+    mag_err_cal 在场（anchored）时格值 = 0.0（闭式结果、非缺测冒充；明文禁止
+    把两个单波段 σ 直接 quadrature），resp 项仍进 color_err_stat（F-82 明文）；
+    任一行 mag_err_cal=null（σ_cal 无法评估）⇒ 格值 null + note 书面原因
+    （TXT-23）。非对角格 β 互差 > 3√(σ₁²+σ₂²) ⇒ CA-40（可达但不得据此报
+    物理 β）。无格可成时 cells=[] 照出（键集恒定）。
+  - `anchor_reinsert`（F-84）：`results[i].m_syn_local`（§4.3 列集追加位，恒在
+    场、未开启 null；诊断镜像，不得顶替主列 mag，F-11）+ `diagnostics.anchor_reinsert
+    = {cells[{band, m_syn_local, delta_m_local, shrink_1_minus_h, reason?}],
+    causal_use:'diagnostic_only', note}`（与 F-56 的 (1−h_i) 收缩量并排）。局部
+    改正 = L-5 的「实测流构造 S·10^{0.4m} 后卷积」：κ*·F 谱在该波段支撑内乘
+    g_i/(κ*·f_i)（折算到原始谱即乘 g_i/f_i，κ* 公共模消去）后真实重积分 ⇒
+    m_syn_local = AB(g_i)、delta_m_local ≈ 0 是构造性自检；逐波段残差对全谱
+    m_syn_local − mag 暴露单一全局 κ* 的个别波段跑偏。非 anchored ⇒ 全 null +
+    note 书面原因（TXT-23 同族）。
+  - 前端：workbench U-44 前三项可勾选（每项旁写明新增列与新增计算规模，W-32
+    前半；改动 ⇒ stale，IA-4），后三项渲染但禁用（P3c 起改 M-6/U-31 徽章与
+    tooltip，见下 P3c 段）；
+    results.js 请求体只携带勾选键（Q-27 只收布尔，全关 = 空对象与基线同形），
+    诊断卡渲染 `diagnostics{}` 开启项，`groupOf` 新增 CA-39∈「近似」、
+    CA-40∈「结果解释」（§5.4 末分档行）。验收 =
+    `test_l2_specphot_diagnostics_p2c.py`（T-49/T-50、T-48 后半、Q-27 分键闸、
+    W-32 前半服务端可自动部分 + 前端源码级扫描）。
+- **P3b 已交付（voigt，闸门后）+ P3c 已交付（线侧诊断三件）**（02 §9 P3b/P3c
+  行；2026-10-02）。**前置裁定**：M-4（仪器 R 入库，FITS 导入携带）与 M-6
+  （线表帧与 f 值逐条对 NIST ASD 复核）在库内数据上均未满足 ⇒ P3b/P3c 以
+  「实现完整就位 + 闸门按条款拒绝语义」形态交付，不伪造库内数据；解锁条件
+  逐条写明如下。验收 =
+  `test_l1_specphot_p3b_voigt.py` + `test_l2_specphot_p3bc.py`（T-22 两半全测、
+  T-51 四支按合成口径全测 + 真实 M-6 数据重跑登记 skip，照 T-10/T-21 先例）。
+  - **P3b · voigt（F-39/F-40/T-22，闸门后）**：`lines.py` 新增
+    `_voigt_profile(x, σ, γ)`（scipy.special.voigt_profile 峰归一——F-40 只禁
+    VoigtFit 本体，scipy 是既有依赖零新增）、`_shape_voigt`（u=lnλ 空间，
+    (A,u0,w,g) 每成分 4 参，θ 布局泛化为 `_NPAR_OF`）、FWHM_u 用
+    Olivero–Longbothum 近式（0.5346·fL+√(0.2166·fL²+fG²)；梯度解析、数值性质
+    由单测对数值半高全宽逐点钉 <0.1%）；EW/bootstrap 机器复用既有通路。
+    **闸**：`profile='voigt'` 而 R 不可得（全库 r_source='none'，M-4 未完成）⇒
+    E-14 reason=`voigt_disabled_no_r`（文案对齐 F-39 原文：宽度只能作观测宽度
+    报告 + TXT-8/CA-08）；R 可得（用户侧 U-27 或 M-4 落地）⇒ 数值路径可达
+    （测试用合成 R fixture 驱动）。前端 U-26 的 voigt 单选保持禁用 + tooltip
+    写明前置 M-4（T-22 前端半支）。depth 误差梯度对 voigt 无简单闭式 ⇒ 走
+    F-95① 明文允许的有限差分（C_FD_REL 中心差分），行键 `depth_err_delta`
+    ∈ {analytic, fd} 恒在场回显口径。
+  - **P3c · z_from_lines（F-81，M-6 闸门后）**：`diagnostics.py` 实现互相关
+    反推（ln λ 等距网格 + FFT 互相关无迭代，§5.4 预算 ≤300 ms；滑动中位数
+    去基线、模板宽 = 2×像素步长——实现裁量登记）；σ_z 由互相关峰二阶曲率与
+    残差噪声估计（σ_τ=√2·σ_CC/√k，登记）；命中线 < C_LINE_MATCH_MIN ⇒
+    z_fit=null；|z_fit−z_used| > C_Z_TOL ⇒ verdict=`ca36_mismatch` + CA-36
+    告警 + lines[] 逐条 accepted/rejected，**绝不自动改写 z**（U-37/CA-36）。
+    **闸**：M-6 复核线表缺位（`registry.M6_LINE_TABLE=None`，库内现状）⇒
+    API-2/3 返回 200 + `diagnostics.z_from_lines` null 闸门块（z_fit/sigma_z/
+    n_lines_used/lines/verdict/reason 恒在场，F-94③ none 语义；
+    verdict=`disabled_line_frame_unverified`）；`lambda_frame='unknown'` ⇒
+    E-14 `lambda_frame_unknown`（T-51）。数值路径只经测试内合成 fixture
+    （monkeypatch registry 两键）模拟 M-6 复核态——fixture 是测试内合成，
+    不是伪造库内线表。
+  - **P3c · frame_probe（F-85，M-6 闸门后）**：`diagnostics.py` 实现特征位置
+    判帧——对 M-6 复核参考特征表（`registry.M6_FRAME_FEATURES`）逐特征在 ±3 Å
+    段内抛物线内插观测中心，与 vacuum/air（一律 wavconvert 换算）位置比对，
+    输出 `frame_probe{frame_suggestion ∈ {vacuum,air,inconclusive}, n_support,
+    log_lik_ratio, features[]}`（只进 diagnostics{}，禁自动改写 U-39，F-79②）；
+    每分辨率元信噪（无 R ⇒ ×√C_DLAM_OVER_FWHM_MAX 等效口径，与 snr_res 同约）
+    < C_FRAME_PROBE_MIN_SNR ⇒ 该特征 inconclusive。**闸**同 z_from_lines
+    （M-6 缺位 ⇒ null 闸门块、suggestion=inconclusive——是闸门值不是默认值，
+    T-51「禁止沉默为 vacuum」）。合成空气波长谱 ⇒ 'air'、低信噪 ⇒
+    'inconclusive'（T-51 第三/四支，全测）。
+  - **P3c · sky_subtract（F-86/U-31，真解锁）**：判定依据原文——只依赖
+    C_MASK_EMIS_TABLE 常量（[O I] 三线，位置已知）与谱数据本身，不依赖 M-6
+    线表帧/f 值 ⇒ 按原文真解锁。`lines.py` 新增 `sky_subtract(lam, flux, σ,
+    win)`：线窗内命中的天光段锚在表行名义中心 ±3 Å 内细化峰位（不做全域自由
+    峰检索，防科学线被吸进扣除模型；与科学线心 <5 Å 的天光段保守保留 mask——
+    F-86 末句「禁止用扣除结果反推源的线流量」）、每峰实测 FWHM（与 F-69 的
+    sky_emission_fwhm 同口径）钉形状、连续谱基 + 各天光线幅值在**同一次**加权
+    lstsq 内联合解（F-62②：lstsq/SVD 禁正规方程）；大气吸收带像素不进设计
+    矩阵且其段永远 mask（F-72①）。被扣段核内残差 RMS 未降到
+    C_SKY_RESID_FLOOR=0.7× 以下 ⇒ 自动退回 mask + CA-37（「不得称已扣除」）。
+    sky_subtracted=true 计入 `not_in_budget[]`（F-58 的 sky_subtraction；该键
+    按下限集恒在场于线行）。API-4 `sky_handling='subtract'` 放行走真实现
+    （缓存键已含 sky_handling）；S1/S2 photometry 路径的 U-44 `sky_subtract`
+    开关不消费 ⇒ 501 `sky_subtract_use_u31`（指路）。前端 lines_ui U-31
+    subtract 单选解锁 + F-86/CA-37 说明；workbench U-44 后三项徽章改 M-6（两
+    键，tooltip 写明解锁条件）/U-31（指路 tooltip）；results.js `groupOf` 新增
+    CA-36∈红移与线位自洽、CA-37∈结果解释（§5.4 末分档行）。
+  - 恒等回归：全关/不开新开关 ⇒ 既有键数值逐字节不变（golden 与 T-79① 仍绿；
+    新增键均为恒在场簿记位：线行 `sky_subtract`（mask 路径 null）、
+    `not_in_budget`、`depth_err_delta`）。
+- **P3d 已交付（阻尼翼与吸收系统，U-48 三开关，可选族闸门后）**（02 §9 P3d
+  行 / 02b §3.13；2026-10-02）。**前置裁定**：M-4（R）与 M-6（线表帧与 f 值）
+  库内均未满足 ⇒ 整族为**可选族**：代码就位 + U-48 三开关后闸；三开关全关 ⇒
+  API-4 数值与既有键与 P3c 基线逐字节相同（T-72①；恒在场的
+  `absorber_systems`/`forest_stats`/`forest_stats_reasons` + `cross_link_gate`
+  四键属判据、不属比较域）。验收 = `test_l2_specphot_p3d.py`
+  （T-69…T-74 数值路径按合成口径全测 + W-35 前端源码扫描；真实 M-4/M-6 数据
+  重跑登记 skip，照 T-10/T-21/T-51 先例）。
+  - **F-98 识别与三档分类**：`diagnostics.py` `absorber_ident_numeric`——
+    Lyα 翼窗（红侧 C_WING_RED_KMS）上检出显著性 = 窗内平均深度及其传播 σ
+    之比 ≥ C_ABS_DETECT_SIGMA（只回答检出与否，F-98②）；分类阈值制
+    `classify_logn`（`lls`/`sub_dla`/`dla` 半开区间无缝，未达 ⇒ None 空值），
+    `class_thresholds_dex` 回显 log10 三值；intervening_or_host 用翼窗外红侧
+    窄凹陷二阶差分计数（阈 −10≈4.1σ，误报期望 ≪1；覆盖不足 ⇒ undetermined
+    合法终值）。**闸**：λ_Lyα 静止系真空波长由 M-6 线表给出（species 含 'ly'
+    的条目），本模块不另立 Lyα 常量（F-98①）⇒ M-6 缺 ⇒ 闸门格（值键 null +
+    书面原因）。
+  - **F-99 翼拟合**：`wing_logn_two_families`——τ(v)=N·K·voigt_profile(v;
+    b/√2, Γ/4π)，K=∫σdν·λ_cm/1e5 由 scipy.constants 就地导出（禁行线 5 同族；
+    Γ(Lyα)=6.2649e8 s⁻¹ 仅剖面形状用）；**z/b 永不在自由参表**（禁行线 19）；
+    b 三路优先级 `b_pin`（metal_cog > resolution_element > engineering_default），
+    b_source 逐字回显；Δχ²=1 剖面 = logN 粗扫 + 黄金分割细化 + 两侧二分到
+    χ²min+1（族 B 每点联合重拟连续谱 = 完整 fix-and-refit），剖面求值计入
+    C_BOOT_N_BUDGET 共享池（F-95③）；wing_snr_res < C_WING_FIT_MIN_SNR ⇒
+    不拟合（两族四端点全空 + 书面原因，禁外推，T-70 末支）。
+  - **F-100 双连续谱族**：族 A = 当前选定连续谱模型（`cont_a_override` 供给，
+    缺省 = 拟合域〔翼窗∪红侧外延带〕上自拟一次后**冻结**——L-51② "for a
+    fixed continuum fit" 的正实现）；族 B = lnλ 上同阶 Cheb poly 联合重拟；
+    wing_spread_dex=|A−B| > C_WING_SPREAD_DEX ⇒ CA-45（TXT-24 换系统项句、
+    禁 quadrature 合成）。**默认两族同源 ⇒ spread≈0，CA-45 在 API-4 经
+    override 通路才可达（S2 模型供给后自然可达）**——登记为分期裁量。
+  - **F-101/F-102**：恰为 0 的区间端点 ⇒ CA-44 过拟合哨兵；forest_stats 恒
+    null + `forest_stats_reasons` 闭集四值（single_sightline/continuum_unknown/
+    lls_stochastic 恒在，resolution_below_gate 随 r_source='none'）——不依赖
+    前置 ⇒ **真实现**；响应与导出件无 x_HI/lyc_transmission/flux_pdf 等键
+    （T-71③ 源码+响应双扫描；T-71④ 的样本描述≠门槛文档哨兵入测试）。
+  - **F-103 交叉链接**：`preprocess.merge_masks` 增 absorber_ranges 参数——
+    第五类（蓝侧 IGM 段）在测量**前**并入（F-106① 次序），走既有 mask_hash
+    第 4 槽；`cross_link_band_fracs` 复用 S1 的 n_masked/(masked+used) 口径；
+    线心落 masked_ranges ⇒ 线行 CA-46 + n_lines_in_masked_absorbers（②支）；
+    蓝侧声明 blue_side_igm_masked（④支；本实现翼拟合永不使用蓝侧）。
+    CA-46 闭合触发集未扩（并入掩膜本身不是 CA-46）。
+  - **F-104 饱和与 b 包络**：sat_flag 只由被链接金属线行 depth 导出
+    （1−depth < C_SAT_DEPTH_FLOOR ⇒ saturated），无 sat_*_err 列（T-74④）；
+    AOD 适用性（snr_res ≥ C_AOD_SNR_RES_MIN 且 n_pix_per_res ≥ C_AOD_SAMP_MIN）
+    不满足 ⇒ notes 点名哪一支并退回单一判据；F-104② 双方向 notes + ⑤ 单云
+    声明常驻；b 包络 = 三次固定-b 重拟合（与族 A 同估计量），只作灵敏度展示
+    不进 err_source，计入同一预算池、超池回落并回显（T-74⑤）。
+  - **F-105 契约**：U-48 三开关只随 API-4（API-2/3 收到 ⇒ 忽略但回显
+    `diagnostics_ignored[]`，T-72④，photometry/continuum_api 两处）；导出件
+    §4.3 第四块列序冻结（export.js `ABS_COLS` 与规格逐字一致，源码级哨兵），
+    U-48 关 ⇒ 表头照写无数据行；四列（class_thresholds_dex/metal_line_ids/
+    masked_ranges/forest_stats_reasons）按 F-80⑥ 序列化；前端 lines_ui U-48
+    三开关联动（未勾 ident 另两项禁用、无 R ⇒ wing_logn 禁用）+ 吸收系统卡
+    （两族 logN + 四端点 + spread 徽章 + TXT-24/25 常驻）；results.js groupOf
+    新增 CA-45∈近似、CA-46∈覆盖（§5.4 末分档行）。
+  - **z_source 降级语义（按规格原文）**：metal_lines 路由（M-6 匹配 + 本请求
+    已测金属线行，z_err 由 λ_err 经 lnλ 换元）→ user_z 路由（显式 z>0；
+    metadata、z_err null + 书面原因、翼通路不再算 profile——§3.9.3.1 z_abs 行）
+    → 闸门格；请求未给 z 且谱记录无 z ⇒ 不冒充（上传件回填的 z=0.0 是 Q-12
+    缺省不是用户声明）。裁量为请求侧 metal_cog b 路由、Na(v) 强弱双线互比
+    （单线请求退回 C_SAT_DEPTH_FLOOR 单一判据，与 §3.9.3.1 ratio 行同因）、
+    AOD 积分核钳位（柱密度族未解锁 ⇒ 无消费点，随该通路实现）。
+  - **P3d 评审修复（4 P1 + 5 P2，2026-10-02）**：
+    - **P1-1 `cross_link_gate` 键集对齐 §4.2**（lines_api `_absorber_stage`）：
+      补齐 `n_bands_over_gate`（API-4 无波段积分 ⇒ 恒 0）、`b_source`/`z_source`
+      （回显本格钉住路由，闸门态 null）；实现追加键 **`enabled` 与 `bands_ca46`**
+      在此登记（前者声明 U-48 启用态，后者为 API-4 侧恒空的 ①支波段行留位；
+      §4.2 原文七键 + 此两键 = 实际键集，`test_p1_1_cross_link_gate_keyset`
+      双态断言）。`bands_masked_frac`/`n_bands_over_gate` 的**真判定量在
+      API-2/S1 侧**（见 P1-2）。
+    - **P1-2 CA-46① 接线到 API-2**（photometry.py，`cross_link_band_fracs` 的
+      唯一生产装配点）：`diag.absorber_ident=true` 且 `diagnostics.
+      absorber_mask_segs` 给出掩膜段（M-6 有 Lyα + z_eff>0）时，第五类掩膜在
+      测量/合束**前**并入（F-106①、mask_hash 第 4 槽），逐请求波段算通带被掩
+      占比（与 band_integrals 的 n_masked/(n_masked+n_used) 同式，T-74① 同
+      一算术载体），`> C_XLINK_MASK_MAX` ⇒ 该波段行 `warnings[]` 挂 CA-46
+      （①支，reason=`absorber_mask_frac_over`）+ `diagnostics.cross_link_gate`
+      回显（bands_masked_frac/n_bands_over_gate/n_lines_in_masked_absorbers=0/
+      blue_side_igm_masked/b_source,z_source=null/note——后三者簿记在 API-4）。
+      **F-105③ 半开裁定（评审修订，登记）**：`absorber_ident` 在 API-2 消费的
+      唯一半支 = 上述掩膜/CA-46① 闸门，不再进 API-2 的 `diagnostics_ignored[]`；
+      `wing_logn`/`metal_sat_check` 仍忽略+回显；**API-3 纪律不变**（三键全忽
+      略）；识别/翼拟合家族结果仍只在 API-4（API-2 不产 absorber_systems）。
+      判定量网格 = 掩膜自身的原生网格（掩膜先于合束/模型重积分安置，F-106①；
+      合束与 model 定标请求的通带占比一律按原生掩膜计——裁量）。无掩膜段
+      （库内 M-6 空的现状）⇒ 整块跳过，零开销恒等（S1 响应与 P3c 基线逐字节
+      同值，golden 不受影响）。
+    - **P1-3 顶层 `absorber_system_masked[]`**（lines_api）：响应 diagnostics
+      恒在场第五键（§4.2 键位），值 = `absorber_systems[].masked_ranges` 经
+      `_union_segs` 归并的并集（同源，不另立掩膜通路——F-103①/F-107① 同一条
+      mask_hash 第 4 槽）；U-48 关/无段 ⇒ `[]`。键集断言同步：
+      `test_line_result_key_set_and_top_level`/`test_t72_off_switch_byte_identity`。
+    - **P1-4 F-99① z 窗口（择低成本支：三点重拟，不删常量）**：
+      `diagnostics.z_envelope`——z 在金属线 z_abs ± C_WING_Z_WIN_SIGMA·σ_z 窗口
+      内取三点（下端钳 0）各重拟一次 logN（与族 A 同估计量：_adopted_logn +
+      黄金分割），spread = max−min 回显为 absorber 格追加键
+      **`logn_spread_over_z`**（恒在场、未算出 null；只作灵敏度展示，不进
+      err_source、不是 z 的误差——z_err 另走 covariance 一条，F-103③）；
+      C_WING_Z_WIN_SIGMA 的唯一消费点在此。z_err 不可得（user_z 路由）⇒ null
+      + 书面原因；三次重拟合计入 C_BOOT_N_BUDGET 共享池（b 包络已计提时按
+      need 扣减，两包络不双计，F-95③）。装配点 lines_api `_absorber_stage`。
+    - **P2 五项**：① absorber 格 `detect_sigma`/`reason` 为追加键（§4.2 格键集
+      之外的实现位：检出显著性回显 + 闸门/降级书面原因；恒在场、未算出 null）
+      ——登记；② Δχ²=1 剖面与 `continuum._profile_intervals` 的关系 = **同判据
+      （步进加倍括区 + 二分到 χ²min+1）、独立 1-D 实现**（后者面向 S2 多参
+      profile，前者单参数 logN 就地实现，不共用代码——两处算术演进互不牵连，
+      判据一致性由各自测试钉住）——登记；③ E-14 reason **`u48_requires_absorber_ident`**
+      （W-35/U-48 联动：wing_logn/metal_sat_check 未开 absorber_ident 时禁用，
+      依赖摆出来不静默连带开启）——reason 词表扩展登记；④
+      `test_t69_pinned_zb_and_profile_interval` 的 `or True` 恒真尾缀删除
+      （b=10 重拟偏离真值更多现在是真断言）；⑤ **diagnostics.py 行数对冲**：
+      评审登记 +50（vs §6.3 本族预算 280）；本次修复后实测 P3d 段
+      （横幅至文件尾）508 行，超 +228，构成与对冲——数值核（Voigt τ/翼窗/
+      黄金分割/Δχ²=1 剖面/两族/包络/占比）约 300 行属预算域；超出部分主要是
+      （a）闸门降级分支与书面原因/notes 文案（F-94③ 逐支 null+原因、T-70 末支
+      禁外推的可核对性要求），（b）docstring 逐条出处注记（§6.3 预算按纯代码
+      计，文案计入所致），（c）P1-4 择三点重拟支的直接代价（z_envelope 38 行
+      + b 包络共用件）；§6.3「十四项各自独立、任一不开即整段不进入」的形态
+      未破，测试内合成 fixture 的验收代价不在本文件。
+
 ---
 
 ## 六、前端功能
@@ -553,6 +1033,7 @@ curl http://localhost:27101/api/auth/status
 | `#/tools/gcn` | GCN 阅读工具 | 工具箱条目：GCN circular 浏览 + 源信息/测光录入直写数据库（见 §8.17） |
 | `#/tools/digitizer` | 抠图取数 | 工具箱条目：从图像提取数据点，直写 lightcurves 表（见 §8.18） |
 | `#/tools/tmplib` | 模板库与造模板 | 工具箱条目：模板清单（状态/域内率/批量重建）+ 详情 QC 与误差预算面板 + 造模板向导（4 步，见 §8.34） |
+| `#/tools/specphot` | 光谱 × 滤光片 | 工具箱条目（P1 已挂载）：谱来源（库内/上传粘贴）+ 元数据回填（`meta_provenance` 标签）+ 锚点表 + 参数面板 + 结果表（`err_source`/`err_scope` 成对展示）+ 告警区 + 对照面板；`#/tools/specphot/<spectrum_id>` 直达库内谱（S1 合成测光，API-2） |
 
 ### 6.2 单源详情页标签
 

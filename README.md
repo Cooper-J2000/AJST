@@ -201,7 +201,9 @@ bash scripts/fetch_gcn_archive.sh
 
 ```
 backend/    Flask app, SQLAlchemy models, ETL, fitting engines, routes
+            backend/specphot/  — spectral-photometry toolbox (see docs/TECHNICAL.md)
 frontend/   build-free SPA (vanilla JS ESM) + bundled vendor libraries
+            frontend/js/specphot/  — specphot workbench (page #/tools/specphot)
 scripts/    maintenance scripts (GCN archive fetch, ...)
 docs/       TECHNICAL.md — full technical documentation (Chinese)
 catadata/   (git-ignored) clone of AJST-Data, or your own data

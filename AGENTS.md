@@ -10,7 +10,8 @@
 ```
 AJST_Transient_lc_Cata/   ← 代码仓库（remote Cooper-J2000/AJST）
 ├── backend/ frontend/ docs/ scripts/ tests/ README.md requirements.txt
-│   （backend/ 内：tmplib/ = 模板库×K 改正功能代码）
+│   （backend/ 内：tmplib/ = 模板库×K 改正功能代码；specphot/ = 光谱×滤光片工具，
+│     前端 frontend/js/specphot/，页面 #/tools/specphot，全链只读，见 docs/TECHNICAL.md）
 └── catadata/             ← 数据仓库（remote Cooper-J2000/AJST-Data），就地共存
     ├── info/ lc/ spectra/ filters.json …  ← 数据文件
     ├── tmplibrary/       ← 模板库（ChromaShift 派生数据，随 AJST-Data 分发）
