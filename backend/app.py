@@ -247,6 +247,7 @@ def create_app():
     from routes.sedfit import sedfit_bp
     # 模板库 × K 改正（P0：引擎自检与守卫，只读）
     from routes.tmplib import tmplib_bp
+    from specphot import specphot_bp
 
     app.register_blueprint(transients_bp, url_prefix='/api/transients')
     app.register_blueprint(lightcurves_bp, url_prefix='/api/lightcurves')
@@ -268,6 +269,7 @@ def create_app():
     # Phase 3: 暂现源 SED 分析
     app.register_blueprint(sedfit_bp, url_prefix='/api/sed')
     app.register_blueprint(tmplib_bp, url_prefix='/api/tmplib')
+    app.register_blueprint(specphot_bp, url_prefix='/api/specphot')
 
     # 上次运行残留的 pending/running 拟合任务标记为 interrupted
     from fitting.jobs import mark_interrupted
