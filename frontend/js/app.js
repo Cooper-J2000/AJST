@@ -31,12 +31,16 @@ const routes = {
 };
 // Dynamic route: /transient/<id>
 const detailRe = /^\/transient\/(.+)$/;
+// 「光谱 × 滤光片」工具：#/tools/specphot（空工作台）与 #/tools/specphot/<spectrum_id> 共用一分支（R-28）
+const specphotRe = /^\/tools\/specphot\/?(.*)$/;
 
 function getRoute() {
   const hash = location.hash.replace(/^#/, '') || '/';
   const path = hash.split('?')[0] || '/';  // 去掉查询串（列表页把筛选/排序/页码同步进 URL）
   const m = path.match(detailRe);
   if (m) return { page: 'detail', params: { id: m[1] } };
+  const sp = path.match(specphotRe);   // 空串 = 空工作台（/(.*) 允许空匹配）
+  if (sp) return { page: 'specphot', params: { spectrum_id: sp[1] } };
   const handler = routes[path];
   if (handler) return { page: 'static', handler };
   return { page: 'static', handler: routes['/'] };
@@ -49,7 +53,9 @@ async function navigate() {
   window._ajstNavSeq = ++_navSeq;
   const route = getRoute();
   try {
-    if (route.page === 'detail') {
+    if (route.page === 'specphot') {
+      await import('./specphot/tool_specphot.js').then(m => m.render(route.params.spectrum_id));
+    } else if (route.page === 'detail') {
       const mod = await import('./pages/detail.js');
       await mod.render(route.params.id);
     } else {
