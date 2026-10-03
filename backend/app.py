@@ -271,6 +271,18 @@ def create_app():
     app.register_blueprint(tmplib_bp, url_prefix='/api/tmplib')
     app.register_blueprint(specphot_bp, url_prefix='/api/specphot')
 
+    # ST-6：模板库引擎一次性预热（FilterBank + 出厂面，纯只读、零写副作用）。
+    # 后台线程，失败只记入 engine.warm_status() 供 API-1 显形，不影响启动；
+    # 测试进程跳过（验收用例会重指 AJST_TMPLIB_DIR，预热线程会与用例竞争）。
+    import os as _os
+    import threading as _threading
+    if 'PYTEST_CURRENT_TEST' not in _os.environ:
+        def _tmplib_warm():
+            from routes.tmplib import startup_warm
+            startup_warm()
+        _threading.Thread(target=_tmplib_warm, daemon=True,
+                          name='tmplib-warm').start()
+
     # 上次运行残留的 pending/running 拟合任务标记为 interrupted
     from fitting.jobs import mark_interrupted
     mark_interrupted()

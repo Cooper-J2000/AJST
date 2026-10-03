@@ -46,6 +46,10 @@ def rows_sha256(rows) -> str:
     line.  Token recipe (D-5, finalised in P2 and shared byte-for-byte with the
     frozen CSV, extract.py `token`): None → empty, bool → `true`/`false`,
     float → `repr` (round-trip exact), everything else `str`.
+
+    审核更正（P3-2）：排序键按 F-52 字面 = (time, band) 升序，而不是 join 后
+    整行串（那是 band 主序）。配方只由本函数定义，建面与活库重算共用（取数
+    管线同一份），改配方后 library.json 的登记值需重烙印。
     """
     def _tok(v):
         if v is None:
@@ -56,12 +60,18 @@ def rows_sha256(rows) -> str:
             return repr(v)
         return str(v)
 
-    lines = sorted(
-        "|".join(_tok(v) for v in row) for row in rows
-    )
+    def _sort_key(row):
+        band, t = row[0], row[1]
+        try:
+            tf = float(t)
+        except (TypeError, ValueError):
+            tf = float("inf")
+        return (tf, str(band))
+
+    ordered = sorted(rows, key=_sort_key)
     h = hashlib.sha256()
-    for line in lines:
-        h.update(line.encode("utf-8"))
+    for row in ordered:
+        h.update("|".join(_tok(v) for v in row).encode("utf-8"))
         h.update(b"\n")
     return h.hexdigest()
 

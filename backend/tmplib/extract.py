@@ -172,6 +172,8 @@ def build_rowset(rows: list[dict], *, rowset: str,
     rejected = {"nonmag": 0, "unmapped_band": 0, "band_deselected": 0,
                 "gext_missing": 0, "mag_system_missing": 0, "missing_value": 0,
                 "upperlimit": 0, "discard": 0}
+    missing_err = 0
+    gext_system_overrides = 0
     band_table: dict = {}
     csv_rows: list[tuple] = []
 
@@ -232,6 +234,14 @@ def build_rowset(rows: list[dict], *, rowset: str,
             rejected["missing_value"] += 1
             continue
 
+        if err is None:
+            # TXT-12 第三段：进面但无误差列 ⇒ 进误差预算 photometric 项时缺席
+            missing_err += 1
+        if rowset == "gext" and sys_tok == "vega":
+            # 审核更正（P3-9）披露项：gext 行集一律按 AB 记账（依据 models.py
+            # 列注释「银消改正后 AB 星等」）；原始行自称 Vega 的行在此计数显形，
+            # 不静默。此账不改写值，只让账本可核查。
+            gext_system_overrides += 1
         csv_rows.append((band, float(r["time"]), float(mag),
                          None if err is None else float(err),
                          system, bool(r["upperlimit"]), bool(r["discard"])))
@@ -242,7 +252,9 @@ def build_rowset(rows: list[dict], *, rowset: str,
 
     kept = len(csv_rows) - rejected["upperlimit"] - rejected["discard"]
     ledger = {"total": len(rows), "kept": kept,
-              "csv_rows": len(csv_rows), "rejected": rejected}
+              "csv_rows": len(csv_rows), "rejected": rejected,
+              "kept_missing_err": missing_err,
+              "gext_system_overrides": gext_system_overrides}
     return csv_rows, ledger, band_table
 
 

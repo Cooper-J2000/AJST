@@ -1,20 +1,23 @@
 """F-45/F-45': in-domain answerability of a template against its own table.
 
-Semantics follow the engine-side indomain.py word for word (OUT-11 -- rewritten
-here against the public API only): a point is one (band, rest-frame epoch) pair
-from the table the surface was built from; the point is answered when
-`predict` returns a finite apparent magnitude for it; a ChromaShiftError (or a
-NaN) means unanswered.  Per-band attribution (F-45') classifies every failure
-into the closed vocabulary {not-on-surface, out-of-t_valid,
+Semantics follow the engine-side indomain.py word for word: a point is one
+(band, rest-frame epoch) pair from the *fit-entering* sample set -- i.e.
+`chromashift.build.load_samples(spec, bank, root, distance)`, the rows that
+survive the engine's clean_rows (upper limits, discards, unmapped labels,
+missing values, sentinel rows are already gone) -- and the point is answered
+when `predict` returns a finite apparent magnitude for it; a ChromaShiftError
+(or a NaN) means unanswered.  Per-band attribution (F-45') classifies every
+failure into the closed vocabulary {not-on-surface, out-of-t_valid,
 below-min-active-bands, error:<code>} so the UI can say which band lost how
 many points and why (T-45: Σn == total, Σok == answered).
 
-The table is read by its own manifest's declaration -- shipped CSVs do not
-share the wizard's §4.3 layout (file name, time unit, epoch zero and frame all
-differ; sn1998bw's table is already rest-frame, CA-15).  Rows carrying
-upperlimit/discard never entered the fit (the engine's clean_rows dropped
-them), so they are not points; labels absent from band.map never entered
-either.
+口径更正（审核 P1-2）：本模块最初按 manifest 自行重读 CSV、只剔
+upperlimit/discard/未映射行——分母因此比引擎真实进拟合样本多（九模板
+6565 vs 底账 5959）。现在直接调用引擎的 load_samples，与 01 §E.6 实测口径
+逐字一致。这放宽了 OUT-11 的「只用公开 API」：load_samples 是引擎建面管线
+的正式入口（引擎侧旁路脚本 indomain.py 用的就是它），行为由 C_ENGINE_PIN
+的 code 指纹守卫——引擎代码一变，本模块的数字随面一起过期重算，不会静默
+漂移。
 
 Timing (02 §8.1): the full nine shipped templates are 5959 points ≈ 7.8 s,
 worst single template 1.22 s -- computed once at build time and cached in
@@ -23,106 +26,16 @@ library.json (IA-4), never on the list path.
 
 from __future__ import annotations
 
-import csv as _csv
 import math
 from collections import Counter
 from pathlib import Path
+
+import numpy as np
 
 from . import engine, paths
 
 #: F-45' closed reason vocabulary (T-45 asserts membership of `reason`).
 REASONS = ("not-on-surface", "out-of-t_valid", "below-min-active-bands")
-
-_TRUE_TOKENS = {"t", "true", "1", "y"}
-
-
-def _truthy(v, declared) -> bool:
-    toks = {str(x).strip().lower() for x in (declared or ["true"])}
-    return str(v).strip().lower() in (toks | _TRUE_TOKENS)
-
-
-def _read_points(csv_path: Path, spec) -> list[tuple[str, float]]:
-    """(registry band, rest-frame days) pairs of the fit-entering rows.
-
-    Everything comes from the manifest: time column/unit/epoch_zero/frame,
-    band column + label→registry map, flag columns.  Rows dropped by the
-    engine's clean_rows (upper limits, discards, unmapped labels) are skipped
-    the same way here.
-    """
-    ph = spec.photometry
-    time_cfg = ph.get("time") or {}
-    t_col = time_cfg.get("column", "time")
-    t_unit = time_cfg.get("unit", "s")
-    frame = time_cfg.get("frame", "observer")
-    ez = time_cfg.get("epoch_zero") or {}
-    z = float(spec.z)
-
-    with open(csv_path, newline="", encoding="utf-8") as fh:
-        rows = list(_csv.DictReader(fh))
-
-    # 零点：fixed ⇒ value 换算到时间列单位；first_point ⇒ 全表最早一行
-    if ez.get("kind") == "first_point":
-        zero = min(float(r[t_col]) for r in rows)
-    else:
-        zero = float(ez.get("value") or 0.0)
-        ez_unit = ez.get("unit") or t_unit
-        if ez_unit == t_unit:
-            pass
-        elif ez_unit == "s" and t_unit == "day":
-            zero /= 86400.0
-        elif ez_unit == "day" and t_unit == "s":
-            zero *= 86400.0
-        # mjd 列配 fixed mjd 零点：同单位直减；其余组合按声明直减
-
-    def _days(r):
-        try:
-            t = float(r[t_col]) - zero
-        except (TypeError, ValueError):
-            return None
-        d = t / 86400.0 if t_unit == "s" else t   # mjd 减零点后天数口径同 day
-        return d / (1.0 + z) if frame == "observer" else d
-
-    out = []
-    if (ph.get("layout") or "long") == "wide":
-        # wide：每波段一列，声明在 value.bands（column/error_column/filter）。
-        # 每个非空单元格 = 一个点；引擎 clean_rows 同样跳过空缺。
-        vbands = (ph.get("value") or {}).get("bands") or {}
-        for r in rows:
-            days = _days(r)
-            if days is None:
-                continue
-            for label, cfg in vbands.items():
-                band = (cfg or {}).get("filter") or label
-                v = r.get((cfg or {}).get("column") or label)
-                if v is None or not str(v).strip():
-                    continue
-                try:
-                    float(v)
-                except ValueError:
-                    continue
-                out.append((band, days))
-        return out
-
-    band_cfg = ph.get("band") or {}
-    b_col = band_cfg.get("column", "band")
-    band_map = band_cfg.get("map") or {}
-    flags = ph.get("flags") or {}
-    ul_col = flags.get("upper_limit_column")
-    dc_col = flags.get("discard_column")
-
-    for r in rows:
-        band = band_map.get(r.get(b_col))
-        if band is None:
-            continue
-        if ul_col and _truthy(r.get(ul_col), flags.get("upper_limit_true_values")):
-            continue
-        if dc_col and _truthy(r.get(dc_col), flags.get("discard_true_values")):
-            continue
-        days = _days(r)
-        if days is None:
-            continue
-        out.append((band, days))
-    return out
 
 
 def _classify(band, t_rest, surf, exc=None):
@@ -130,7 +43,9 @@ def _classify(band, t_rest, surf, exc=None):
     if band not in surf.bands:
         return "not-on-surface"
     lo, hi = float(surf.t_valid[0]), float(surf.t_valid[1])
-    if not (lo <= t_rest <= hi):
+    if not (lo - 1e-9 <= t_rest <= hi + 1e-9):
+        # 与引擎 check_time_domain 的舍入容差同量级；load_samples 的样本本就
+        # 落在窗内，这里只防御浮点边界。
         return "out-of-t_valid"
     if exc is not None:
         ctx = getattr(exc, "context", None) or {}
@@ -139,7 +54,6 @@ def _classify(band, t_rest, surf, exc=None):
         if exc.code == "E_FILTER":
             return "not-on-surface"
     try:
-        import numpy as np
         n_active = int(surf.min_active_bands_at(np.asarray([t_rest]))[0])
         if n_active < int(getattr(surf, "require_min_bands", 2)):
             return "below-min-active-bands"
@@ -160,29 +74,34 @@ def compute(template_id: str, root=None) -> dict:
     z = float(spec.z)
     one_plus = 1.0 + z
 
-    csv_name = (spec.photometry or {}).get("file") or f"{template_id}.csv"
-    points = _read_points(base / "data" / "raw" / csv_name, spec)
+    # 与引擎侧 indomain.py 逐字同口径：进拟合样本 = load_samples（clean_rows
+    # 之后）。表行 → 样本的一切剔除规则（上限/discard/哨兵/缺值/未映射）都
+    # 由引擎负责，本层不再复制一份会漂移的口径。
+    samples, _audit = cs.build.load_samples(spec, bank, root=base, distance=dist)
+
     per_band: dict[str, dict] = {}
     total = answered = 0
-    for band, t_rest in points:
+    for s in samples:
+        band = s.band
         b = per_band.setdefault(band, {"n": 0, "ok": 0, "reasons": Counter()})
-        b["n"] += 1
-        total += 1
-        if band not in bank:                       # E_FILTER without the call
-            b["reasons"]["not-on-surface"] += 1
-            continue
-        try:
-            pred = cs.predict(surf, bank, dist, band, z=z,
-                              times_obs_days=[t_rest * one_plus], mode="band")
-            mag = pred.mag[0]
-            if mag is not None and math.isfinite(float(mag)):
-                b["ok"] += 1
-                answered += 1
+        for t_rest in np.asarray(s.t_rest, float):
+            b["n"] += 1
+            total += 1
+            if band not in bank:                   # E_FILTER without the call
+                b["reasons"]["not-on-surface"] += 1
                 continue
-            reason = _classify(band, t_rest, surf)
-        except cs.ChromaShiftError as exc:
-            reason = _classify(band, t_rest, surf, exc=exc)
-        b["reasons"][reason] += 1
+            try:
+                pred = cs.predict(surf, bank, dist, band, z=z,
+                                  times_obs_days=[t_rest * one_plus], mode="band")
+                mag = pred.mag[0]
+                if mag is not None and math.isfinite(float(mag)):
+                    b["ok"] += 1
+                    answered += 1
+                    continue
+                reason = _classify(band, t_rest, surf)
+            except cs.ChromaShiftError as exc:
+                reason = _classify(band, t_rest, surf, exc=exc)
+            b["reasons"][reason] += 1
 
     by_band = {}
     for band in sorted(per_band):

@@ -50,6 +50,19 @@ HOST_LIMITS = {
 }
 
 
+#: 引擎错误码 → (AJST code, HTTP)（E-16 映射表；T-16/T-32：互不借用）。
+#: routes/tmplib 与 compare.run（API-8 部分成功协议）共用这一份，防止两处漂移
+#: ——审核 P1-1：批量通路此前按异常类型兜底，E_DOMAIN 等被吞成 TL_INTERNAL。
+ENGINE_CODE_MAP = {
+    'E_CFG': ('TL_INCONSISTENT_ARGS', 400),
+    'E_DATA': ('TL_DATA', 422),
+    'E_FILTER': ('TL_BAND_UNKNOWN', 422),
+    'E_DOMAIN': ('TL_OUT_OF_DOMAIN', 409),
+    'E_CONVERGE': ('TL_NOT_CONVERGED', 409),
+    'E_INTERP': ('TL_BAD_SURFACE', 422),
+}
+
+
 class EngineUnavailable(Exception):
     """Raised by `require()`; `.reasons` is a list of machine-readable codes."""
 
@@ -266,3 +279,41 @@ def reset_caches() -> None:
     cs = _import()
     if cs is not None:
         cs.registry.reset_bank()
+
+
+# ── ST-6: one-time startup warm (read-only; the thread lives in app.py) ──────
+
+_warm_lock = threading.Lock()
+_warm: dict = {"done": False, "ok": None, "error": None, "surfaces": 0}
+
+
+def warm(root: str | Path | None = None) -> dict:
+    """Pre-load the FilterBank and every shipped surface once (ST-6).
+
+    Purely read-only (bank_cached/load_surface_cached -- A-3: no rebuild); a
+    failure is recorded for API-1 via warm_status() and must not crash the
+    caller.  Safe to call more than once; the status reflects the last run.
+    The slow IO happens OUTSIDE the status lock (复审 P3：预热期间 API-1 的
+    warm_status() 不得在锁上等待秒级读盘).
+    """
+    base = Path(root) if root is not None else paths.library_root()
+    result = {"done": True, "ok": True, "error": None, "surfaces": 0}
+    try:
+        cs = require()
+        bank_cached(base)
+        n = 0
+        for tid in sorted(cs.manifests(base)):
+            load_surface_cached(tid, base)
+            n += 1
+        result["surfaces"] = n
+    except Exception as exc:            # noqa: BLE001 - warm never raises
+        result.update(ok=False, error=f"{type(exc).__name__}: {exc}", surfaces=0)
+    with _warm_lock:
+        _warm.update(result)
+    return dict(_warm)
+
+
+def warm_status() -> dict:
+    """The last warm run's outcome (API-1: warm 失败 ⇒ 显形，不静默)。"""
+    with _warm_lock:
+        return dict(_warm)

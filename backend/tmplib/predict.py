@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import domain, engine, mudelta, paths
+from . import domain, engine, guard, mudelta, paths
 
 #: host-side caps (§7); engine thresholds are read live via engine.limits()
 MAX_POINTS = 512          # C_MAX_POINTS: requested epoch list
@@ -47,6 +47,10 @@ class TLError(Exception):
 # ── validation helpers (Q-3: one finite-float parser at the boundary) ────────
 
 def _finite(value, name: str) -> float:
+    # bool 显式拒收（审核 P3-5）：float(True)==1.0，否则 z=true 会当 z=1 通过
+    if isinstance(value, bool):
+        raise TLError("TL_PARAM_NOT_FINITE", 400,
+                      f"{name} 必须是有限数值，得到布尔值 {value!r}")
     try:
         v = float(value)
     except (TypeError, ValueError):
@@ -404,6 +408,18 @@ def predict_curve(body: dict, *, catalog: dict | None = None,
                                distance=distance,
                                extrapolation=extrapolation)
 
+    # ST-15/E-20：vendor 漂移不阻断（引擎按快照算的数仍自洽），但必须随曲线
+    # 显形（审核 P3-3：此前只进 API-1/13，预测/导出响应看不到 CA-01）。
+    vendor_note = None
+    try:
+        vendor = guard.vendor_axis(base)
+    except Exception:
+        vendor = {"ok": None}
+    vendor_alert = []
+    if vendor.get("ok") is False:
+        vendor_alert.append("CA-01")
+        vendor_note = vendor.get("message") or "滤光片 vendor 快照与现文件不一致"
+
     t_origin = resolve_time_origin(spec, user_mjd, catalog, base)
     dom = domain.judge(pred, requested_mode=mode, clipped_epochs=clipped,
                        time_origin_kind=t_origin["kind"], spec=spec,
@@ -447,8 +463,10 @@ def predict_curve(body: dict, *, catalog: dict | None = None,
         "points": points,
         "meta": dict(pred.meta),          # F-54: verbatim 21-key passthrough
         "warnings": list(pred.warnings),
-        "alerts": dom["alerts"],
+        "alerts": dom["alerts"] + vendor_alert,
     }
+    if vendor_note:
+        notes.append(vendor_note)
     if n_times_clamped:
         notes.append(f"n_times 已钳到 {POINTS_MAX}（请求 {int(n_times_req)}，F-44）")
     return {

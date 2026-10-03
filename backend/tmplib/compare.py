@@ -27,12 +27,15 @@ the cleaning applies only inside this new API.
 
 from __future__ import annotations
 
+import logging
 import math
 from pathlib import Path
 
 import numpy as np
 
-from . import engine, extract, mudelta, paths, predict as tl_predict
+from . import engine, extract, guard, mudelta, paths, predict as tl_predict
+
+log = logging.getLogger(__name__)   # ST-10："已记录"必须有实际记录
 
 MAX_CURVES = 8          # Q-8
 MAX_SOURCES = 8         # Q-8
@@ -87,6 +90,21 @@ def validate_request(body) -> dict:
 def _err_entry(kind, *, code, message, **ids):
     return {"kind": kind, "state": "error",
             "error": {"code": code, "message": message}, **ids}
+
+
+def _engine_entry(kind, exc, **ids):
+    """E-30：引擎异常按 code 分派为部分成功条目（审核 P1-1：此前一律
+    TL_INTERNAL，E_DOMAIN/E_FILTER 的 code 与 context 在 API-8 里双双丢失，
+    前端无法出域判定卡）。未知引擎码按 ST-10 记日志后仍给 TL_INTERNAL。"""
+    mapped = engine.ENGINE_CODE_MAP.get(exc.code)
+    if mapped is None:
+        log.error("tmplib compare 未映射的引擎错误: %r", exc)
+        return _err_entry(kind, code="TL_INTERNAL",
+                          message="引擎内部错误（已记录）", **ids)
+    entry = _err_entry(kind, code=mapped[0], message=exc.message, **ids)
+    if getattr(exc, "context", None):
+        entry["error"]["context"] = dict(exc.context)   # E-13：逐键展开
+    return entry
 
 
 def _template_for_source(transient_id: str, lib: dict) -> str | None:
@@ -334,10 +352,16 @@ def run(req: dict, *, source_data: dict, catalogs: dict, rows_hashes: dict,
     (transient_dict|None, rows) fetched by the route layer; `catalogs` /
     `rows_hashes` are the predict-path companions keyed by template_id."""
     base = Path(root) if root is not None else paths.library_root()
+    cs = engine.require()   # 全部分支都要引擎；不可用由路由层 available() 前置
     try:
         lib = paths.read_library(base) or {}
     except ValueError:
         lib = {}
+    # ST-15/E-20：vendor 漂移不阻断，但每条涉及引擎通带的曲线都要显形（CA-01）
+    try:
+        vendor_ok = guard.vendor_axis(base).get("ok")
+    except Exception:
+        vendor_ok = None
     curves_out = []
 
     for item in req["curves"]:
@@ -351,10 +375,15 @@ def run(req: dict, *, source_data: dict, catalogs: dict, rows_hashes: dict,
             curves_out.append(_err_entry(
                 "template-prediction", code=e.code, message=e.message,
                 template_id=tid, band=item.get("band")))
+        except cs.ChromaShiftError as e:
+            curves_out.append(_engine_entry(
+                "template-prediction", e, template_id=tid,
+                band=item.get("band")))
         except Exception as e:
+            log.error("tmplib compare 模板曲线未知异常: %r", e)   # ST-10
             curves_out.append(_err_entry(
                 "template-prediction", code="TL_INTERNAL",
-                message=f"内部错误（已记录）: {type(e).__name__}",
+                message="内部错误（已记录）",
                 template_id=tid, band=item.get("band")))
 
     for item in req["sources"]:
@@ -368,11 +397,17 @@ def run(req: dict, *, source_data: dict, catalogs: dict, rows_hashes: dict,
         if req["include_measured"]:
             try:
                 curves_out.append(measured_series(sid, rows=rows, root=base))
+            except tl_predict.TLError as e:
+                curves_out.append(_err_entry(
+                    "measured", code=e.code, message=e.message,
+                    transient_id=sid))
+            except cs.ChromaShiftError as e:
+                curves_out.append(_engine_entry("measured", e, transient_id=sid))
             except Exception as e:
+                log.error("tmplib compare 实测序列未知异常: %r", e)   # ST-10
                 curves_out.append(_err_entry(
                     "measured", code="TL_INTERNAL",
-                    message=f"内部错误（已记录）: {type(e).__name__}",
-                    transient_id=sid))
+                    message="内部错误（已记录）", transient_id=sid))
         tid = item.get("template_id") or _template_for_source(sid, lib)
         if not tid:
             # F-23/W-24：无模板的源没有面可取 K ⇒ 逐条标 ✕，不是请求失败
@@ -390,12 +425,26 @@ def run(req: dict, *, source_data: dict, catalogs: dict, rows_hashes: dict,
             curves_out.append(_err_entry(
                 "kcorrected-measured", code=e.code, message=e.message,
                 transient_id=sid, template_id=tid))
+        except cs.ChromaShiftError as e:
+            curves_out.append(_engine_entry(
+                "kcorrected-measured", e, transient_id=sid, template_id=tid))
         except Exception as e:
+            log.error("tmplib compare K 改正序列未知异常: %r", e)   # ST-10
             curves_out.append(_err_entry(
                 "kcorrected-measured", code="TL_INTERNAL",
-                message=f"内部错误（已记录）: {type(e).__name__}",
+                message="内部错误（已记录）",
                 transient_id=sid, template_id=tid))
 
+    notes = ["部分成功协议（A-6）：单条失败只标该条 state=error，"
+             "其余照常；μ 一律引擎值，库 gext_distmod 仅作 Δμ 对照（F-21'）"]
+    if vendor_ok is False:
+        # ST-15/E-20/TXT-10：漂移不阻断，逐曲线显形 + 一条总说明
+        for c in curves_out:
+            if c.get("state") != "error":
+                c.setdefault("alerts", []).append("CA-01")
+        notes.append("引擎的通带快照取自本库的 filters.json，记录 sha 与现文件"
+                     "不一致（CA-01）：K 改正按快照计算；处置在引擎侧重跑 "
+                     "vendor 脚本，本功能无权改引擎数据。")
     return {
         "code": "TL_OK",
         "curves": tl_predict._sanitize(curves_out),

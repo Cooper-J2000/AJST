@@ -36,6 +36,11 @@ ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,47}$")
 
 LIBRARY_JSON = "library.json"
 
+#: ST-12 库配额（C_LIB_QUOTA）：派生数据要有配额意识。默认 200 MB（九出厂
+#: 模板 ~2 MB 量级，留足向导模板余量）；AJST_TMPLIB_QUOTA_MB 可覆盖，0 = 关闭。
+QUOTA_ENV = "AJST_TMPLIB_QUOTA_MB"
+DEFAULT_QUOTA_MB = 200
+
 
 def default_root() -> Path:
     """``<repo>/catadata/tmplibrary`` -- the data repo next to the code repo."""
@@ -145,3 +150,37 @@ def trash_target(template_id: str, root: str | Path | None = None,
     when = when or datetime.now(timezone.utc)
     stamp = when.strftime("%Y%m%dT%H%M%SZ")
     return trash_dir(root) / f"{check_id(template_id)}-{stamp}"
+
+
+# ── ST-12: library quota ─────────────────────────────────────────────────────
+
+def quota_bytes() -> int | None:
+    """The library-root size ceiling in bytes, or None when disabled (0)."""
+    try:
+        mb = int(os.environ.get(QUOTA_ENV, DEFAULT_QUOTA_MB))
+    except ValueError:
+        mb = DEFAULT_QUOTA_MB
+    return None if mb <= 0 else mb * 1024 * 1024
+
+
+def usage_bytes(root: str | Path | None = None) -> int:
+    """Total size of the library root in bytes (templates + surfaces + CSVs)."""
+    base = Path(root) if root is not None else library_root()
+    total = 0
+    for dirpath, _dirnames, filenames in os.walk(base):
+        for fn in filenames:
+            try:
+                total += (Path(dirpath) / fn).stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def quota_check(root: str | Path | None = None) -> dict:
+    """ST-12 判定：``ok=False`` 时 ``over_by_bytes`` 是要拒新建的量。"""
+    limit = quota_bytes()
+    if limit is None:
+        return {"ok": True, "limit_bytes": None, "usage_bytes": usage_bytes(root)}
+    usage = usage_bytes(root)
+    return {"ok": usage < limit, "limit_bytes": limit, "usage_bytes": usage,
+            "over_by_bytes": max(0, usage - limit)}

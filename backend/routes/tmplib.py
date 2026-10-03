@@ -41,6 +41,10 @@ log = logging.getLogger(__name__)
 
 tmplib_bp = Blueprint('tmplib', __name__)
 
+# API-2 的 epoch_zero 摘要缓存（审核 P3-4）：键 = (路径, mtime_ns, size)，
+# manifest 落盘（API-5/7/14 都会换 mtime）即自然失效。
+_EZ_CACHE: dict = {}
+
 # P4 能力面：对比（P3）+ 导出/预算（P4）全开
 _CAPABILITIES = {
     'endpoints': ['/api/tmplib/config', '/api/tmplib/guards',
@@ -62,15 +66,10 @@ _CAPABILITIES = {
 # 名字保留 _PREDICT_SEM（T-31 直接引用它）。
 _PREDICT_SEM = surfaces.BUILD_SEM
 
-# 引擎错误码 → (AJST code, HTTP)（E-16 映射表；T-16/T-32：互不借用）
-_ENGINE_CODE_MAP = {
-    'E_CFG': ('TL_INCONSISTENT_ARGS', 400),
-    'E_DATA': ('TL_DATA', 422),
-    'E_FILTER': ('TL_BAND_UNKNOWN', 422),
-    'E_DOMAIN': ('TL_OUT_OF_DOMAIN', 409),
-    'E_CONVERGE': ('TL_NOT_CONVERGED', 409),
-    'E_INTERP': ('TL_BAD_SURFACE', 422),
-}
+# 引擎错误码 → (AJST code, HTTP)（E-16 映射表；T-16/T-32：互不借用）。
+# 正式定义在 tmplib.engine.ENGINE_CODE_MAP（compare.run 的部分成功协议共用
+# 同一份，审核 P1-1 修复），这里保留别名以维持既有引用。
+_ENGINE_CODE_MAP = engine.ENGINE_CODE_MAP
 
 
 def _scrub(text):
@@ -219,6 +218,8 @@ def config():
         'limits': engine.limits(),
         'vendor': guard.vendor_axis(),
         'library': None,
+        'warm': engine.warm_status(),          # ST-6：warm 失败在这里显形
+        'quota': paths.quota_check(),          # ST-12：库配额现状
         'capabilities': dict(_CAPABILITIES),
     }
     if avail['ok']:
@@ -320,17 +321,27 @@ def templates():
 
     # T0 口径（U-11 列表列）：manifest 的 epoch_zero 声明摘要 + 对应源的库内
     # t0（ST-1：单条短查询，读完即关；库暂不可达 ⇒ 该列降级为 null，不拖垮列表）
+    # 审核 P3-4：mtime+size 键的进程内缓存——status() 内部已解析过一遍 YAML，
+    # 列表路径不再对每个模板二次 safe_load（命中时纯读 stat）。
     import yaml as _yaml
     ez_map = {}
     for row in out:
+        ypath = paths.template_yaml(root, row['id'])
         try:
-            man = _yaml.safe_load(paths.template_yaml(root, row['id'])
-                                  .read_text(encoding='utf-8')) or {}
+            st = ypath.stat()
+            key = (str(ypath), st.st_mtime_ns, st.st_size)
+            hit = _EZ_CACHE.get(ypath)
+            if hit and hit[0] == key:
+                ez_map[row['id']] = hit[1]
+                continue
+            man = _yaml.safe_load(ypath.read_text(encoding='utf-8')) or {}
             ez = (((man.get('photometry') or {}).get('time') or {})
                   .get('epoch_zero') or {})
-            ez_map[row['id']] = {'kind': ez.get('kind'), 'unit': ez.get('unit'),
-                                 'value': ez.get('value'),
-                                 'source': str(ez.get('source') or '')[:200]}
+            summary = {'kind': ez.get('kind'), 'unit': ez.get('unit'),
+                       'value': ez.get('value'),
+                       'source': str(ez.get('source') or '')[:200]}
+            _EZ_CACHE[ypath] = (key, summary)
+            ez_map[row['id']] = summary
         except Exception:
             ez_map[row['id']] = None
     cids = {mudelta.counterpart_of(t['id'], entries.get(t['id']) or {})
@@ -691,6 +702,20 @@ def _engine_unavailable_response(avail, http=200):
                 reasons=[r['code'] for r in avail['reasons']])
 
 
+def startup_warm():
+    """ST-6：一次性预热（FilterBank + 全部出厂面），纯读盘、零写副作用。
+
+    由 app.create_app 在后台线程里调（线程不放在本文件/ tmplib 包内，是
+    T-43 ③「无后台建面」静态断言的守卫范围——warm 只读不建，但断言按
+    线程字样扫描源码）。失败记入 engine.warm_status()，由 API-1 显形。
+    """
+    try:
+        st = engine.warm()
+        (log.info if st.get('ok') else log.warning)('tmplib warm: %s', st)
+    except Exception as e:                                  # noqa: BLE001
+        log.warning('tmplib warm 异常: %r', e)
+
+
 @tmplib_bp.route('/preview', methods=['GET'])
 @require_auth
 def preview():
@@ -813,7 +838,11 @@ def preview():
                      'rows_with_gextcor': sum(b['gext_with_value']
                                               for b in band_table.values()),
                      'gext_missing': sum(b['gext_missing']
-                                         for b in band_table.values())},
+                                         for b in band_table.values()),
+                     # TXT-12 第三段：进面但无误差列（不进误差预算 photometric 项）
+                     'kept_missing_err': ledger_gext.get('kept_missing_err'),
+                     # 审核 P3-9：gext 行集按 AB 记账而原始行自称 Vega 的行数（只记账不改值）
+                     'gext_system_overrides': ledger_gext.get('gext_system_overrides')},
         },
         'bands': bands_out,                              # 大小写两列并存（F-08）
         'same_event': ca12,                              # CA-12 或 null
@@ -892,6 +921,15 @@ def create_template():
     if existing and not existing.get('deleted'):
         return _err('TL_TEMPLATE_CONFLICT', f'模板 id {tid!r} 已在索引中', 409)
 
+    # ST-12：库配额（C_LIB_QUOTA）——派生数据超限拒新建，不静默放行
+    quota = paths.quota_check(root)
+    if not quota.get('ok', True):
+        return _err('TL_QUOTA',
+                    f'模板库已达配额上限（现 {quota["usage_bytes"] / 1048576:.1f} MB / '
+                    f'{quota["limit_bytes"] / 1048576:.0f} MB，ST-12）；清理或提升 '
+                    f'{paths.QUOTA_ENV} 后重试', 400,
+                    **{k: v for k, v in quota.items()})
+
     # ST-1：取数在短 session 内完成并关闭
     try:
         sess = get_session()
@@ -961,17 +999,33 @@ def create_template():
                 return _engine_error(e)
             raise
 
-        in_domain = indomain.compute(tid, root)              # F-45 实测
-        spec = cs.TemplateSpec.from_yaml(paths.template_yaml(root, tid))
-        mu = mudelta.compute_mu(spec, tr, {'transient_id': decl['transient_id']})
-        entry = _new_entry(decl, tr, ledger=ledger,
-                           csv_sha=extract.csv_sha256(csv_path),
-                           rows_sha=rows_sha,
-                           inputs_sha=qc.get('inputs_sha256'),
-                           in_domain=in_domain, mu=mu, state='fresh',
-                           extra_rejected=rows)
-        lib['templates'][tid] = entry
-        paths.write_library(lib, root)
+        in_domain = None
+        mu = None
+        try:
+            in_domain = indomain.compute(tid, root)              # F-45 实测
+            spec = cs.TemplateSpec.from_yaml(paths.template_yaml(root, tid))
+            mu = mudelta.compute_mu(spec, tr, {'transient_id': decl['transient_id']})
+            entry = _new_entry(decl, tr, ledger=ledger,
+                               csv_sha=extract.csv_sha256(csv_path),
+                               rows_sha=rows_sha,
+                               inputs_sha=qc.get('inputs_sha256'),
+                               in_domain=in_domain, mu=mu, state='fresh',
+                               extra_rejected=rows)
+            lib['templates'][tid] = entry
+            paths.write_library(lib, root)
+        except Exception as e:
+            # 审核 P2-1：索引登记前的任何失败都清掉全部半成品（CSV/manifest/
+            # 面/QC），否则重试建面 409、rebuild/DELETE 404 —— id 死锁只能手删。
+            # engine.reset_caches() 把缓存里的半成品面一并逐出。
+            for f in (csv_path, paths.template_yaml(root, tid),
+                      paths.surface_npz(root, tid),
+                      root / 'data' / 'surfaces' / f'{tid}.qc.json'):
+                f.unlink(missing_ok=True)
+            engine.reset_caches()
+            import chromashift
+            if isinstance(e, chromashift.ChromaShiftError):
+                return _engine_error(e)
+            raise
         return jsonify(_walk(tl_predict._sanitize({
             'code': 'TL_OK', 'id': tid, 'state': 'fresh',
             'row_ledger': ledger,
@@ -1117,13 +1171,20 @@ def edit_template(template_id):
                     '没有任何字段变化（所给值与现状相同）', 400)
     new_manifest = tl_edit.apply_to_dict(current, sets, deletes, appends)
 
-    acquired = False
+    acquired = False          # None | 'sem' | 'lock'：finally 按实际持有释放
     if rebuild:
         # 先拿信号量再落盘：429 时编辑一字节未写（T-31）
         if not surfaces.BUILD_SEM.acquire(blocking=False):
             return _err('TL_BUSY',
                         '引擎正忙于另一条预测/建面，请稍后重试（编辑尚未落盘）', 429)
-        acquired = True
+        acquired = 'sem'
+    else:
+        # 审核 P3-7：rebuild=False 的直改写也要过 per-template 单飞锁——
+        # 与正在进行的建面/重建互斥，两个并发 PATCH 不再是 last-write-wins。
+        if not surfaces._lock_for(template_id).acquire(blocking=False):
+            return _err('TL_BUILD_IN_PROGRESS',
+                        f'模板 {template_id} 正在建面/重建中，编辑未落盘', 409)
+        acquired = 'lock'
     try:
         tl_edit.write_manifest_checked(root, template_id, new_manifest)
         if ('label',) in sets:
@@ -1166,8 +1227,10 @@ def edit_template(template_id):
             'in_domain': in_domain, 'mu': mu, 'qc': qc,
         })))
     finally:
-        if acquired:
+        if acquired == 'sem':
             surfaces.BUILD_SEM.release()
+        elif acquired == 'lock':
+            surfaces._lock_for(template_id).release()
 
 
 @tmplib_bp.route('/templates/<template_id>', methods=['DELETE'])
