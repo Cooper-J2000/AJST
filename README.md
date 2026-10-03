@@ -1,150 +1,137 @@
-# AJST: A Joint Storage & Toolkit for Transient Astronomy
+# AJST — A Joint Storage & Toolkit for Transient Astronomy
 
-A lightweight, self-hostable web database for GRB afterglows and other transients.
+[![License: MIT](https://img.shields.io/badge/Code-MIT-blue.svg)](LICENSE)
+[![Data: CC BY 4.0](https://img.shields.io/badge/Data-CC_BY_4.0-lightgrey.svg)](https://github.com/Cooper-J2000/AJST-Data)
+[![Python](https://img.shields.io/badge/Python-%E2%89%A53.10-3776AB.svg)](requirements.txt)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-%E2%89%A514-336791.svg)](https://www.postgresql.org)
 
-![homepage](fig/homepage.png)
+AJST is a self-hostable web database and analysis toolkit for GRB afterglows
+and other astrophysical transients. It combines a multi-band light-curve
+catalog (currently **2,794 events**, **257,330 photometry points**, **963
+redshifts**) with Galactic-extinction machinery, afterglow and host-galaxy
+SED fitting, prompt-emission scaling relations, and everyday research tools
+(figure digitizer, GCN reader, synthetic spectrophotometry). The stack is a
+Flask + PostgreSQL backend and a build-free vanilla-JS frontend with all
+libraries bundled locally — clone, `pip install`, point at PostgreSQL, run.
 
-**Status: active development — not a finished product.** AJST is a personal
-project, built and maintained by one person on a personal computer through
-vibe coding powered by the [Kimi-K3](https://www.kimi.com/news/kimi-k3) model. Development time and model quota are
-limited, so expect rough edges and gradual progress.
-
-AJST was inspired by a number of earlier statistical/catalog works in the
-transient community:
-- [Dainotti, M. G. et al. An optical gamma-ray burst catalogue with measured redshift – I. Data release of 535 gamma-ray bursts and colour evolution. Monthly Notices of the Royal Astronomical Society 533, 4023–4043 (2024).](https://academic.oup.com/mnras/article/533/4/4023/7697178)
-- 
-
-Its core goals:
-
-- **Open** — code (this repo, MIT) and data (the separate
-  [AJST-Data](https://github.com/Cooper-J2000/AJST-Data) repo, CC BY 4.0) are
-  both public.
-- **Lightweight** — a Flask + PostgreSQL backend and a build-free vanilla-JS
-  frontend; no Docker, no Node toolchain, no external CDN at runtime.
-- **Trustworthy data** — data lives in its own repository with documented
-  provenance per source and a stated quality-review plan (see below).
-- **Deployable on a personal computer** — clone, `pip install`, point at a
-  local PostgreSQL, done.
-- **Useful tools included** — see the feature list below.
-
-## Data quality disclaimer — please read
-
-The data is **not** in this repository. It lives in the separate
-[AJST-Data](https://github.com/Cooper-J2000/AJST-Data) repository. Importing
-it is entirely optional: AJST runs fine with an empty database, and you may
-populate it with your own data instead.
-
-The current dataset was batch-collected from publicly available papers and
-GCN circulars, and also inherits data from a research project:
-- [Dainotti, M. G. et al. An optical gamma-ray burst catalogue with measured redshift – I. Data release of 535 gamma-ray bursts and colour evolution. Monthly Notices of the Royal Astronomical Society 533, 4023–4043 (2024).](https://academic.oup.com/mnras/article/533/4/4023/7697178)
-- 
-
-> **The data has NOT yet been manually reviewed entry by entry.** The author
-> plans to spend roughly one year auditing the quality of every entry. Until
-> then, **do not use this data directly for serious scientific research.**
+<p align="center">
+  <img src="fig/homepage.png" alt="AJST home page" width="100%">
+</p>
 
 ## Features
 
-Web UI (all local, no build step):
+### Catalog
 
-- **Home / overview** — entry point with quick statistics
-- **Transient list** — filtering, export, one-click Galactic-extinction
-  correction
-- **Detail page** — light-curve plotting (copy chart as PNG, current-time
-  marker line, time error bars, empirical fits incl. the FRED pulse model),
-  data table editing, tags, aliases
-- **Compare** — overlay light curves of multiple transients
-- **Digitizer** — extract data points from published figure screenshots
-  (calibration → manual/color-based point picking → CSV export or direct
-  database write). The algorithm is inspired by the MIT-licensed
-  `graph-digitizer` project; it is an original reimplementation,
-  written as an alternative to the AGPL-licensed WebPlotDigitizer.
-- **Filters management** — photometric filter definitions (admin-editable)
-- **Afterglow fitting** — submit and monitor
-  [VegasAfterglow](https://github.com/YihanWangAstro/VegasAfterglow) MCMC fits
-  from the detail page (optional dependency); a preset-combination engine
-  (`vegas_unified`) with curated priors, selectable jet structure / circumburst
-  medium / host extinction, and joint physical constraints (e.g. FS+RS pair plus
-  a standalone FS, two-component jet)
-- **Host galaxies** — per-source host coordinates, redshift (spectroscopic or
-  photometric) and multi-band photometry (AB/Vega/ST mag systems), plus a
-  built-in SED-fitting tab with two selectable engines —
-  [pcigale](https://cigale.lam.fr) or
-  [prospector](https://prospect.readthedocs.io) (optional dependencies):
-  fixed-z or photometric-z runs with selectable bands, results table and
-  best-model SED plot, and one-click write-back of the adopted parameters
-- **GCN tool** — browse GCN circulars with per-source info cards and
-  photometry entry
-- **Light-curve upload** — batch CSV import with column mapping
-- **Spectra** — upload, overplot and download per-source spectra; optional
-  Galactic-extinction correction (CSFD + P92, Rv = 3.1) is stored as a
-  secondary product linked to the original spectrum
-- **Statistical relations** — Amati / Yonetoku / Ghirlanda / lag–luminosity /
-  variability–luminosity / Ep–α
-- **Statistics** — overview, redshift distribution, band coverage,
-  host-galaxy coverage and M*/SFR distributions
-- **Admin panel** — user management (`/admin`)
+- **Transient registry** — coordinates (decimal/sexagesimal), T0 with
+  reference and offset metadata, redshift (spec-z / photo-z / upper limit),
+  trigger instrument, tags, aliases, free-form JSONB extension fields.
+- **Unified photometry store** — per-point original value and unit
+  (`mag`/`mJy`/`μJy`/`Jy`/`cgs`), magnitude system (AB/Vega), upper-limit and
+  host-subtraction flags, telescope/instrument, and reference; times
+  normalized to Δt since T0 with MJD as the authoritative observation time.
+- **Editing** — two-tier permissions (admin / regular users), inline table
+  editing, batch operations, non-destructive "discard" flagging, CSV upload
+  with column mapping, per-event literature lists with BibTeX.
+- **Reversible file↔database ETL** (`etl.py --sync` / `--dump` / `--prune`)
+  against the versioned [AJST-Data](https://github.com/Cooper-J2000/AJST-Data)
+  layout (one JSON + one CSV per event).
 
-APIs and integrations:
+**Detail page** — basic parameters, literature with one-click BibTeX, Aladin
+Lite finder chart, external-catalog parameters (T90, Epeak, Eiso, … from
+GBM/BAT/XRT and literature samples), and derived rest-frame quantities:
 
-- **STDweb ingest API** — `POST /api/ingest/photometry` (Bearer-token
-  authenticated) is designed for seamless connection with the
-  STDpipe/STDweb photometry pipeline; an AI agent can assist with the
-  deployment and wiring on the STDweb side.
-- REST API for transients, light curves, filters, tags, statistics, export,
-  extinction, relations, fitting, spectra, GCN, and admin (see
-  `docs/TECHNICAL.md`).
+<p align="center">
+  <img src="fig/detail_overview.png" alt="Transient detail page" width="100%">
+</p>
 
-## Acknowledgements & third-party credits
+**Light-curve plotting** — multi-band plots with error bars, linear/log axes,
+flux-density or absolute-magnitude Y axes, observer/rest-frame switching, and
+overlay fits of empirical models (power law, broken/smoothly-broken power
+law, FRED pulse) with 1σ credible bands from emcee posteriors:
 
-- **Galactic extinction** — computed with
-  [dustmaps](https://github.com/gregreen/dustmaps) using the **CSFD dust map
-  (Liu et al. 2023)** and the **P92 extinction law (Pei 1992, Rv = 3.1)** via
-  [dust_extinction](https://github.com/karllark/dust_extinction). Requires a
-  one-time `dustmaps.csfd.fetch()` download.
-- **Filter definitions** — `filters.json`; the Spitzer/IRAC entries are taken
-  from the **SVO Filter Profile Service**; filter transmission curves for the
-  host-galaxy SED fits are also retrieved from SVO FPS.
-- **Host-galaxy SED fitting** — **pcigale** (Boquien et al. 2019; v2025.0
-  tested), run as a subprocess with results rendered by `matplotlib`;
-  alternatively **prospector** (Johnson et al. 2021; optional) with
-  **python-fsps** stellar-population data and dynesty/emcee sampling.
-- **All-sky map** — embedded **Aladin Lite 3.8.2** (CDS).
-- **Afterglow fitting** — **VegasAfterglow** (v2.0.6 tested), with `corner`
-  and `matplotlib` for posterior plots.
-- **Spectral line markers** — the line lists on the spectra page are taken
-  verbatim from the object pages of the **Transient Name Server
-  (wis-tns.org)**.
-- **Digitizer** — algorithm inspired by the MIT-licensed `graph-digitizer`;
-  an original reimplementation as a self-hosted alternative to
+<p align="center">
+  <img src="fig/detail_lightcurve.png" alt="Multi-band light curve" width="100%">
+</p>
+
+### Science tools
+
+- **Galactic extinction** — per-point or whole-catalog correction with the
+  CSFD dust map ([dustmaps](https://github.com/gregreen/dustmaps)) and the
+  Pei (1992) P92 curve (R_V = 3.1,
+  [dust_extinction](https://github.com/karllark/dust_extinction)); Vega→AB
+  conversion per filter; results cached and re-derived automatically when
+  coordinates or filters change.
+- **Afterglow fitting** — MCMC fits via
+  [VegasAfterglow](https://github.com/YihanWangAstro/VegasAfterglow) with a
+  preset engine covering 216 jet-structure × circumburst-medium ×
+  host-extinction combinations plus joint constraints (FS+RS pairs,
+  two-component jets); corner plots and chains archived per job.
+- **Host galaxies** — per-event host coordinates, redshift, and photometry
+  (AB/Vega/ST), with a SED-fitting tab running
+  [CIGALE/pcigale](https://cigale.lam.fr) (Boquien et al. 2019) or
+  [prospector](https://prospect.readthedocs.io) (Johnson et al. 2021);
+  fixed-z or photo-z runs with one-click write-back of M*, SFR, age, A_V.
+- **Spectra** — upload, overplot, offset, and download spectra; rest-frame
+  sub-axis; TNS-style line marking (30 groups with per-group z and expansion
+  velocity); optional extinction-corrected secondary products (CSFD + P92).
+- **Spectra × filters workbench** — synthetic photometry of library or
+  user-uploaded spectra through registered filter curves, with anchoring and
+  error budgeting.
+- **Statistical relations** — Amati, Yonetoku, Ghirlanda, lag–luminosity,
+  variability–luminosity, and Ep–α relations with sample selection, group
+  fits, intrinsic scatter, and CSV export.
+- **Statistics** — Mollweide sky distribution, redshift histograms, band
+  coverage, and host-galaxy M*/SFR populations.
+
+**Filter management** — 81 UV→far-IR filter definitions with transmission
+curves (SVO FPS), effective wavelengths, and Vega→AB conversions, feeding the
+extinction correction, synthetic photometry, and SED fits:
+
+<p align="center">
+  <img src="fig/filters.png" alt="Filter transmission overview" width="100%">
+</p>
+
+### Workflow tools
+
+- **Figure digitizer** — extract points from published figures: axis
+  calibration (linear/log), manual and color-based auto picking, CSV export
+  or direct database write. An original reimplementation inspired by the
+  MIT-licensed `graph-digitizer`, offered as a self-hosted alternative to
   WebPlotDigitizer (AGPL).
-- **Frontend vendor libraries** (bundled locally, no CDN): Bootstrap 5.3.3,
-  bootstrap-icons 1.11.3, Chart.js 4.4.7 (all MIT).
-- **Data sources** — see the per-directory READMEs in
-  [AJST-Data](https://github.com/Cooper-J2000/AJST-Data); if you use a subset
-  of the data, please cite the original works listed there.
+- **GCN circular reader** — browse the local GCN archive (45,000+ circulars)
+  with per-source info cards, Δt calculator, and a photometry-entry form that
+  writes directly into the database.
+- **Light-curve template library × K-correction** — versioned templates with
+  QC surfaces and error budgets, a template builder wizard, and K-corrected
+  prediction curves overlaid on the multi-source comparison page
+  (optional ChromaShift engine).
+- **Multi-source comparison** — overlay any number of events with per-band
+  selection and server-side CSV/JSON export.
+- **Pipeline ingest API** — `POST /api/ingest/photometry` (Bearer token) for
+  direct wiring to the STDpipe/STDweb photometry pipeline; a full REST API
+  covers all entities (see [`docs/TECHNICAL.md`](docs/TECHNICAL.md)).
 
-## Roadmap & honest caveats
+## Data status
 
-- A considerable number of features are **not yet developed or integrated**.
-- Some existing features are **relatively rough** and may be **removed in
-  future versions**.
-- For some planned features the author has **not yet formed a mature design**;
-  they will be refined step by step.
-- AJST is deliberately **lightweight**: it aims to cover the commonly needed
-  functionality, but it has an explicit scope boundary and will **not** grow
-  without limit.
+The catalog lives in the separate
+[AJST-Data](https://github.com/Cooper-J2000/AJST-Data) repository (CC BY 4.0)
+and is optional — AJST runs on an empty database with your own data.
 
-## Contributing
+Data were collected from published papers and GCN circulars and inherit part
+of the Dainotti et al. (2024, [MNRAS 533, 4023](https://academic.oup.com/mnras/article/533/4/4023/7697178))
+sample; every subset documents its provenance and parsing scripts.
 
-Community participation is very welcome:
-
-- Open an **issue** for suggestions, bug reports, or data-quality notes.
-- Open a **pull request** if you'd like to co-develop.
+> **The catalog has not yet been audited entry by entry.** A systematic
+> per-source review is underway, supported by a claim-based queue
+> (`audit/state.tsv` + `tools/audit_queue.py`) that lets multiple human or
+> LLM-assisted reviewers verify sources in parallel without collisions.
+> **Until that review completes, do not use the data directly for serious
+> scientific research.** Audit contributions are welcome — see AJST-Data's
+> `CONTRIBUTING.md`.
 
 ## Quick start
 
-Requirements: Python ≥ 3.10, PostgreSQL ≥ 14.
+Requires Python ≥ 3.10 and PostgreSQL ≥ 14.
 
 ```bash
 git clone https://github.com/Cooper-J2000/AJST.git
@@ -152,66 +139,52 @@ cd AJST
 
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-# optional, only for afterglow fitting:
-# pip install "VegasAfterglow[mcmc]" corner matplotlib
-# optional, only for the prospector host-SED engine (needs an FSPS data dir):
-# pip install astro-prospector astro-sedpy fsps dynesty emcee h5py corner
+# optional: pip install "VegasAfterglow[mcmc]" corner matplotlib   # afterglow fitting
+# optional: pip install pcigale                                    # host SED fitting (pcigale engine)
 
-# create the database (as a PostgreSQL superuser or with createdb rights)
 createdb ajst_catalog
+export AJST_CATALOG_PASSWORD='choose-a-strong-password'   # REQUIRED
 
-# set the admin password (REQUIRED — otherwise a random one is generated
-# at every startup and printed nowhere)
-export AJST_CATALOG_PASSWORD='choose-a-strong-password'
-
-# optional: pull the data repository into ./catadata and import it
+# optional: import the catalog
 git clone https://github.com/Cooper-J2000/AJST-Data.git catadata
 cd backend && python3 etl.py && cd ..
 
-# run
 ./backend/start.sh        # listens on 127.0.0.1:27101 (loopback only)
 ```
-
-Without `catadata/`, the app still starts with an empty database; you can add
-your own transients through the UI or the APIs.
-
-### Configuration (environment variables)
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `DATABASE_URL` | `postgresql+psycopg2:///ajst_catalog` | PostgreSQL DSN |
-| `AJST_CATALOG_PASSWORD` | random per startup | initial admin password |
-| `AJST_INGEST_TOKEN` | unset (ingest API disabled) | Bearer token for `/api/ingest/*` |
-| `AJST_DATA_DIR` | `<repo>/catadata` | data directory location |
-| `SPS_HOME` | unset | FSPS data directory (prospector engine only) |
-| `AJST_PYTHON` | `python3` | interpreter used by `start.sh` |
-| `AJST_HOST` | `127.0.0.1` | listen address; loopback only — a non-loopback value makes `start.sh` refuse to start |
+| `AJST_CATALOG_PASSWORD` | random per startup | initial `admin` password |
+| `AJST_INGEST_TOKEN` | unset (disabled) | Bearer token for `/api/ingest/*` |
+| `AJST_DATA_DIR` | `<repo>/catadata` | data directory |
+| `SPS_HOME` | unset | FSPS data directory (prospector engine) |
+| `AJST_HOST` | `127.0.0.1` | listen address (non-loopback refused) |
 | `PORT` | `27101` | listen port |
 
-### GCN circular archive
+The layered test suite (847 unit, API-contract, and acceptance cases; 843 passed
++ 4 skipped as of 2026-10-03) runs with `python3 -m pytest tests/`.
 
-The GCN tool can download/update the circular archive itself, or you can fetch
-the full archive manually:
+## Acknowledgements
 
-```bash
-bash scripts/fetch_gcn_archive.sh
-```
+AJST builds on open tools and catalogs: [dustmaps](https://github.com/gregreen/dustmaps)
+(CSFD map, Liu et al. 2023) and [dust_extinction](https://github.com/karllark/dust_extinction)
+(Pei 1992); [VegasAfterglow](https://github.com/YihanWangAstro/VegasAfterglow);
+[CIGALE/pcigale](https://cigale.lam.fr) (Boquien et al. 2019, A&A 622, A103);
+[prospector](https://prospect.readthedocs.io) (Johnson et al. 2021, ApJS 254, 22)
+with python-FSPS; the SVO Filter Profile Service; Aladin Lite v3 (CDS);
+the Transient Name Server (spectral-line lists); Bootstrap, Chart.js, and
+bootstrap-icons (bundled, MIT); and the GCN archive (NASA), HEASARC/MAST
+catalogs (BATSE, Fermi GBM/LAT, Swift BAT/XRT/UVOT, Konus-Wind, AGILE-MCAL),
+the GRBSN webtool, and literature samples (Dainotti et al. 2024; Wang et al.
+2022; Minaev & Pozanenko 2020; Guidorzi et al. 2025; Liang et al. 2023;
+Chandra & Frail 2012). Per-directory READMEs in AJST-Data list the exact
+provenance and citation requirements for each data subset.
 
-## Repository layout
+## Contributing & license
 
-```
-backend/    Flask app, SQLAlchemy models, ETL, fitting engines, routes
-            backend/specphot/  — spectral-photometry toolbox (see docs/TECHNICAL.md)
-frontend/   build-free SPA (vanilla JS ESM) + bundled vendor libraries
-            frontend/js/specphot/  — specphot workbench (page #/tools/specphot)
-scripts/    maintenance scripts (GCN archive fetch, ...)
-docs/       TECHNICAL.md — full technical documentation (Chinese)
-catadata/   (git-ignored) clone of AJST-Data, or your own data
-```
-
-## License
-
-Code: [MIT](LICENSE). Data: CC BY 4.0 in the separate
-[AJST-Data](https://github.com/Cooper-J2000/AJST-Data) repository; subsets
-under `external/` remain subject to the terms and citation requirements of
-their original sources.
+Issues and pull requests are welcome (see
+[`docs/COMMIT-CONVENTION.md`](docs/COMMIT-CONVENTION.md)); for data auditing,
+start from AJST-Data's `CONTRIBUTING.md`. Code is released under the
+[MIT License](LICENSE); the data under CC BY 4.0, with `external/` subsets
+subject to their original sources' terms and citation requirements.
