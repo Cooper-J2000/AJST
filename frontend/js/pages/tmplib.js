@@ -28,6 +28,21 @@ const STATE_BADGE = {
   refused: ['text-bg-danger', 'refused'],
   deleted: ['text-bg-secondary', 'deleted'],
 };
+
+// U-11/IA-13（审核 P3-13）：stale 行级徽标按三轴分色——处置完全不同：
+// 引擎输入=重建（红）/ 库行=重新取数+重声明（黄）/ vendor=引擎侧脚本（青）
+function _stateBadge(t) {
+  const base = STATE_BADGE[t.state] || ['text-bg-secondary', t.state || '?'];
+  if (t.state !== 'stale') return base;
+  const sb = t.stale_because || {};
+  if (sb.filter_vendor && sb.filter_vendor.length)
+    return ['text-bg-info', 'stale·vendor'];
+  if (sb.catalog_rows && sb.catalog_rows.length)
+    return ['text-bg-warning', 'stale·库行'];
+  if (sb.engine_inputs && sb.engine_inputs.length)
+    return ['text-bg-danger', 'stale·引擎输入'];
+  return base;
+}
 const ORIGIN_LABEL = { shipped: '出厂', catalog: '向导', 'catalog-derived': '出厂·同源' };
 
 // ─── 模块级状态 ───
@@ -114,6 +129,7 @@ function _axisBadge(name, ax) {
     return `<span class="badge text-bg-secondary" title="${esc(ax.note || ax.error || '无法判定')}">${name}: 未定</span>`;
   const why = [];
   if (ax.stale && ax.stale.length) why.push(`stale: ${ax.stale.join('、')}`);
+  if (ax.message) why.push(ax.message);   // TXT-10 全文（审核 P2-6：vendor 漂移的处置指引必须可见）
   if (ax.code) why.push(ax.code);
   if (ax.error) why.push(ax.error);
   return `<span class="badge text-bg-danger" title="${esc(why.join('；') || '不一致')}">${name}: 漂移</span>`;
@@ -191,7 +207,7 @@ function _renderLibrary() {
     return;
   }
   tb.innerHTML = _templates.map(t => {
-    const [cls, label] = STATE_BADGE[t.state] || ['text-bg-secondary', t.state || '?'];
+    const [cls, label] = _stateBadge(t);
     const idom = t.in_domain;
     const idomTxt = idom && idom.total ? `${idom.answered}/${idom.total}` : '—';
     const tv = t.t_valid_days ? `${t.t_valid_days[0].toFixed(1)}…${t.t_valid_days[1].toFixed(1)}` : '—';
@@ -697,16 +713,22 @@ function _step1HTML() {
     </div>`;
 }
 
+let _previewSeq = 0;   // 审核 P3-15：请求令牌——快速连点/连改时旧回调不得后写覆盖
+
 async function _doPreview() {
   const src = document.getElementById('tlWizardSrc').value.trim();
   const errEl = document.getElementById('tlStep1Err');
   errEl.textContent = '';
   if (!src) { errEl.textContent = '请输入源 id'; return; }
+  const seq = ++_previewSeq;
   _wiz.src = src; _wiz.bandSel = null; _wiz.fields = null; _wiz.result = null;
   try {
-    _wiz.preview = await getTmplibPreview(src);
+    const p = await getTmplibPreview(src);
+    if (seq !== _previewSeq) return;   // 已有更新的请求，丢弃旧回调
+    _wiz.preview = p;
     _wiz.previewKey = '';
   } catch (e) {
+    if (seq !== _previewSeq) return;
     _wiz.preview = null;
     errEl.textContent = e.message;
     _renderStep();
@@ -723,11 +745,14 @@ async function _refetchPreview() {
   if (_wiz.policy === 'declare') opts.declare = _wiz.declare;
   const key = JSON.stringify(opts);
   if (key === _wiz.previewKey) return;
+  const seq = ++_previewSeq;
   if (_wiz.step === 3 && _wiz.fields) _collectFields();   // 重绘前保住表单输入
   try {
     const p = await getTmplibPreview(_wiz.src, opts);
+    if (seq !== _previewSeq) return;   // 乱序旧回调丢弃
     _wiz.preview = p; _wiz.previewKey = key;
   } catch (e) {
+    if (seq !== _previewSeq) return;
     showToast(`行账重算失败：${e.message}`, 'danger');
     return;
   }
@@ -782,7 +807,10 @@ function _step2HTML() {
         <div class="fw-bold small">行账（当前口径：rowset=${esc(p.query.rowset)}，policy=${esc(p.query.null_system_policy)}；改勾/改档即重算）</div>
         ${_ledgerHTML(p.ledger)}
         <div class="small text-secondary">gext 档对照（U-16）：可进面 ${p.rowsets.gext.kept} 行；
-          本源 mag_gextcor 空值行 ${p.rowsets.gext.gext_missing}（gext 档下这些行被剔除、不回落 raw）。</div>
+          本源 mag_gextcor 空值行 ${p.rowsets.gext.gext_missing}（gext 档下这些行被剔除、不回落 raw）；
+          ${p.rowsets.gext.kept_missing_err ? `进面但无误差列 ${p.rowsets.gext.kept_missing_err} 行（进误差预算 photometric 项时缺席，TXT-12）；` : ''}
+          ${p.rowsets.gext.gext_system_overrides ? `<span class="text-warning">原始行自称 Vega 的 ${p.rowsets.gext.gext_system_overrides} 行（gext 档按库口径记 AB，依据列注释「银消改正后 AB 星等」——请核对，审核更正披露项）</span>` : ''}
+        </div>
       </div>
       <div class="col-lg-6" id="tlWizardBandMap">
         <div class="fw-bold small">波段映射（严格同名 F-08：库里叫 <code>R</code> 就不会是 <code>r</code>）</div>
@@ -888,7 +916,7 @@ function _step3HTML() {
           <label class="form-label small mb-0">行集 rowset（与 mw_removed 绑死，F-11）<span class="text-danger">*</span></label>
           <select class="form-select form-select-sm" id="tlRowset">
             <option value="raw" ${_wiz.rowset === 'raw' ? 'selected' : ''}>raw — 未扣银消（本源可进面 ${p.ledger.kept} 行）</option>
-            <option value="gext" ${_wiz.rowset === 'gext' ? 'selected' : ''}>gext — 已扣银消（可进面 ${rsG.kept} 行；mag_gextcor 空值 ${rsG.gext_missing} 行被剔除不回落）</option>
+            <option value="gext" ${_wiz.rowset === 'gext' ? 'selected' : ''}>gext — 已扣银消（可进面 ${rsG.kept} 行；mag_gextcor 空值 ${rsG.gext_missing} 行被剔除不回落${rsG.kept_missing_err ? `；无误差列 ${rsG.kept_missing_err} 行不进误差预算` : ''}）</option>
           </select>
         </div>
         <div class="mb-1" style="max-width:520px" id="tlSysNullPolicy">
@@ -1064,7 +1092,12 @@ function _buildResultHTML(res) {
     : '';
   const s = res.surface || {};
   return `
-    <div class="alert alert-success py-1 small">模板 <code>${esc(res.id)}</code> 已入库（state=${esc(res.state)}）。</div>
+    <div class="alert alert-success py-1 small d-flex justify-content-between align-items-center">
+      <span>模板 <code>${esc(res.id)}</code> 已入库（state=${esc(res.state)}）。</span>
+      <!-- F-04/路径 B 第 6 步：跨页只传 id（window.__cmpPresetSources），URL 不带状态 -->
+      <button class="btn btn-sm btn-outline-primary py-0" id="tlGoCompare"
+              data-src="${esc(_wiz.src || '')}" title="跳到多源对比页并预选该源（F-04：跨页只传 id）">→ 对比图</button>
+    </div>
     <div class="row small">
       <div class="col-md-6">
         <table class="table table-sm small"><tbody>
@@ -1086,6 +1119,8 @@ function _buildResultHTML(res) {
 document.addEventListener('click', async (ev) => {
   const t = ev.target;
   if (!(t instanceof HTMLElement)) return;
+  // 路由守卫（审核 P3-15）：document 级常驻监听只在模板库页生效
+  if (!document.getElementById('tlGuards')) return;
   if (t.id === 'tlPreviewBtn') { _doPreview(); return; }
   if (t.id === 'tlToStep2') { _wiz.step = 2; _renderStep(); return; }
   if (t.id === 'tlBack1') { _wiz.step = 1; _renderStep(); return; }
@@ -1096,6 +1131,12 @@ document.addEventListener('click', async (ev) => {
   if (t.id === 'tlBuild') { _doBuild(); return; }
   if (t.id === 'tlBudgetRun') { _doBudget(); return; }
   if (t.id === 'tlBatchRebuild') { _doBatchRebuild(); return; }
+  if (t.id === 'tlGoCompare') {
+    // F-04/路径 B 第 6 步：跨页只传 id
+    window.__cmpPresetSources = t.dataset.src ? [t.dataset.src] : [];
+    location.hash = '#/compare';
+    return;
+  }
   const editBtn = t.closest('.tl-edit');
   if (editBtn) { ev.stopPropagation(); _showEditForm(); return; }
   if (t.id === 'tlEdSave') { _doEdit(t.dataset.id); return; }
@@ -1152,6 +1193,7 @@ document.addEventListener('click', async (ev) => {
 document.addEventListener('change', (ev) => {
   const t = ev.target;
   if (!(t instanceof HTMLElement)) return;
+  if (!document.getElementById('tlGuards')) return;   // 路由守卫（审核 P3-15）
   if (t.classList.contains('tl-batch-cb')) { _refreshBatchButton(); return; }
   if (t.id === 'tlBudgetDistOnly') {          // F-35：只看 distance 项
     document.querySelectorAll('.tl-budget-term').forEach(row => {
@@ -1189,6 +1231,7 @@ document.addEventListener('change', (ev) => {
 document.addEventListener('input', (ev) => {
   const t = ev.target;
   if (!(t instanceof HTMLElement) || _wiz.step !== 3 || !_wiz.fields) return;
+  if (!document.getElementById('tlGuards')) return;   // 路由守卫（审核 P3-15）
   if (t.id === 'tlWizardSrc') return;
   _validateStep3();
   // 联动显隐（不改值，只切显示）

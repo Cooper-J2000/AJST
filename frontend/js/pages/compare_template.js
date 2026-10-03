@@ -23,6 +23,7 @@ export const TXT = {
   refUser: '本条曲线的横轴零点 = 用户设定的基准时刻，不是该模板的 T0；同图其它曲线的零点各自独立设定。',
   firstRow: '本模板的 t=0 是表内最早一行，不是事件时刻：与同图其它曲线的 T0 不是同一瞬间。可用「基准时刻」填入一个 epoch 覆盖；不确定填什么就别填，改比形状。',
   restFrame: '本模板原始表已声明为静止系时间；引擎的入参/出参一律观测系，本条曲线与其它曲线时间轴口径一致，无需换算。',
+  notIntrinsic: '该表是否已扣除银河系/宿主消光，manifest 未能确定 ⇒ 绝对星等 M 可能仍含消光屏，而 K 里带了反号同量。二者相加仍自洽，所以算式看不出来。',
   muNote: 'μ = 距离模数（单位 mag，数值越大距离越远）。本图绝对星等来自两个不同的距离：模板曲线的 μ 由引擎按模板声明的距离/红移给出，库内源的 μ 来自本库 gext_distmod（=Planck18.distmod(红移)）。当 Δμ 超过 0.15 mag 时，两条曲线的相对高度主要反映距离口径之差，不是天体性质。',
   muBig: 'Δμ 超过引擎色标 cap 0.15 mag',
   muNone: '该模板在库里没有可用对应源，Δμ 无对照（不是 0）。',
@@ -41,6 +42,19 @@ let _ctx = { isStale: () => false, onChange: () => {} };
 let _uid = 0;
 
 export function tplReset() { _rows = []; }
+
+// TXT-18 门控（审核 P3-12）：只有 absmag 模式画了绝对星等才存在"两个距离"
+export function tplSetYMode(m) { _ymode = m || 'flux'; }
+let _ymode = 'flux';
+
+// IA-15（审核 P1-4）：是否有曲线的横轴零点被用户改过或非事件时刻
+// （user-supplied / table-first-row —— 与图例徽标 TXT-15/TXT-16 同一判定）。
+// epoch-zero-value/epoch-zero-source 指向真实事件时刻（F-05'），不触发，
+// 保持"零视觉噪音为默认态"。
+export function tplNeedsZeroDisclosure() {
+  return _rows.some(r => r.refMJD != null ||
+    (r.curve && r.curve.time_origin && r.curve.time_origin.kind === 'table-first-row'));
+}
 
 export function tplHasCustomRef() { return _rows.some(r => r.refMJD != null); }
 
@@ -89,7 +103,7 @@ function _rowHTML(r) {
       <select class="form-select form-select-sm tpl-tmpl" style="width:auto" title="模板">${opts_(r)}</select>
       <select class="form-select form-select-sm tpl-band" style="width:auto"
               title="目标波段：实测波段面上有节点最稳；库中其它波段只要红移后的静止频率落在面覆盖内也可计算，超出会被拒绝并提示可用 z 区间">${bandOpts}</select>
-      <input type="text" class="form-control form-control-sm tpl-z" style="width:84px" value="${r.z ?? ''}" title="红移（默认模板自身 z）" placeholder="z">
+      <input type="text" class="form-control form-control-sm tpl-z" style="width:84px" value="${r.z ?? ''}" title="红移（默认模板自身 z）" placeholder="${r.curve && r.z == null ? `自身z=${r.curve.z}` : 'z'}">
       <select class="form-select form-select-sm tpl-mode" style="width:auto" title="auto：有实测透过率曲线走波段积分（band），无曲线降级单色近似（mono）">
         ${['auto', 'band', 'mono'].map(m => `<option ${m === r.mode ? 'selected' : ''}>${m}</option>`).join('')}
       </select>
@@ -119,12 +133,22 @@ function opts_(r) {
       ${x.state === 'stale' ? 'disabled' : ''}>${esc(x.id)}${x.state === 'stale' ? '（需重建）' : ''}</option>`).join('');
 }
 
+// U-07：建议值出处按 kind 三分（IA-14/ST-17：跨存储推断必须单独声明）
+const _REF_LABELS = {
+  'epoch-zero-value': '模板声明 epoch_zero.value',
+  'epoch-zero-source': '模板声明 epoch_zero.source（散文中的绝对日期）',
+  'table-first-row': '库 t0 反查（模板未声明绝对日期；这是跨存储推断）',
+  'catalog-t0': '库 t0 反查（跨存储推断）',
+};
+
 function _refTitle(r) {
   const c = r.curve;
   if (c && c.time_origin) {
     const to = c.time_origin;
-    if (to.suggested_mjd != null)
-      return `建议零点 MJD ${to.suggested_mjd}（${to.suggested_source || '模板声明'}）；建议值不代填`;
+    if (to.suggested_mjd != null) {
+      const label = _REF_LABELS[to.kind] || to.suggested_source || '模板声明';
+      return `建议零点 MJD ${to.suggested_mjd}（${label}）；建议值不代填`;
+    }
   }
   return '留空=该模板自己的 T0；MJD 数字或 UTC';
 }
@@ -135,7 +159,12 @@ function _badgesHTML(r) {
   if (r.error) return '<span class="text-danger">✕ 被拒</span>';
   if (!r.drawn) return '<span class="text-secondary">未绘制</span>';
   if (!c) return '<span class="text-secondary">…</span>';
-  if (c.mode === 'mono') out.push('<span class="badge text-bg-secondary" title="' + esc(TXT.mono) + '">mono</span>');
+  // U-06/F-26：auto/band 被降级成 mono 时徽标必须是「mono(降级)」，
+  // 与作者显式选 mono 可区分（判定以 domain.reasons 为准，不猜）
+  const downgraded = c.domain && (c.domain.reasons || []).includes('mode-downgraded-to-mono');
+  if (c.mode === 'mono')
+    out.push('<span class="badge text-bg-secondary" title="' + esc(TXT.mono) + '">' +
+      (downgraded ? 'mono(降级)' : 'mono') + '</span>');
   if (c.time_origin && c.time_origin.kind === 'table-first-row') {
     const off = c.time_origin.offset_vs_catalog_t0_days;
     out.push('<span class="badge text-bg-warning" title="' + esc(TXT.firstRow) +
@@ -200,7 +229,9 @@ function _renderRows() {
 }
 
 export function tplRenderSidecars() {
-  // Δμ 卡（U-08）：≥1 条曲线时出现；TXT-18 说明只出现一次
+  // Δμ 卡（U-08）：≥1 条曲线时出现；TXT-18 说明只出现一次，且只在该图
+  // 真的画了绝对星等（absmag 模式）时出现——kcorr 模式两侧都用引擎 μ，
+  // 不存在"两个距离"，flux 模式没有星等轴（审核 P3-12）
   const card = document.getElementById('tplMuCard');
   if (card) {
     const withMu = _rows.filter(r => r.curve && r.curve.mu);
@@ -216,14 +247,21 @@ export function tplRenderSidecars() {
       }).join('');
     }
     const note = document.getElementById('tplMuNote');
-    if (note) note.style.display = withMu.some(r => r.curve.mu.ok) ? '' : 'none';
+    if (note) {
+      const absMag = _ymode === 'absmag';
+      note.style.display = (absMag && withMu.some(r => r.curve.mu.ok)) ? '' : 'none';
+    }
   }
-  // 域判定条（IA-10：唯一"能不能引用"出口；有不可/外推/说明项时才出现）
+  // 域判定条（IA-10：唯一"能不能引用"出口）。审核 P2-7：被拒（refused）行
+  // 也必须进判定条——此前只在行内红字，违背 IA-10/U-05 的唯一出口条款。
   const bar = document.getElementById('tplDomainBar');
   if (bar) {
     const lines = [];
     for (const r of _rows) {
-      if (r.error) continue;  // 错误已在行内红字展示，判定条不重复
+      if (r.error) {
+        lines.push(`<div class="text-danger">▸ <b>${esc(r.template_id)}·${esc(r.band)}</b>（refused）：${esc(r.error)}</div>`);
+        continue;
+      }
       const c = r.curve;
       if (!c) continue;
       const d = c.domain || {};
@@ -233,12 +271,25 @@ export function tplRenderSidecars() {
       else if ((d.reasons || []).includes('partial-out-of-coverage')) notes.push(TXT.partialCoverage);
       if ((d.clipped_epochs || []).length) notes.push(TXT.clipped(d.clipped_epochs.length));
       if ((d.reasons || []).includes('table-time-frame-rest')) notes.push(TXT.restFrame);
+      // TXT-3（审核 P2-8）：表是否已扣消光未能确定/未扣 —— M 可能仍含消光屏
+      const intr = c.meta && c.meta.absolute_mag_is_intrinsic;
+      if (intr === false || intr === 'unknown') notes.push(TXT.notIntrinsic);
       if (notes.length || d.state === 'extrapolated') {
         lines.push(`<div>▸ <b>${esc(r.template_id)}·${esc(r.band)}</b>（${d.state}）：${notes.map(esc).join('；') || (d.reasons || []).map(esc).join('；')}</div>`);
       }
     }
     bar.style.display = lines.length ? '' : 'none';
     bar.innerHTML = lines.join('');
+  }
+  // U-09/IA-15：横轴零点披露说明行（任一曲线零点被改过或非事件时刻时出现；
+  // 全部 event-t0 时隐藏 —— 零视觉噪音是默认态）
+  const axisNote = document.getElementById('tplAxisNote');
+  if (axisNote) {
+    const any = tplNeedsZeroDisclosure();
+    axisNote.style.display = any ? '' : 'none';
+    if (any) {
+      axisNote.textContent = '本图各曲线的横轴零点各自独立设定；零点被用户改过或非事件时刻的曲线见图例徽标（⚠基准≠T0 / ⚠零点=表首行），X 轴标题已注明「各曲线零点见图例」。';
+    }
   }
 }
 
@@ -277,6 +328,11 @@ export async function bindTplPanel(ctx) {
   panel.innerHTML = tplPanelHTML();
   _renderRows();
   tplRenderSidecars();
+  // IA-7 恢复路径（审核 P3-11）：导航中断时被守卫丢弃的行（drawn 但无
+  // curve 也无错）回页后自动补取数，不再停留在 "…" 等手点重绘。
+  for (const r of [..._rows]) {
+    if (r.drawn && !r.curve && !r.error) _fetchRow(r);
+  }
 
   if (_templates === null && !_templatesFailed) {
     try {

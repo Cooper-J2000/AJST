@@ -7,7 +7,7 @@ import { ensureFilterCache, mJyToMagAB, pointToMJy } from '../bands.js';
 import { esc, minOf, maxOf } from '../utils.js';
 import { createYErrBarPlugin } from '../chart_plugins.js';
 import { t0ToMJD, parseRefEpoch } from './detail_lcchart.js';
-import { tplMuCardHTML, bindTplPanel, tplDatasets, tplHasCustomRef, tplRenderSidecars } from './compare_template.js';
+import { tplMuCardHTML, bindTplPanel, tplDatasets, tplHasCustomRef, tplRenderSidecars, tplNeedsZeroDisclosure, tplSetYMode } from './compare_template.js';
 
 // ─── 工具函数 ───
 function sciFmt(v) {
@@ -155,7 +155,7 @@ function _kcorrMuCard() {
       <span class="text-secondary">引擎 ${mu.engine} / 库 ${mu.catalog}（${esc(mu.counterpart_id || '?')}）；成因：${esc(mu.cause)}</span></div>`;
   }).join('');
   card.style.display = '';
-  if (note) note.style.display = '';          // TXT-18 只在这里出现一次
+  if (note) note.style.display = 'none';   // TXT-18 只在 absmag 模式出现（审核 P3-12：kcorr 两侧都用引擎 μ，不存在"两个距离"）
 }
 
 // ─── 事件列表行 HTML（首绘与筛选重绘共用；勾选状态以 selectedTransients 为准） ───
@@ -184,6 +184,13 @@ export async function render() {
     for (const t of data.items) transientMeta[t.id] = { z: t.redshift, dm: t.distmod ?? null, t0: t.t0 ?? null };
     cmpRefMJD = {};      // 页面重渲染后各源基准输入清空，基准复位为各源 T0
     _cmpShowUL = true;   // 「显示上限点」复位为默认勾选（模板中 checked 为静态）
+    // F-04/路径 B 第 6 步（审核 P3-14）：跨页只传 id —— tmplib 建面完成页的
+    // 「→ 对比图」经 window 级变量预选该源（URL 仍不携带状态）
+    const preset = window.__cmpPresetSources;
+    if (Array.isArray(preset) && preset.length) {
+      selectedTransients = preset.filter(id => data.items.some(t => t.id === id));
+      delete window.__cmpPresetSources;
+    }
     // 滤波器缓存（波长 / Vega→AB 系数）
     ensureFilterCache(filters);
 
@@ -255,6 +262,8 @@ export async function render() {
             <!-- 模板层（U-02..U-07）与域判定条（IA-10）：compare_template.js 填充；无模板行时零视觉噪音 -->
             <div id="tplPanel"></div>
             <div id="tplDomainBar" class="alert alert-warning small mx-3 mt-2 mb-0 py-1" style="display:none"></div>
+            <!-- U-09/IA-15：横轴零点披露说明行（compare_template.js 填充） -->
+            <div id="tplAxisNote" class="small mx-3 mt-2 mb-0 py-1" style="display:none"></div>
             <!-- Y 模式标注行：absmag ⇒ TXT-9；kcorr ⇒ F-06' 剔除计数 + ✕ 列表；flux ⇒ 隐藏 -->
             <div id="cmpYModeNote" class="small mx-3 mt-2 mb-0 py-1" style="display:none"></div>
             <div class="card-body"><div class="chart-container" style="height:auto;aspect-ratio:3/2;min-height:0;overflow:hidden"><canvas id="compareChart"></canvas></div></div>
@@ -518,6 +527,7 @@ function renderCompareChart() {
   const restFrame = document.getElementById('cmpRestFrame')?.checked || false;
   // Y 三态：flux(默认) / absmag(旧，μ-only) / kcorr(S3，API-8)；F-23 互斥切换，切换只重绘（U-01）
   const yMode = document.getElementById('cmpYMode')?.value || 'flux';
+  tplSetYMode(yMode);   // TXT-18 门控（审核 P3-12）：Δμ 说明只跟 absmag 模式
   const absMag = yMode === 'absmag';   // 绝对星等模式：y = m_AB − μ(z)，仅显示有红移的源；线性反向轴
   const kcorr = yMode === 'kcorr';
   const magLike = absMag || kcorr;     // 线性反向星等轴（旧 absmag 行为逐位不变，T-29）
@@ -695,9 +705,11 @@ function renderCompareChart() {
           type: xType,
           title: {
             display: true,
-            text: anyRef
+            // IA-15（审核 P1-4）：任一曲线零点被改过或非事件时刻 ⇒ 追加披露后缀
+            text: (anyRef
               ? (restFrame ? '静止系 t/(1+z)，各源基准 (s)' : 'time since 各源基准 (s)')
-              : (restFrame ? '静止系时间 t/(1+z) (s)' : '时间 (s)'),
+              : (restFrame ? '静止系时间 t/(1+z) (s)' : '时间 (s)'))
+              + (tplNeedsZeroDisclosure() ? '（各曲线零点见图例）' : ''),
             color: cc.tick, font: fonts.title,
           },
           grid: { color: cc.gridSoft },
