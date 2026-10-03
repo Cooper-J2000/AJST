@@ -2410,6 +2410,43 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 
 ## 十一、版本历史
 
+### v2.32（2026-10-02）— 模板库（tmplib）审核修复轮（P1-3 待作者裁定）
+
+2026-10-02 全量只读代码审核（意见书：AJST-enrich/20260928_snredshift_to_fix/代码审核意见_20261002.md）
+后的一次性修复；除 P1-3（S3 时刻零点口径，待作者裁定）外全部 P1/P2/P3 落地：
+
+- **P1-1** API-8 批量通路的引擎异常改按 code 分派（`ENGINE_CODE_MAP` 收进
+  `tmplib/engine.py` 共用）：越界曲线在 API-8 里返回 `TL_OUT_OF_DOMAIN`+context，
+  不再被吞成 `TL_INTERNAL`（E-30/E-13/IA-3）；三条曲线通路均补日志。
+- **P1-2** 可答比例口径改为引擎 `build.load_samples`（进拟合样本），与底账 01 §E.6
+  **逐模板精确对账**（九模板 5813/5959 = 97.5%）；`library.json` 的 in_domain 已重烙印，
+  并新增 T-35 守卫测试防再漂移。
+- **P1-4** 对比页 IA-15/U-09：任一曲线零点被改过或为表首行时，X 轴标题追加
+  「（各曲线零点见图例）」+ 新增 `#tplAxisNote` 说明行。
+- **P1-5** `library.json` 顶层 `engine.code_sha256` 与现行引擎/每模板指纹对齐。
+- **P1-6/P1-7** 引擎仓 VALIDATION.md 失引修正；golden 复验脚本路径更新到现行位置。
+- **P2-1** API-5 索引登记前任何失败自愈：半成品（CSV/manifest/面/QC）全部回滚，
+  同 id 可立即重试（不再 409/404 死锁）。
+- **P2-2** ST-12 库配额落地：`AJST_TMPLIB_QUOTA_MB`（默认 200，0=关闭），超限
+  `TL_QUOTA` 400，API-1 回显现状。
+- **P2-3** ST-6 启动预热落地：`app.create_app` 后台线程 warm（读盘零写），失败经
+  API-1 `warm` 键显形；测试进程跳过（T-43 静态断言不受影响）。
+- **P2-6/P2-7/P2-8** 前端：vendor 徽标 tooltip 补 TXT-10 全文；域判定条收被拒行
+  （IA-10 唯一出口）；TXT-3（消光未定）按 `meta.absolute_mag_is_intrinsic` 挂点。
+- **P3 项** `_finite` 拒 bool；rows_sha256 排序键改 (time,band)（F-52 字面，登记值
+  重烙印）；CA-01 随曲线显形；API-2 epoch_zero 摘要 mtime 缓存；API-14 编辑期
+  per-template 单飞锁；gext 账本补 `kept_missing_err`/`gext_system_overrides` 披露
+  （TXT-12 第三段 + Vega 计数）；行级 stale 徽标三轴分色；建面完成页「→ 对比图」
+  （F-04 跨页只传 id）；TXT-18 收窄到 absmag 模式；mono(降级) 徽标、U-05 生效 z
+  回显、U-07 出处三标签、IA-7 恢复取数、preview 请求令牌与路由守卫。
+- **测试** 新增 `tests/acceptance/test_tmplib_audit_fixes.py` 13 条（T-01/T-02/T-21/
+  T-35 守卫/P1-1 API-8 错误路径/P2-1 自愈/P2-2 配额/P1-5 指纹/ST-6 warm/P3-2/
+  P3-3/P3-5/P2-8 依据）；P0–P5 存量 84 条全绿。
+- **审核更正两项**：P2-9「批量重建缺失」不成立（库管理页勾选 stale 串行重建已存在）；
+  P3-6「裁剪容差不对称」不成立（引擎公式即 `1e-9·max(1,|hi−lo|)`）。
+- **设计文档回写**：02 新增 §12 变更注记 N-01…N-16（库根迁址、引擎改名、in_domain
+  口径、rows_sha256 配方等），03 补 D-3 改道裁定。
+
 ### v2.31（2026-10-02）— 光谱 × 滤光片工具（specphot，P1–P3 分期交付）
 
 - **新工具条目「光谱 × 滤光片」**：`backend/specphot/` 十六个模块（逻辑下沉、路由薄，见本文
