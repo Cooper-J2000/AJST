@@ -17,56 +17,50 @@ const C_SMOOTH_BOX_MAX_PX = 7;  // U-51 核长上限（与后端 constants.py �
 const TXT26 = '本图为显示平滑（boxcar 核长 N 像元，即全宽 N 像元），只用于看图；'
   + '所有数值、误差与导出件都取自未平滑的逐点谱。（TXT-26，U-51 开启时恒显）';
 const LINE_GROUPS = ['h', 'he', 'si_ii', 'ca_ii', 'fe_ii', 'mg_ii'];   // 默认叠加的宿主线组
-const HINT = 'U-13（P1 行为）：拖选 = 加入掩膜段 · 点击掩膜段 = 删除 · Shift+拖选 = 缩放 · '
-  + '双击/按钮 = 恢复全域（确认 UI 与 U-50 手输归 P1b；掩膜段进请求体 mask，改段即转 stale）';
+const HINT = 'U-13（P1 行为）：拖选 = 加入掩膜段 · 点击掩膜段 = 删除 · Shift+拖选 = 框选缩放（横纵轴） · '
+  + '双击/按钮 = 恢复全域 · 输入框 = 直接键入显示范围（可超出默认全域）'
+  + '（确认 UI 与 U-50 手输归 P1b；掩膜段进请求体 mask，改段即转 stale）';
 
 let _el = null, _ctx = null, _cv = null, _view = null, _drag = null, _spec = null, _dom = null;
-let _wired = false;
-let _capEl = null;
-let _deredResp = null;      // F-89①：API-3 响应（含 de_reddened），U-47 门控在 draw 时判
-const _curves = new Map();  // filter_id → {lam,t} | 'pending'（API-5 纯叠加缓存，不进任何哈希）
+let _rngFocus = false;
+const _rngEdits = new Set();          // 用户已键入但未应用的框（sync 不回写，BUG B）
+function clearRangeEdits() { _rngEdits.clear(); for (const e of (_el ? _el.querySelectorAll('.sp-rangebar input') : [])) delete e.dataset.edited; }
 
-export function renderSpecPlot(el, ctx) {
-  if (!el) return;
-  _el = el; _ctx = ctx;
-  el.innerHTML = `
-    <div class="card mb-3"><div class="card-body py-2">
-      <div class="d-flex align-items-center">
-        <strong>① 谱预览</strong>
-        <span class="small text-secondary ms-2">λ 轴 Å；竖带 = 勾选波段的曲线覆盖区（IA-3 纯叠加）；
-          斜纹 = 掩膜段（n_masked_pixels 由计算回显）</span>
-        <button class="btn btn-outline-secondary btn-sm ms-auto sp-zreset" title="恢复全域（U-13）">恢复全域</button>
-      </div>
-      <canvas id="spCv" class="w-100 mt-1" style="height:240px;cursor:crosshair;touch-action:none"
-        title="${escAttr(HINT)}"></canvas>
-      <div class="small" id="spOverlayCaption"></div>
-      <div class="small" id="spSmoothCaption"></div>
-      <div class="small text-secondary">${HINT}</div>
-    </div></div>`;
-  _cv = el.querySelector('#spCv');
-  _capEl = el.querySelector('#spOverlayCaption');
-  _cv.addEventListener('mousedown', ev => { _drag = { x0: ev.offsetX, x1: ev.offsetX, shift: ev.shiftKey }; draw(); });
-  _cv.addEventListener('mousemove', ev => { if (_drag) { _drag.x1 = ev.offsetX; draw(); } });
-  _cv.addEventListener('mouseleave', () => { if (_drag) { _drag = null; draw(); } });
-  _cv.addEventListener('dblclick', () => { _view = null; draw(); });
-  el.querySelector('.sp-zreset').addEventListener('click', () => { _view = null; draw(); });
-  // TXT-26（U-51 开启时常显）：图注随平滑开合渲染（纯显示，不触发计算、不转 stale）
-  const spx = smoothPx(ctx.S);
-  el.querySelector('#spSmoothCaption').innerHTML = spx
-    ? `<span class="text-warning" title="${escAttr(TXT26)}">TXT-26：${escAttr(TXT26.replace('N 像元', spx + ' 像元'))}</span>`
-    : '';
-  if (!_wired) {
-    _wired = true;
-    window.addEventListener('mouseup', onUp);
-    window.addEventListener('resize', () => { if (_cv && _cv.isConnected) draw(); });
+// ─── 显式显示范围（可超出默认全域）：单边留空取当前值，全空 = 恢复自适应 ───
+function applyRange() {
+  if (!_el || !_ctx) return;
+  const S = _ctx.S;
+  const gv = sel => {
+    const v = (_el.querySelector(sel).value || '').trim();
+    return v === '' ? null : Number(v);
+  };
+  const xa = gv('.sp-xmin'), xb = gv('.sp-xmax'), ya = gv('.sp-ymin'), yb = gv('.sp-ymax');
+  if ([xa, xb, ya, yb].some(v => v != null && !isFinite(v))) {
+    S.featureNotice = '显示范围无效：数值须为有限数'; _ctx.refreshChrome(); return;
   }
-  ensureSpec(); updateOverlayCaption(); draw();
+  if ((xa != null && xb != null && xa >= xb) || (ya != null && yb != null && ya >= yb)) {
+    S.featureNotice = '显示范围无效：上限须大于下限'; _ctx.refreshChrome(); return;
+  }
+  const cur = _dom || {};
+  const curY = v => (v == null || !cur.useLog) ? v : Math.pow(10, v);
+  const x0 = xa != null ? xa : (xb != null ? (cur.x0 ?? null) : null);
+  const x1 = xb != null ? xb : (xa != null ? (cur.x1 ?? null) : null);
+  let y = null;
+  if (ya != null || yb != null) {
+    const a = ya != null ? ya : curY(cur.ylo0 != null ? cur.ylo0 : cur.ylo);
+    const b = yb != null ? yb : curY(cur.yhi0 != null ? cur.yhi0 : cur.yhi);
+    if (a != null && b != null) y = [a, b];
+  }
+  _view = (x0 != null || x1 != null || y) ? { x0, x1, y } : null;
+  clearRangeEdits();
+  draw();
 }
 
-// ─── F-89①/U-47 双谱叠加（P2 切片 2d）：曲线 A=改正前、B=改正后=派生件未入库 ───
-// U-47 开（S.params.overDered !== false，默认开）且 host_ext_mode ≠ off 且
-// de_reddened.n_points > 0 ⇒ 生效；A、B 共用同一观测系真空 λ 横轴与同一纵轴
-// 单位（F-89① 禁止为 B 单开一套轴）；TXT-22 全文随开合常驻图注（W-33 图注位）。
+let _deredResp = null;      // F-89①：API-3 响应（含 de_reddened），U-47 门控在 draw 时判
+const _curves = new Map();  // filter_id → {lam,t} | 'pending'（API-5 纯叠加缓存）
+let _capEl = null;
+let _wired = false;
+
 export function setCurveOverlay(resp) {
   _deredResp = (resp && resp.host_ext_mode !== 'off'
     && resp.de_reddened && Number(resp.de_reddened.n_points) > 0) ? resp : null;
@@ -76,21 +70,83 @@ function overlayActive() {
   return !!(_deredResp && _ctx && _ctx.S.params
     && _ctx.S.params.overDered !== false);
 }
-// P1-2（F-89② PNG 导出）：把当前谱图画布交给 export.exportContinuumPng。
-// 只交引用不复制——导出函数自建副本并在其上补图注，本画布不被改写。
 export function specCanvas() {
   return (_cv && _cv.isConnected) ? _cv : null;
 }
 function updateOverlayCaption() {
   if (!_capEl) return;
-  // P2-3（U-45）：TXT-22 图注绑 host_ext_mode≠off（_deredResp 的门控集即
-  // U-45≠off 且 de_reddened 可用），**不随 U-47 开关消失**——图注声明的是
-  // "改正后曲线是本页派生件、未入库"这一口径，双谱叠不叠加都成立；曲线
-  // 叠加本身的显示门控仍在 overlayActive()（draw 时判）。
   const t = _deredResp ? txt22Text(_deredResp) : '';
   _capEl.innerHTML = t
     ? `<span class="text-secondary" title="${escAttr(t)}">TXT-22：${esc(t)}</span>`
     : '';
+}
+
+export function renderSpecPlot(el, ctx) {
+  if (!el) return;
+  _el = el; _ctx = ctx;
+  // 重建前保留用户正在编辑的输入（否则 dirty→refreshChrome 重建会丢键入内容，复验项 8）
+  const grabR = s => { const e = el.querySelector(s); return e ? { v: e.value, ed: !!e.dataset.edited } : null; };
+  const prevR = { '.sp-xmin': grabR('.sp-xmin'), '.sp-xmax': grabR('.sp-xmax'), '.sp-ymin': grabR('.sp-ymin'), '.sp-ymax': grabR('.sp-ymax') };
+  el.innerHTML = `
+    <div class="card mb-3"><div class="card-body py-2">
+      <div class="d-flex align-items-center">
+        <strong>① 谱预览</strong>
+        <span class="small text-secondary ms-2">λ 轴 Å；拖选 = 加掩膜段 · Shift+拖选 = 框选缩放（横纵轴可调）· 双击/按钮 = 恢复全域；竖带 = 波段曲线覆盖区；
+          斜纹 = 掩膜段（n_masked_pixels 由计算回显）</span>
+        <button class="btn btn-outline-secondary btn-sm ms-auto sp-zreset" title="恢复全域（U-13）">恢复全域</button>
+      </div>
+      <canvas id="spCv" class="w-100 mt-1" style="height:240px;cursor:crosshair;touch-action:none"
+        title="${escAttr(HINT)}"></canvas>
+      <div class="d-flex align-items-center flex-wrap gap-1 mt-1 small sp-rangebar">
+        <span class="text-secondary">显示范围 x[</span>
+        <input class="form-control form-control-sm sp-xmin" style="width:90px" placeholder="自动"
+          title="x 下限（Å）；留空 = 自适应。可键入超出默认全域的值">
+        <span class="text-secondary">–</span>
+        <input class="form-control form-control-sm sp-xmax" style="width:90px" placeholder="自动" title="x 上限（Å）">
+        <span class="text-secondary">]　y[</span>
+        <input class="form-control form-control-sm sp-ymin" style="width:90px" placeholder="自适应"
+          title="y 下限（Fλ 线性值）；留空 = 视图内 2–98 分位自适应">
+        <span class="text-secondary">–</span>
+        <input class="form-control form-control-sm sp-ymax" style="width:90px" placeholder="自适应" title="y 上限">
+        <span class="text-secondary">]</span>
+        <button class="btn btn-outline-secondary btn-sm sp-zapply"
+          title="应用键入的显示范围；单边留空取当前值；全空 = 恢复自适应">应用</button>
+      </div>
+      <div class="small" id="spOverlayCaption"></div>
+      <div class="small" id="spSmoothCaption"></div>
+      <div class="small text-secondary">${HINT}</div>
+    </div></div>`;
+  _cv = el.querySelector('#spCv');
+  _capEl = el.querySelector('#spOverlayCaption');
+  _cv.addEventListener('mousedown', ev => {
+    _drag = { x0: ev.offsetX, x1: ev.offsetX, y0: ev.offsetY, y1: ev.offsetY, shift: ev.shiftKey }; draw();
+  });
+  _cv.addEventListener('mousemove', ev => { if (_drag) { _drag.x1 = ev.offsetX; _drag.y1 = ev.offsetY; draw(); } });
+  _cv.addEventListener('mouseleave', () => { if (_drag) { _drag = null; draw(); } });
+  _cv.addEventListener('dblclick', () => { _view = null; clearRangeEdits(); draw(); });
+  el.querySelector('.sp-zreset').addEventListener('click', () => { _view = null; clearRangeEdits(); draw(); });
+  const spx = smoothPx(ctx.S);
+  el.querySelector('#spSmoothCaption').innerHTML = spx
+    ? `<span class="text-warning" title="${escAttr(TXT26)}">TXT-26：${escAttr(TXT26.replace('N 像元', spx + ' 像元'))}</span>`
+    : '';
+  if (!_wired) {
+    _wired = true;
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('resize', () => { if (_cv && _cv.isConnected) draw(); });
+  }
+  // BUG A 修复：每次 innerHTML 重建都是全新元素，无条件重新接线
+  el.querySelector('.sp-zapply').addEventListener('click', applyRange);
+  for (const cls of ['.sp-xmin', '.sp-xmax', '.sp-ymin', '.sp-ymax']) {
+    const inp = el.querySelector(cls);
+    inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') applyRange(); });
+    inp.addEventListener('input', () => { inp.dataset.edited = '1'; _rngEdits.add(cls); });
+    inp.addEventListener('focus', () => { _rngFocus = true; });
+    inp.addEventListener('blur', () => { _rngFocus = false; });   // BUG B 修复：blur 不再 draw()
+    // 重建保留编辑中内容（项 8）
+    const pv = prevR[cls];
+    if (pv && pv.ed) { inp.value = pv.v; inp.dataset.edited = '1'; _rngEdits.add(cls); }
+  }
+  ensureSpec(); updateOverlayCaption(); draw();
 }
 
 // ─── 谱数据：上传件直取内存数组；库内谱宿主接口取（内存缓存一份，随谱切换失效） ───
@@ -163,8 +219,12 @@ function draw() {
     return;
   }
   if (x1 - x0 < 1e-9) x1 = x0 + 1;
-  if (_view) { x0 = _view[0]; x1 = _view[1]; }
-  _dom = { x0, x1, M, pw };
+  // 显式范围（可超出默认全域）：单边 null = 该轴保持默认/自适应
+  if (_view) {
+    if (_view.x0 != null) x0 = _view.x0;
+    if (_view.x1 != null) x1 = _view.x1;
+    if (x1 - x0 < 1e-9) x1 = x0 + 1;
+  }
   // y 域：视图内谱点 2–98 分位；动态范围 >100× 用对数（以可读为准）
   const ov = overlayActive() ? _deredResp.de_reddened : null;
   let vals = [];
@@ -182,12 +242,21 @@ function draw() {
   }
   vals.sort((a, b) => a - b);
   const q = p => vals.length ? vals[Math.round(p * (vals.length - 1))] : null;
-  let ylo = q(0.02), yhi = q(0.98);
+  let ylo, yhi;
+  if (_view && _view.y) { ylo = Math.min(_view.y[0], _view.y[1]); yhi = Math.max(_view.y[0], _view.y[1]); }   // 框选固定纵轴
+  else { ylo = q(0.02); yhi = q(0.98); }
   const useLog = ylo != null && ylo > 0 && yhi > 0 && yhi / ylo > 100;
   if (useLog) { ylo = Math.log10(ylo); yhi = Math.log10(yhi); }
   if (ylo == null) { ylo = 0; yhi = 1; }
-  if (yhi - ylo < 1e-12) yhi = ylo + (ylo ? Math.abs(ylo) * 0.1 : 1);
+  // 退化守卫用相对阈：Fλ ~1e-15 的谱上绝对 1e-12 阈会把用户键入的显式 y 域整个吞掉
+  const _span = Math.max(Math.abs(yhi), Math.abs(ylo));
+  if (!(yhi - ylo > 0) || (_span > 0 && (yhi - ylo) < _span * 1e-9)) {
+    yhi = ylo + (ylo ? Math.abs(ylo) * 0.1 : 1);
+  }
+  const ylo0 = ylo, yhi0 = yhi;                  // pre-pad：显式留空取值用，防 6% pad 棘轮
   const pad = (yhi - ylo) * 0.06; ylo -= pad; yhi += pad;
+  // _dom 供框选逆变换（Shift+拖选的像素→数据值），必须在 ylo/yhi/useLog 就绪后写（Shift+拖选的像素→数据值），必须在 ylo/yhi/useLog 就绪后写
+  _dom = { x0, x1, M, pw, t: M.t, ph, ylo, yhi, ylo0, yhi0, useLog };
   const X = v => M.l + (v - x0) / (x1 - x0) * pw;
   const Y = useLog
     ? v => M.t + (1 - (Math.log10(Math.max(v, 1e-300)) - ylo) / (yhi - ylo)) * ph
@@ -248,8 +317,14 @@ function draw() {
   // 框选橡皮筋
   if (_drag) {
     const a = Math.min(_drag.x0, _drag.x1), b2 = Math.max(_drag.x0, _drag.x1);
-    g.fillStyle = _drag.shift ? 'rgba(255,165,0,0.18)' : 'rgba(204,0,0,0.15)';
-    g.fillRect(a, M.t, b2 - a, ph);
+    if (_drag.shift) {
+      // 框选缩放：横纵轴都由框决定（纵轴可调的关键）
+      const c = Math.min(_drag.y0, _drag.y1), d = Math.max(_drag.y0, _drag.y1);
+      g.fillStyle = 'rgba(255,165,0,0.18)'; g.fillRect(a, c, b2 - a, d - c);
+      g.strokeStyle = 'rgba(255,165,0,0.8)'; g.strokeRect(a, c, b2 - a, d - c);
+    } else {
+      g.fillStyle = 'rgba(204,0,0,0.15)'; g.fillRect(a, M.t, b2 - a, ph);
+    }
   }
   // 轴与刻度
   const fmt = v => Math.abs(v) >= 1000 ? String(Math.round(v)) : String(Number(v.toPrecision(4)));
@@ -265,6 +340,17 @@ function draw() {
   }
   g.fillText('λ (Å)', W - 44, H - 4);
   g.fillText(useLog ? 'Fλ (log)' : 'Fλ', 6, 10);
+  // 范围输入框与当前视图同步：聚焦期间不回写；用户已键入未应用的框不回写（BUG B）；
+  // y 写 pre-pad 值（_view.y 优先写用户键入的精确值），防 6% pad 棘轮
+  const rngSync = (sel, v) => {
+    const e = _el && _el.querySelector(sel);
+    if (!e || _rngFocus || _rngEdits.has(sel) || document.activeElement === e) return;
+    e.value = (v == null || !isFinite(v)) ? '' : String(Number(v.toPrecision(6)));
+  };
+  const ydisp = v => (v == null || !isFinite(v)) ? null : (useLog ? Math.pow(10, v) : v);
+  rngSync('.sp-xmin', x0); rngSync('.sp-xmax', x1);
+  if (_view && _view.y) { rngSync('.sp-ymin', _view.y[0]); rngSync('.sp-ymax', _view.y[1]); }
+  else { rngSync('.sp-ymin', ydisp(ylo0)); rngSync('.sp-ymax', ydisp(yhi0)); }
 }
 
 // ─── U-51（F-109⑤ 纯前端绘制）：display_smoothed 只在此处产生并只画在图上 ——
@@ -328,11 +414,27 @@ function onUp() {
   if (!_drag || !_cv || !_cv.isConnected || !_ctx) { _drag = null; return; }
   const S = _ctx.S;
   const a = Math.min(_drag.x0, _drag.x1), b = Math.max(_drag.x0, _drag.x1);
-  const shift = _drag.shift; _drag = null;
+  const shift = _drag.shift, dragY0 = _drag.y0, dragY1 = _drag.y1; _drag = null;
   if (!_dom) { draw(); return; }
   const px2lam = px => _dom.x0 + (px - _dom.M.l) / _dom.pw * (_dom.x1 - _dom.x0);
   const lamA = px2lam(a), lamB = px2lam(b);
-  if (shift) { if (b - a > 4) _view = [lamA, lamB]; draw(); return; }
+  if (shift) {
+    if (b - a <= 4) { draw(); return; }
+    // 框选缩放：横轴取框；纵轴在框高足够时按像素逆变换取值（横纵轴都可调，一键恢复全域）
+    let y = null;
+    if (Math.abs(dragY1 - dragY0) > 4 && _dom.useLog != null) {
+      const inv = py => {
+        const f = (_dom.M.t + _dom.ph - py) / _dom.ph;   // 顶=1
+        const t = _dom.ylo + f * (_dom.yhi - _dom.ylo);
+        return _dom.useLog ? Math.pow(10, t) : t;
+      };
+      const ya = inv(Math.max(dragY0, dragY1));          // 屏幕上方 = 数值大
+      const yb = inv(Math.min(dragY0, dragY1));
+      if (isFinite(ya) && isFinite(yb) && yb - ya > 1e-300) y = [ya, yb];
+    }
+    _view = { x0: lamA, x1: lamB, y };
+    draw(); return;
+  }
   if (b - a < 4) {   // 点击：命中掩膜段即删（P1：再点即删；确认 UI 归 P1b）
     const hit = (S.maskRanges || []).findIndex(r => Number(r[0]) <= lamA && lamA <= Number(r[1]));
     if (hit >= 0) { S.maskRanges.splice(hit, 1); _ctx.dirty(); return; }

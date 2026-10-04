@@ -338,11 +338,15 @@ function renderBandCard() {
     .filter(b => !S.bandGroup || String(b.description || '').startsWith(S.bandGroup))
     .map(b => {
       const on = S.selectedBands.includes(b.id);
-      const dis = !b.has_curve || (full && !on);
+      const monoOk = !b.has_curve && S.params.allow_mono === true;   // 单色回退开启 ⇒ 无曲线波段可选
+      const dis = (!b.has_curve && !monoOk) || (full && !on);
       const title = b.has_curve
         ? `λ=${b.wavelength ?? '—'} Å · 曲线口径 ${esc(b.curve_kind || '未登记')}${b.has_curve ? '' : ''}`
-        : '无透过率曲线，仅可单色近似';
-      const dot = b.has_curve ? '' : '<i class="bi bi-slash-circle text-secondary ms-1"></i>';
+        : (monoOk ? '无透过率曲线：将以 mono 单色近似计算（CA-04/CA-01，仅量级参考）'
+                  : '无透过率曲线，仅可单色近似——勾选下方「单色回退（mono）」后可选');
+      const dot = b.has_curve ? '' : (monoOk
+        ? ' <span class="badge text-bg-warning py-0" title="mono 单色近似">mono</span>'
+        : '<i class="bi bi-slash-circle text-secondary ms-1"></i>');
       return `<label class="me-2 ${dis ? 'text-secondary' : ''}" title="${escAttr(title)}">
         <input type="checkbox" class="form-check-input mt-0 me-1 sp-band-chip" value="${escAttr(b.id)}"
           ${on ? 'checked' : ''} ${dis ? 'disabled' : ''}>${esc(b.id)}${dot}</label>`;
@@ -367,7 +371,19 @@ function renderBandCard() {
     dirty();
   }));
   el.querySelector('.sp-band-group').addEventListener('change', e => { S.bandGroup = e.target.value; renderBandCard(); });
-  el.querySelector('.sp-mono').addEventListener('change', e => { S.params.allow_mono = e.target.checked; dirty(); });
+  el.querySelector('.sp-mono').addEventListener('change', e => {
+    S.params.allow_mono = e.target.checked;
+    if (!S.params.allow_mono) {
+      // 单色回退关闭 ⇒ 无曲线波段退回不可选（否则请求 E-04 curve_missing）
+      const noCurve = new Set(S.bandsMeta.filter(b => !b.has_curve).map(b => b.id));
+      const dropped = S.selectedBands.filter(id => noCurve.has(id));
+      if (dropped.length) {
+        S.selectedBands = S.selectedBands.filter(id => !noCurve.has(id));
+        S.featureNotice = `已从选择中移除无曲线波段：${dropped.join('、')}（mono 已关闭）`;
+      }
+    }
+    dirty();
+  });
 }
 
 // ─── ③ 参数区 + ⑤ 动作按钮 + IA-16 缺项清单 ───
@@ -771,7 +787,7 @@ function renderTabs() {
   const item = (id, label, extra = '') =>
     `<li class="nav-item"><a class="nav-link sp-tab ${S.activeTab === id ? 'active' : ''}" href="javascript:void(0)"
         data-tab="${id}" ${extra}><i class="bi bi-card-list"></i> ${label}</a></li>`;
-  el.innerHTML = `<ul class="nav nav-tabs mt-3">
+  el.innerHTML = `<ul class="nav nav-tabs mb-2">
     ${item('s1', 'S1 合成测光')}
     ${item('cmp', '对照面板', cmpDis ? `title="需 ≥1 个锚点才能对照（U-18）" data-disabled="1" style="pointer-events:auto;opacity:.5"` : '')}
     ${item('s2', 'S2 连续谱拟合')}
@@ -861,6 +877,7 @@ export function mountWorkbench(root, spectrumId) {
     <div id="spHeader"></div>
     <div id="spSource"></div>
     <div id="spBadges"></div>
+    <div id="spTabs"></div>
     <div class="row g-3" id="spMain">
       <div class="col-lg-7">
         <div id="spPlot"></div>
@@ -874,8 +891,7 @@ export function mountWorkbench(root, spectrumId) {
     </div>
     <div id="spCompare" style="display:none"></div>
     <div id="spCont" style="display:none"></div>
-    <div id="spLines" style="display:none"></div>
-    <div id="spTabs"></div>`;
+    <div id="spLines" style="display:none"></div>`;
   _els = {
     header: root.querySelector('#spHeader'), source: root.querySelector('#spSource'),
     badges: root.querySelector('#spBadges'), main: root.querySelector('#spMain'),

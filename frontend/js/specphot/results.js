@@ -65,11 +65,16 @@ function num(v, d = 3) {
 export function buildPhotometryRequest(ctx) {
   const S = ctx.S;
   const nOr = (v) => (v === '' || v == null || !isFinite(Number(v))) ? null : Number(v);
+  // Q-5：mono 必须显式授权；且只有选中了无曲线波段才真正走 mono——
+  // 纯曲线波段保持 integrated（CA-04 只标在确实走单色近似的行）
+  const _bm = id => S.bandsMeta.find(b => b.id === id) || {};
+  const anyNoCurve = S.selectedBands.some(id => !_bm(id).has_curve);
+  const useMono = S.params.allow_mono === true && anyNoCurve;
   const body = {
     bands: [...S.selectedBands],
     weighting: S.params.weighting,                 // photon|energy
-    band_mode: S.params.allow_mono ? 'mono' : 'integrated',
-    allow_mono: S.params.allow_mono === true,      // Q-5：mono 必须显式授权
+    band_mode: useMono ? 'mono' : 'integrated',
+    allow_mono: useMono,                           // Q-5：mono 必须显式授权
     mag_system: S.params.mag_system,               // AB|Vega（ST 服务端 400，前端已禁用）
     mode: S.params.mode,                           // auto|direct|anchored|model（P2 2b 起 model 解禁，需 use_model）
     err_policy: S.params.err_policy,               // auto|force_proxy
