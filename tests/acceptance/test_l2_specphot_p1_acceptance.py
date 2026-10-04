@@ -184,7 +184,10 @@ def test_t8_frontend_defaults_match_server_defaults():
     }
     # 键集：前端 buildPhotometryRequest 所发键 ⊆ 服务端读取的键（缺键服务端有默认）
     rs = _js_source('results.js')
-    assert re.search(r"band_mode:\s*S\.params\.allow_mono \? 'mono' : 'integrated'", rs)
+    # 显示修复（2026-10-02）：mono 开启且选中无曲线波段才走 mono——纯曲线波段保持
+    # integrated（CA-04 只标在确实走单色近似的行）；无曲线波段在 mono 开启后可选
+    assert re.search(r"const useMono = S\.params\.allow_mono === true && anyNoCurve", rs)
+    assert re.search(r"band_mode: useMono \? 'mono' : 'integrated'", rs)
     # P1b：preprocess 从恒等字面量改为按非默认键装配（errcol_choice 等；缺省 =
     # 不带键 = 服务端恒等态），Q-33 形态与 T-8 默认值语义不变
     # P2c：diagnostics 从恒等字面量改为按 diagFlags 只装配勾选项（Q-27 只收

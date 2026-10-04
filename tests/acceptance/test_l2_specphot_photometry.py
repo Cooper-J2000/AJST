@@ -454,3 +454,13 @@ def test_gapped_spectrum_gap_bridged_not_500(client):
     r = d['results'][0]
     assert r['gap_bridged'] is True
     assert r['n_used_pixels'] >= 8                       # C_MIN_PIXELS
+
+
+def test_anchored_fit_empty_anchor_set_is_e10():
+    """终验点验发现：空锚点集进 anchored_fit ⇒ 应干净 E-10/409，
+    不得 np.linalg.cond 空数组 LinAlgError 500（纵深防御守卫）。"""
+    import numpy as np
+    from specphot import fluxcal
+    with pytest.raises(Exception) as ei:
+        fluxcal.anchored_fit([], [], np.empty((0, 0)))
+    assert 'E-10' in str(ei.value) or '锚点集为空' in str(ei.value)

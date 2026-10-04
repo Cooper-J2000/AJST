@@ -94,8 +94,10 @@ def _post_cont(client, body):
 
 def test_q13_pl2_vocabulary(client):
     _login(client)
-    # pl2 以别名入词表：正常请求可用
-    d = _post_cont(client, _cont_body(_broken_spec_body(dbeta=1.5)))
+    # pl2 以别名入词表：正常请求可用（词表断言与点数无关 ⇒ 缩谱避让 ST-5 5s
+    # 墙钟在外部 CPU 争用下的偶发越限；登记于 05 遗留清单）
+    lam80 = [4000.0 + 50.0 * i for i in range(80)]
+    d = _post_cont(client, _cont_body(_broken_spec_body(dbeta=1.5, lam=lam80)))
     assert {f['model'] for f in d['fits']} == {'pl', 'pl2'}
     assert d['models_requested'] == ['pl', 'pl2']
     # 宿主注册表键（类名口径）不是别名 ⇒ 拒（Q-13：键为别名不是类名）
