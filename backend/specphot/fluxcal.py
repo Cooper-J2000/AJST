@@ -202,6 +202,10 @@ def anchored_fit(f, g, C):
     C = np.asarray(C, dtype=float)
     n = int(f.size)
     warnings = []
+    if n == 0:
+        # 空锚点集（如锚点波段全被行级 E-04 丢弃）⇒ 干净 409，不进 LinAlgError 500
+        raise SpecLoadError('E-10', '锚点集为空：所有锚点波段均未出结果，anchored 无从进行',
+                            status=409)
     if float(np.linalg.cond(C)) > C_COND_MAX:
         c_inv = np.linalg.pinv(C)
         cov_method = 'pinv'
