@@ -179,6 +179,17 @@ def kcorrected_measured(transient_id: str, template_id: str, *,
     one_plus = 1.0 + z
     t_lo, t_hi = float(surf.t_valid[0]), float(surf.t_valid[1])
 
+    # R-1（2026-10-05 作者裁定：平移补偏）：行时刻是相对库 t0 的观测秒，而
+    # 模板面的时间轴相对模板自己的 epoch_zero。两者不一致时（first_point
+    # 模板 sn2002ap/sn2006aj，实测偏移 ~1–2 d）送引擎取 K 的时刻与 t_valid
+    # 窗口判定都必须先平移到模板零点系：t_tpl = t_cat − offset
+    # （offset = 模板零点 − 库 t0，与 predict.resolve_time_origin 同口径）。
+    # 偏移非零 ⇒ alerts/notes 显形（CA-14 族：time-origin-not-event）。
+    tz = tl_predict.resolve_time_origin(spec, None, transient, root)
+    zero_mjd, cat_mjd = tz.get("t_zero_mjd"), tz.get("catalog_t0_mjd")
+    offset_days = (round(float(zero_mjd) - float(cat_mjd), 10)
+                   if zero_mjd is not None and cat_mjd is not None else 0.0)
+
     # 取数配方：条目登记值优先（F-52 同口径）；显式配对无配方 ⇒ raw+drop
     recipe = entry.get("extract") or {}
     try:
@@ -215,7 +226,7 @@ def kcorrected_measured(transient_id: str, template_id: str, *,
                                "reason": "not-on-surface"})
             continue
         t_obs_days = np.asarray([r[0] / 86400.0 for r in rows_b], float)
-        t_rest = t_obs_days / one_plus
+        t_rest = (t_obs_days - offset_days) / one_plus      # R-1：模板零点系
         in_win = (t_rest >= t_lo) & (t_rest <= t_hi)
         for r, t_r, ok in zip(rows_b, t_rest, in_win):
             if not ok:                        # 逐点标记，不入曲线（模板层同口径）
@@ -236,7 +247,8 @@ def kcorrected_measured(transient_id: str, template_id: str, *,
             continue
         try:
             pred = cs.predict(surf, bank, dist, band, z=z,
-                              times_obs_days=t_obs_days[idx], mode="auto")
+                              times_obs_days=t_obs_days[idx] - offset_days,
+                              mode="auto")
         except cs.ChromaShiftError as e:
             for i in idx:
                 failed.append({"t_obs_s": rows_b[i][0], "band": band,
@@ -269,6 +281,13 @@ def kcorrected_measured(transient_id: str, template_id: str, *,
                              "system_in": system})
 
     notes, alerts = [], []
+    if offset_days:
+        # R-1 平移补偏的显形（CA-14 族 time-origin-not-event；与 P1 域判级同码）
+        alerts.append("CA-14")
+        notes.append(f"模板零点 ≠ 库 t0（epoch_zero=first_point，偏移 "
+                     f"{offset_days:+.4g} d）：K 与 t_valid 窗口已按平移补偏后的"
+                     "时刻取值（R-1 裁定口径，2026-10-05）；t_obs_s 仍相对库 t0 "
+                     "回显，t_rest_s 为模板零点系")
     if not (spec.reddening or {}).get("mw_removed"):
         # 与 P1 域判级的 absolute-mag-not-intrinsic 同族（CA-05）：raw 行集
         # 的 M_meas 含银消，不是内禀绝对星等
@@ -287,6 +306,8 @@ def kcorrected_measured(transient_id: str, template_id: str, *,
         "z": z, "rowset": recipe.get("rowset", "raw"),
         "distance_modulus_engine": mu_engine,
         "mu": mu,
+        # R-1：K 取值时刻相对库 t0 的平移量（模板零点 − 库 t0，天；0 = 同零点）
+        "k_time_offset_days": offset_days,
         "points": {"detections": detections, "upper_limits": upper_limits,
                    "clipped": clipped, "failed": failed},
         "counts": {
