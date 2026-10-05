@@ -2410,7 +2410,45 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 
 ## 十一、版本历史
 
-### v2.32（2026-10-02）— 模板库（tmplib）审核修复轮（P1-3 待作者裁定）
+### v2.33（2026-10-05）— specphot anchored 定标修复 + 模板库 R-1 零点平移补偏
+
+2026-10-05 功能审查（推进档：AJST-enrich/20261005_功能审查/00_推进状态.md）后的修复轮。
+背景：specphot 全部验收测试用内联 golden 常量（T-* 禁用 db_cur 夹具），真实库数据
+路径欠覆盖；在真实服务+真实库全量冒烟（113 条谱）后定位并修复以下问题：
+
+- **specphot SP-A（P0）anchored 模式被原始 m_syn 合理域闸误杀**：`_row_result` 的
+  `[C_MAG_SANITY_LO, C_MAG_SANITY_HI]` 闸原对**未定标原始** m_syn 判定（所有模式
+  统一），anchored 下 κ* 本可把 mag 拉回合理域却在改正前被整行置 null——库内
+  27/112 条谱（归一化/另有刻度）anchored 全波段 null，正是「工具不可用」的主因。
+  现改为判定**模式生效后的星等**（direct 语义不变；anchored 判 κ* 改正后 mag），
+  规格 02 F-14 末句按 direct 闸门语境解读。golden 基线 `cat116_anchored` 随之重建
+  （四件中仅此一件变化：旧全 null ⇒ 新出数 ≈18 mag）。
+- **specphot SP-B（P0）两处数值异常不再 500**：κ*≤0（病态锚定）⇒ CA-03
+  （reason=`kappa_nonpositive`）+ mag 族 null（不再 log10 域错）；`delta_m` 杠杆
+  收缩方差为负（h_i>1）⇒ CA-15（reason=`delta_m_var_negative`）+ null（不再
+  sqrt 域错），均守 TXT-23「null+书面原因，不冒充」纪律。
+- **specphot SP-C（P1）auto 无锚点出口改 E-10/409**：auto 在 direct/anchored/model
+  均不可用时报 `anchor_unavailable`（reason=`auto_no_calibration_path`，文案给出
+  「手加锚点或先做 S2 拟合」的下一步），不再落 model 报 E-13/501
+  `feature_disabled`（该文案是 P2 期次闸门残留）。
+- **specphot 前端 P1（Playwright 走查发现）**：S2/S3 页签的计算失败此前无任何
+  UI 出口（`S.errorMsg` 只在 S1 参数面板渲染）——S2/S3 参数面板「⑤ 动作」下
+  同挂 busyNotice/featureNotice/errorMsg 三行，失败原因逐字可见。
+  遗留登记（非阻塞）：S2 的 ST-5 5 s 硬超时在冷缓存+高负载下偶发触顶（重试即过），
+  口径是否放宽另议。
+- **模板库 R-1（原审核 P1-3，作者裁定：平移补偏）**：API-8 kcorrected 通路把行
+  时刻（相对库 t0）直接送引擎取 K，未补偿模板面零点 ≠ 库 t0 的偏移（仅
+  sn2002ap/sn2006aj 两个 first_point 模板）。现复用 `predict.resolve_time_origin`
+  算 `offset = 模板零点 − 库 t0`，`times_obs_days` 与 t_valid 窗口判定统一平移；
+  偏移非零 ⇒ alerts 挂 CA-14（time-origin-not-event 族）+ notes 说明 + 响应新增
+  `k_time_offset_days` 回显。实测 SN2002ap offset=+1.17 d（与底账一致）、
+  GRB060218A +0.00164 d。
+- **验收**：specphot 490 绿+4 登记 skip；tmplib 97 绿；全量 843 绿+4 skip（唯一
+  失败 `test_q13_pl2_vocabulary` 为 ST-5 5 s 墙钟在外部 CPU 争用下的已登记环境
+  flake，隔离跑即绿）；preflight 无阻塞；Playwright 端到端走查六项全过（S1
+  anchored 出数/409 错误路径可读/S2/S3/导出/零 pageerror）。
+
+### v2.32（2026-10-02）— 模板库（tmplib）审核修复轮（P1-3 已于 v2.33 裁定落地）
 
 2026-10-02 全量只读代码审核（意见书：AJST-enrich/20260928_snredshift_to_fix/代码审核意见_20261002.md）
 后的一次性修复；除 P1-3（S3 时刻零点口径，待作者裁定）外全部 P1/P2/P3 落地：
