@@ -9,8 +9,9 @@
   API-7       parse：形状/单位判定/format_hint 闸（F-76）/闸门忙 ⇒ 429（ST-1/ST-12）
   API-8       ebv：非法坐标 ⇒ E-14 bad_coordinates 且文案含示例；图不可用 ⇒ 200 + CA-23（A-8）；
               T-46：HMS 与十进制度同 E(B−V)（4 位小数）
-  API-2/3/4   未到期 ⇒ 401（未登录）；API-3/4 登录后 501 feature_disabled，不得 500
-              （API-2 已真实现，见 test_l2_specphot_photometry.py）
+  鉴权        2026-10-05 起五个 POST 端点（parse/ebv/photometry/continuum/line）对
+              未登录访客放开（全链只读计算）；访客打到的是参数校验而非 401
+              （API-2 契约主体见 test_l2_specphot_photometry.py）
 不写库；ebv 只走宿主 extinction 的只读查询（Q-30）。
 """
 import json
@@ -46,7 +47,7 @@ def _login(client):
 
 
 def _logout(client):
-    """module 级 client 的登录态会跨用例残留，401 断言前必须显式清掉。"""
+    """module 级 client 的登录态会跨用例残留，访客（未登录）用例前必须显式清掉。"""
     with client.session_transaction() as s:
         s.clear()
 
@@ -157,10 +158,12 @@ def test_api5_curve_filter_without_curve(client):
 
 # ─── API-7：parse ───────────────────────────────────────────────────────
 
-def test_api7_requires_auth(client):
+def test_api7_open_to_guest(client):
+    """2026-10-05 放开：未登录访客可解析上传/粘贴件（只读计算链第一环）。"""
     _logout(client)
     r = client.post('/api/specphot/parse', json={'text': VALID_TEXT})
-    assert r.status_code == 401
+    d = _json(r)
+    assert r.status_code == 200 and d['ok'] is True
 
 
 def test_api7_parse_shape(client):
@@ -346,10 +349,12 @@ def test_api7_gate_busy_is_429(client):
 
 # ─── API-8：ebv ─────────────────────────────────────────────────────────
 
-def test_api8_requires_auth(client):
+def test_api8_open_to_guest(client):
+    """2026-10-05 放开：未登录访客可查 E(B−V)（尘埃图不可用也回 200+CA-23，A-8）。"""
     _logout(client)
     r = client.post('/api/specphot/ebv', json={'ra': '12:34:56.7', 'dec': '-05:06:07'})
-    assert r.status_code == 401
+    d = _json(r)
+    assert r.status_code == 200 and 'available' in d
 
 
 def test_api8_bad_coordinates_e14_with_example(client):
@@ -389,14 +394,15 @@ def test_api8_hms_and_decimal_give_same_ebv(client):
     assert isinstance(d1['cold_start_ms'], int)
 
 
-# ─── API-3/4：未到期 ⇒ E-13（A-3 显式 jsonify，不得 500） ──────────────────
-# P2 2b 起 API-3 已真实现（backend/specphot/continuum_api.py）；P3 切片 2 起
-# API-4 也已真实现（backend/specphot/lines_api.py，meta.py 的 501 占位删除）
-# ⇒ 501 契约测试全部退役；API-4 的契约测试见 test_l2_specphot_lines_api.py。
-# （U-48 诊断三键在 API-4 内仍走 E-13/501 phase='P3d'，断言在新文件。）
+# ─── 计算端点鉴权（2026-10-05 起对未登录访客放开，全链只读计算） ──────────
+# 历史注：API-3/4 的 501 占位契约测试已随真实现退役（P2 2b 起 API-3 见
+# backend/specphot/continuum_api.py，P3 切片 2 起 API-4 见 lines_api.py；
+# API-4 契约测试在 test_l2_specphot_lines_api.py，U-48 诊断三键仍走
+# E-13/501 phase='P3d'）。
 
-def test_pending_endpoints_401_without_login(client):
+def test_compute_endpoints_open_to_guest(client):
+    """三个计算端点对未登录访客不再 401；空体 ⇒ 400 参数校验（E-14 族）。"""
     _logout(client)
     for path in ('/api/specphot/photometry', '/api/specphot/continuum', '/api/specphot/line'):
         r = client.post(path, json={})
-        assert r.status_code == 401, path
+        assert r.status_code == 400, (path, r.status_code)

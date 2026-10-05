@@ -135,10 +135,10 @@ def test_api3_validation_rejections(client):
     # smc 的曲线无 R_V 参数 ⇒ 任意"第三只 R_V"拒绝（F-64②，reason=rv_source）
     r = client.post('/api/specphot/continuum', json=_cont_body(spec, rv=3.3))
     assert r.status_code == 400 and _json(r).get('reason') == 'rv_source'
-    # 未登录 ⇒ 401（require_auth）
+    # 未登录访客亦可用（2026-10-05 只读计算放开）：空体 ⇒ 400 参数校验而非 401
     with client.session_transaction() as s:
         s.clear()
-    assert client.post('/api/specphot/continuum', json={}).status_code == 401
+    assert client.post('/api/specphot/continuum', json={}).status_code == 400
     _login(client)
     # 库内谱不存在 ⇒ 404 spectrum_not_found（E-01）
     r = client.post('/api/specphot/continuum', json={'spectrum_id': 99999,
