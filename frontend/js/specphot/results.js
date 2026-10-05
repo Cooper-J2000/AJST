@@ -422,7 +422,7 @@ export function renderComparison(el, ctx) {
             <td>${esc(x.m_obs_kind || '—')}</td><td>${num(x.dt_obs_d, 3)}</td></tr>`).join('')}</tbody>
         </table>
       </div>
-      <div id="spCmpPlot" class="mt-2" style="min-height:120px"></div>`
+      <div id="spCmpPlot" class="mt-2"></div>`
     : '<div class="text-secondary small mt-2">本次响应没有可对照的锚点波段（m_obs 全空）。</div>'}
   </div></div>`;
   renderComparePlot(el.querySelector('#spCmpPlot'), ctx);   // IA-12 比对图（specplot.js）

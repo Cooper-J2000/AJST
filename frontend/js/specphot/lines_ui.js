@@ -97,7 +97,6 @@ export function buildLinesRequest(ctx) {
 export function linesMissing(ctx) {
   const S = ctx.S, p = S.lineParams;
   const out = [];
-  if (!ctx.isAuthed()) out.push('未登录：计算需要登录');
   if (!((S.sourceKind === 'catalog' && S.spectrumId != null) || !!S.upload)) out.push('缺谱：先装载一条谱');
   if (!(Number(p.lambda_rest_aa) > 0)) out.push('缺线心：line.lambda_rest_aa 必填且为正数（F-34）');
   if (!['emission', 'absorption'].includes(p.line_kind)) {
@@ -205,10 +204,11 @@ export function renderLinesPanel(el, ctx) {
       <span class="text-secondary small">前置 M-4+M-6 缺 ⇒ 输出降级（null + 书面原因）；TXT-25 恒显于结果卡。</span></div>
     <div class="mt-1 small text-secondary">TXT-8：${esc(TXT8)}</div>`;
   }
-  el.innerHTML = `<div class="card mb-3"><div class="card-body py-2 small">
-    <div class="d-flex align-items-center"><strong>③ 参数（S3）</strong>
-      <span class="ms-2">${stepBar}</span>${staleBadge}
-      <span class="ms-auto small text-secondary">S3 谱线测量（API-4，P3 切片 2）</span></div>
+  el.innerHTML = `<div class="card mb-3">
+    <div class="card-header d-flex align-items-center py-2">③ 参数（S3）
+      <span class="ms-2 fw-normal">${stepBar}</span>${staleBadge}
+      <span class="ms-auto small text-secondary fw-normal">S3 谱线测量（API-4，P3 切片 2）</span></div>
+    <div class="card-body py-2 small">
     ${bodyHtml}
     <hr class="my-2"><strong>⑤ 动作</strong>
     <div class="d-flex flex-wrap gap-2 align-items-center mt-1">

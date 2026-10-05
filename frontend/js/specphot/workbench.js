@@ -72,27 +72,6 @@ const S = {
   lineStep: 1, lineStale: false, lastLines: null,
 };
 
-// ─── W-15①/W-15②/W-18 样式（一次性注入，幂等）：首列冻结 + 窄屏参数抽屉 ───
-function ensureStyles() {
-  if (document.getElementById('sp-style')) return;
-  const st = document.createElement('style');
-  st.id = 'sp-style';
-  st.textContent = `
-    /* W-15①：结果表首列冻结（波段列），加背景防透叠；表头同处理且层级更高 */
-    .sp-result-table th:first-child, .sp-result-table td:first-child {
-      position: sticky; left: 0; background-color: var(--bs-table-bg); z-index: 1;
-    }
-    .sp-result-table thead th:first-child { z-index: 3; }
-    .sp-result-table.table-hover tbody tr:hover > *:first-child {
-      background-color: var(--bs-table-hover-bg);
-    }
-    /* W-15②：≤576px 参数抽屉——sp-closed 只在窄屏生效，桌面永远展开 */
-    @media (max-width: 575.98px) {
-      .sp-param-body.sp-closed { display: none; }
-    }`;
-  document.head.appendChild(st);
-}
-
 let _root = null, _els = {};
 
 // ─── 带结构化错误信息的 POST（保留 code/reason/phase/status，A-3 错误出口） ───
@@ -171,7 +150,6 @@ function loadSession() {
 // ─── 缺项清单（IA-16：列表呈现，不得只标红） ───
 function missingList() {
   const out = [];
-  if (!isAuthed()) out.push('未登录：解析上传件、银消查询与计算需要登录');
   const hasSpec = (S.sourceKind === 'catalog' && S.spectrumId != null) || !!S.upload;
   if (!hasSpec) out.push('缺谱：先选择一条库内谱，或上传 / 粘贴并解析成功');
   if (hasSpec && !S.selectedBands.length) out.push('缺波段：至少勾选 1 个波段');
@@ -352,12 +330,13 @@ function renderBandCard() {
           ${on ? 'checked' : ''} ${dis ? 'disabled' : ''}>${esc(b.id)}${dot}</label>`;
     }).join('');
   el.innerHTML = `
-    <div class="card mb-3"><div class="card-body py-2">
-      <div class="d-flex align-items-center mb-1">
-        <strong class="me-2">② 波段选择</strong>
+    <div class="card mb-3">
+      <div class="card-header d-flex align-items-center py-2">
+        ② 波段选择
         <select class="form-select form-select-sm w-auto ms-auto sp-band-group">${groups}</select>
-        <span class="small text-secondary ms-2">${S.selectedBands.length}/${C_MAX_BANDS}</span>
+        <span class="small text-secondary fw-normal ms-2">${S.selectedBands.length}/${C_MAX_BANDS}</span>
       </div>
+      <div class="card-body py-2">
       <div class="small">${chips || '<span class="text-secondary">该筛选下无波段</span>'}</div>
       <div class="form-check form-check-inline small mt-1" title="开启后无曲线波段可走 mono 单色近似；开启即必挂 CA-04">
         <input class="form-check-input sp-mono" type="checkbox" id="spAllowMono" ${S.params.allow_mono ? 'checked' : ''}>
@@ -453,13 +432,14 @@ function renderRightPanel() {
   if (S.paramOpen === undefined) S.paramOpen = window.innerWidth > 576;
   const computeDis = !!(missing.length || computing || busyLeft);
   el.innerHTML = `
-    <div class="card mb-3"><div class="card-body py-2" id="spParams">
-      <div class="d-flex align-items-center">
-        <strong>③ 参数</strong>
+    <div class="card mb-3">
+      <div class="card-header d-flex align-items-center py-2">
+        ③ 参数
         <button type="button" class="btn btn-sm btn-outline-secondary ms-auto d-sm-none sp-param-toggle"
           aria-expanded="${S.paramOpen ? 'true' : 'false'}" aria-controls="spParamBody"
           title="开合参数抽屉（W-15）">参数</button>
       </div>
+      <div class="card-body py-2" id="spParams">
       <div class="sp-param-body ${S.paramOpen ? '' : 'sp-closed'}" id="spParamBody">
       <div class="row g-2 small mt-1">
         <div class="col-6">
@@ -813,6 +793,7 @@ function layoutPanes() {
   if (_els.cont) _els.cont.style.display = S.activeTab === 's2' ? '' : 'none';
   if (_els.lines) _els.lines.style.display = S.activeTab === 's3' ? '' : 'none';
   if (S.activeTab === 'cmp') refreshComparison();
+  if (S.activeTab === 's1') renderRightPanel();   // 从 s2/s3 切回时重挂 S1 参数面板（#spRight 已被对方覆盖）
   if (S.activeTab === 's2') { renderRightPanel(); refreshContinuum(); }
   if (S.activeTab === 's3') { renderRightPanel(); refreshLines(); }
 }
@@ -871,7 +852,6 @@ function onEsc(e) {
 
 export function mountWorkbench(root, spectrumId) {
   _root = root;
-  ensureStyles();   // W-15①/②：注入首列冻结与参数抽屉样式（幂等）
   if (S.paramOpen === undefined) S.paramOpen = window.innerWidth > 576;   // W-15②：窄屏默认收起
   root.innerHTML = `
     <div id="spHeader"></div>

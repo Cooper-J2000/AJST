@@ -82,12 +82,13 @@ export function renderAnchors(el, ctx) {
   }).join('');
 
   el.innerHTML = `
-  <div class="card mb-3"><div class="card-body py-2">
-    <div class="d-flex align-items-center">
-      <strong>④ 定标锚点表</strong>
-      <span class="small text-secondary ms-2">手加 ${S.manualRows.length}/${C_MAX_ANCHORS}
+  <div class="card mb-3">
+    <div class="card-header d-flex align-items-center py-2">
+      ④ 定标锚点表
+      <span class="small text-secondary fw-normal ms-2">手加 ${S.manualRows.length}/${C_MAX_ANCHORS}
         ${conflicts.size ? `<span class="text-danger ms-2">CA-33：波段 ${[...conflicts].join('、')} 冲突，计算已禁用——请选一条</span>` : ''}</span>
     </div>
+    <div class="card-body py-2">
     <div class="table-responsive mt-1" style="max-height:280px;overflow:auto">
       <table class="table table-sm table-striped mb-0 small">
         <thead><tr><th>锚定</th><th>波段</th><th>星等</th><th>系统</th><th>时刻 MJD</th>
@@ -101,7 +102,7 @@ export function renderAnchors(el, ctx) {
         <div class="col-auto"><label class="form-label mb-0">波段</label>
           <select class="form-select form-select-sm sp-aband">${bandOpts('')}</select></div>
         <div class="col-auto"><label class="form-label mb-0">星等</label>
-          <input type="number" step="any" class="form-control form-control-sm sp-amag" style="width:110px"></div>
+          <input type="number" step="any" class="form-control form-control-sm sp-amag sp-w110"></div>
         <div class="col-auto"><label class="form-label mb-0">星等系</label>
           <select class="form-select form-select-sm sp-ams">
             <option value="AB" selected>AB</option>
@@ -109,9 +110,9 @@ export function renderAnchors(el, ctx) {
             <option value="Vega" disabled title="Vega 待该波段登记 vega2ab（F-9）——P1 手加行固定 AB">Vega</option>
           </select></div>
         <div class="col-auto"><label class="form-label mb-0">时刻 MJD（可空）</label>
-          <input type="number" step="any" class="form-control form-control-sm sp-amjd" style="width:130px"></div>
+          <input type="number" step="any" class="form-control form-control-sm sp-amjd sp-w130"></div>
         <div class="col-auto"><label class="form-label mb-0">备注</label>
-          <input type="text" class="form-control form-control-sm sp-anote" style="width:160px"></div>
+          <input type="text" class="form-control form-control-sm sp-anote sp-w160"></div>
         <div class="col-auto"><button class="btn btn-sm btn-outline-primary sp-aadd">加入</button></div>
         <div class="col-12 text-secondary">${TXT.t20}</div>
       </div>

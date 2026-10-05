@@ -10,6 +10,14 @@ import { api } from '../api.js';
 import { esc, escAttr } from '../utils.js';
 import { txt22Text } from './export.js';
 import { SPEC_LINE_GROUPS } from '../spec_lines.js';
+import { chartColors } from '../theme.js';
+
+// 绘图配色取自宿主主题调色板（theme.js chartColors()，深浅双主题同构）；
+// 主题切换会整页刷新（theme.setTheme ⇒ location.reload），绘制时取一次即可。
+function hexA(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
 
 const C_MAX_EXCLUDE = 32;   // Q-2 / V-13（与后端 specphot/constants.py 同值）
 const C_DRAW_PTS = 2400;    // 绘制降采样上限（F-109 同族：只改图不改数）
@@ -88,26 +96,27 @@ export function renderSpecPlot(el, ctx) {
   const grabR = s => { const e = el.querySelector(s); return e ? { v: e.value, ed: !!e.dataset.edited } : null; };
   const prevR = { '.sp-xmin': grabR('.sp-xmin'), '.sp-xmax': grabR('.sp-xmax'), '.sp-ymin': grabR('.sp-ymin'), '.sp-ymax': grabR('.sp-ymax') };
   el.innerHTML = `
-    <div class="card mb-3"><div class="card-body py-2">
-      <div class="d-flex align-items-center">
-        <strong>① 谱预览</strong>
-        <span class="small text-secondary ms-2">λ 轴 Å；拖选 = 加掩膜段 · Shift+拖选 = 框选缩放（横纵轴可调）· 双击/按钮 = 恢复全域；竖带 = 波段曲线覆盖区；
+    <div class="card mb-3">
+      <div class="card-header d-flex align-items-center py-2">
+        ① 谱预览
+        <span class="small text-secondary fw-normal ms-2">λ 轴 Å；拖选 = 加掩膜段 · Shift+拖选 = 框选缩放（横纵轴可调）· 双击/按钮 = 恢复全域；竖带 = 波段曲线覆盖区；
           斜纹 = 掩膜段（n_masked_pixels 由计算回显）</span>
         <button class="btn btn-outline-secondary btn-sm ms-auto sp-zreset" title="恢复全域（U-13）">恢复全域</button>
       </div>
-      <canvas id="spCv" class="w-100 mt-1" style="height:240px;cursor:crosshair;touch-action:none"
+      <div class="card-body py-2">
+      <canvas id="spCv" class="w-100"
         title="${escAttr(HINT)}"></canvas>
       <div class="d-flex align-items-center flex-wrap gap-1 mt-1 small sp-rangebar">
         <span class="text-secondary">显示范围 x[</span>
-        <input class="form-control form-control-sm sp-xmin" style="width:90px" placeholder="自动"
+        <input class="form-control form-control-sm sp-xmin sp-w90" placeholder="自动"
           title="x 下限（Å）；留空 = 自适应。可键入超出默认全域的值">
         <span class="text-secondary">–</span>
-        <input class="form-control form-control-sm sp-xmax" style="width:90px" placeholder="自动" title="x 上限（Å）">
+        <input class="form-control form-control-sm sp-xmax sp-w90" placeholder="自动" title="x 上限（Å）">
         <span class="text-secondary">]　y[</span>
-        <input class="form-control form-control-sm sp-ymin" style="width:90px" placeholder="自适应"
+        <input class="form-control form-control-sm sp-ymin sp-w90" placeholder="自适应"
           title="y 下限（Fλ 线性值）；留空 = 视图内 2–98 分位自适应">
         <span class="text-secondary">–</span>
-        <input class="form-control form-control-sm sp-ymax" style="width:90px" placeholder="自适应" title="y 上限">
+        <input class="form-control form-control-sm sp-ymax sp-w90" placeholder="自适应" title="y 上限">
         <span class="text-secondary">]</span>
         <button class="btn btn-outline-secondary btn-sm sp-zapply"
           title="应用键入的显示范围；单边留空取当前值；全空 = 恢复自适应">应用</button>
@@ -204,7 +213,7 @@ function bandBoxes() {
 // ─── 主绘制 ───
 function draw() {
   if (!_cv || !_cv.isConnected || !_ctx) return;
-  const S = _ctx.S, W = _cv.clientWidth || 600, H = _cv.clientHeight || 240;
+  const S = _ctx.S, CC = chartColors(), W = _cv.clientWidth || 600, H = _cv.clientHeight || 240;
   const dpr = window.devicePixelRatio || 1;
   _cv.width = W * dpr; _cv.height = H * dpr;
   const g = _cv.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
@@ -214,7 +223,7 @@ function draw() {
   const bands = bandBoxes();
   for (const b of bands) { if (x0 == null || b.lo < x0) x0 = b.lo; if (x1 == null || b.hi > x1) x1 = b.hi; }
   if (x0 == null) {
-    g.fillStyle = '#888'; g.font = '12px sans-serif';
+    g.fillStyle = CC.tick; g.font = '12px sans-serif';
     g.fillText('缺谱与波段：装载谱并勾选波段后显示（谱数据缺失时只画通带竖带）', M.l, H / 2);
     return;
   }
@@ -265,8 +274,8 @@ function draw() {
   for (const b of bands) {
     const a = Math.max(X(b.lo), M.l), b2 = Math.min(X(b.hi), W - M.r);
     if (b2 <= M.l || a >= W - M.r) continue;
-    g.fillStyle = 'rgba(30,144,255,0.13)'; g.fillRect(a, M.t, b2 - a, ph);
-    g.fillStyle = '#1a5c96'; g.font = '9px sans-serif'; g.fillText(b.id, a + 2, M.t + 9);
+    g.fillStyle = CC.selectFill; g.fillRect(a, M.t, b2 - a, ph);
+    g.fillStyle = CC.bands[0]; g.font = '9px sans-serif'; g.fillText(b.id, a + 2, M.t + 9);
   }
   // 掩膜斜纹（U-13 / U-50 同一个数组：S.maskRanges）
   for (const r of (S.maskRanges || [])) {
@@ -274,17 +283,17 @@ function draw() {
     const a = Math.max(X(lo), M.l), b2 = Math.min(X(hi), W - M.r);
     if (!(b2 > a)) continue;
     g.save(); g.beginPath(); g.rect(a, M.t, b2 - a, ph); g.clip();
-    g.strokeStyle = 'rgba(204,0,0,0.55)'; g.lineWidth = 1; g.beginPath();
+    g.strokeStyle = hexA(CC.type.I, 0.55); g.lineWidth = 1; g.beginPath();
     for (let x = a - ph; x < b2; x += 7) { g.moveTo(x, M.t + ph); g.lineTo(x + ph, M.t); }
     g.stroke(); g.restore();
-    g.strokeStyle = 'rgba(204,0,0,0.9)'; g.strokeRect(a, M.t, b2 - a, ph);
+    g.strokeStyle = hexA(CC.type.I, 0.9); g.strokeRect(a, M.t, b2 - a, ph);
   }
   // 谱曲线（或降级提示）
   g.font = '10px sans-serif';
   if (_spec && _spec.lam.length) {
     const lam = _spec.lam, fl = _spec.flux;
     const step = Math.max(1, Math.ceil(lam.length / C_DRAW_PTS));
-    g.strokeStyle = '#1f6fb2'; g.lineWidth = 1; g.beginPath();
+    g.strokeStyle = CC.bands[0]; g.lineWidth = 1; g.beginPath();
     let on = false;
     for (let i = 0; i < lam.length; i += step) {
       const v = Number(fl[i]);
@@ -297,7 +306,7 @@ function draw() {
     drawSmoothed(g, X, Y, useLog, M, W, pw);
     if (ov) drawDered(g, X, Y, useLog, M, W, ov);
   } else {
-    g.fillStyle = '#888'; g.font = '12px sans-serif';
+    g.fillStyle = CC.tick; g.font = '12px sans-serif';
     g.fillText('缺谱数据：上传/粘贴或选库内谱后显示曲线（当前只画通带竖带）', M.l + 6, M.t + ph / 2);
   }
   // 宿主线表标记（SPEC_LINE_GROUPS 按 z 折算：λ_观测 = λ0·(1+z)，F-38 位置参考）
@@ -320,15 +329,15 @@ function draw() {
     if (_drag.shift) {
       // 框选缩放：横纵轴都由框决定（纵轴可调的关键）
       const c = Math.min(_drag.y0, _drag.y1), d = Math.max(_drag.y0, _drag.y1);
-      g.fillStyle = 'rgba(255,165,0,0.18)'; g.fillRect(a, c, b2 - a, d - c);
-      g.strokeStyle = 'rgba(255,165,0,0.8)'; g.strokeRect(a, c, b2 - a, d - c);
+      g.fillStyle = hexA(CC.bands[3], 0.18); g.fillRect(a, c, b2 - a, d - c);
+      g.strokeStyle = hexA(CC.bands[3], 0.8); g.strokeRect(a, c, b2 - a, d - c);
     } else {
-      g.fillStyle = 'rgba(204,0,0,0.15)'; g.fillRect(a, M.t, b2 - a, ph);
+      g.fillStyle = hexA(CC.type.I, 0.15); g.fillRect(a, M.t, b2 - a, ph);
     }
   }
   // 轴与刻度
   const fmt = v => Math.abs(v) >= 1000 ? String(Math.round(v)) : String(Number(v.toPrecision(4)));
-  g.fillStyle = '#888'; g.strokeStyle = '#ccc';
+  g.fillStyle = CC.tick; g.strokeStyle = CC.grid;
   for (const t of niceTicks(x0, x1, 7)) {
     g.beginPath(); g.moveTo(X(t), M.t + ph); g.lineTo(X(t), M.t + ph + 4); g.stroke();
     g.fillText(fmt(t), X(t) - 12, H - 10);
@@ -365,7 +374,7 @@ function drawSmoothed(g, X, Y, useLog, M, W, pw) {
   const px = smoothPx(_ctx.S);
   if (!px || !_spec || !_spec.lam.length) return;
   const h = px >> 1, fl = _spec.flux, n = fl.length;
-  g.strokeStyle = '#e08214'; g.lineWidth = 1.4; g.beginPath();
+  g.strokeStyle = chartColors().bands[3]; g.lineWidth = 1.4; g.beginPath();
   let on = false;
   for (let i = 0; i < n; i++) {
     let sum = 0, cnt = 0;
@@ -385,6 +394,7 @@ function drawSmoothed(g, X, Y, useLog, M, W, pw) {
 // ─── F-89① 曲线 A/B 绘制：与谱同轴同单位（观测系真空 λ 横轴，Fλ 纵轴），
 // B 只从 A 派生一次（derivation_depth=1，F-89④）；legend 写明"派生件、未入库"。
 function drawDered(g, X, Y, useLog, M, W, ov) {
+  const CC = chartColors();
   const n = ov.flux_after.length;
   const step = Math.max(1, Math.ceil(n / C_DRAW_PTS));
   const line = (arr, color, width) => {
@@ -399,12 +409,12 @@ function drawDered(g, X, Y, useLog, M, W, ov) {
     }
     g.stroke();
   };
-  line(ov.flux_before, '#555', 1);            // 曲线 A = 改正前（银消后装载态）
-  line(ov.flux_after, '#c0392b', 1.4);        // 曲线 B = 改正后（本页派生件）
+  line(ov.flux_before, CC.tickSub, 1);        // 曲线 A = 改正前（银消后装载态）
+  line(ov.flux_after, CC.type.I, 1.4);        // 曲线 B = 改正后（本页派生件）
   g.font = '10px sans-serif'; g.textAlign = 'right';
-  g.fillStyle = '#555';
+  g.fillStyle = CC.tickSub;
   g.fillText('— 曲线 A：改正前', W - M.r - 4, M.t + 10);
-  g.fillStyle = '#c0392b';
+  g.fillStyle = CC.type.I;
   g.fillText('— 曲线 B：改正后 = 派生件、未入库（U-47）', W - M.r - 4, M.t + 22);
   g.textAlign = 'left';
 }
@@ -469,13 +479,14 @@ export function renderComparePlot(el, ctx) {
   const r = ctx.S.lastResponse;
   const rows = r ? (r.results || []).filter(x => x.delta_m != null && x.lambda_pivot_aa != null) : [];
   if (!rows.length) { el.innerHTML = '<div class="small text-secondary">无 Δm 数据（需配对锚点且该波段合成成功）。</div>'; return; }
-  el.innerHTML = '<canvas style="width:100%;height:220px;display:block"></canvas>'
+  el.innerHTML = '<canvas class="sp-cmp-canvas"></canvas>'
     + '<div class="small text-secondary">TXT-4：合成 vs 锚点（预览，未入库）· 点 = Δm=m_obs−mag（按 λ_pivot），'
     + '竖条 = Δm_err，方框 = 手加锚点行，实心圆 = 源表锚点行；红虚线 = Δm=0。数据只来自同一次响应（IA-12）。</div>';
   const cv = el.querySelector('canvas');
   const W = el.clientWidth || 600, H = 220, dpr = window.devicePixelRatio || 1;
   cv.width = W * dpr; cv.height = H * dpr;
   const g = cv.getContext('2d'); g.scale(dpr, dpr);
+  const CC = chartColors();
   const M = { l: 48, r: 14, t: 14, b: 28 }, pw = W - M.l - M.r, ph = H - M.t - M.b;
   const xs = rows.map(x => Number(x.lambda_pivot_aa));
   const ys = rows.map(x => Number(x.delta_m));
@@ -487,21 +498,21 @@ export function renderComparePlot(el, ctx) {
   const X = v => M.l + (v - x0) / (x1 - x0) * pw, Y = v => M.t + (1 - (v - y0) / (y1 - y0)) * ph;
   const fmt = v => Math.abs(v) >= 1000 ? String(Math.round(v)) : String(Number(v.toPrecision(3)));
   g.font = '10px sans-serif';
-  g.strokeStyle = '#d22'; g.setLineDash([4, 3]);
+  g.strokeStyle = CC.type.I; g.setLineDash([4, 3]);
   g.beginPath(); g.moveTo(M.l, Y(0)); g.lineTo(W - M.r, Y(0)); g.stroke(); g.setLineDash([]);
-  g.strokeStyle = '#e5e5e5';
+  g.strokeStyle = CC.gridSoft;
   for (const t of niceTicks(y0, y1, 4)) {
     g.beginPath(); g.moveTo(M.l, Y(t)); g.lineTo(W - M.r, Y(t)); g.stroke();
-    g.fillStyle = '#888'; g.fillText(fmt(t), 6, Y(t) + 3);
+    g.fillStyle = CC.tick; g.fillText(fmt(t), 6, Y(t) + 3);
   }
-  g.fillStyle = '#888';
+  g.fillStyle = CC.tick;
   for (const t of niceTicks(x0, x1, 6)) g.fillText(fmt(t), X(t) - 12, H - 8);
   g.fillText('λ_pivot (Å)', W - 80, H - 4); g.fillText('Δm = m_obs − mag', 6, 10);
   rows.forEach((x, i) => {
     const px = X(xs[i]), py = Y(ys[i]);
-    g.strokeStyle = '#666';
+    g.strokeStyle = CC.tickSub;
     g.beginPath(); g.moveTo(px, Y(ys[i] - es[i])); g.lineTo(px, Y(ys[i] + es[i])); g.stroke();
-    if (x.m_obs_origin === 'manual') { g.strokeStyle = '#08c'; g.strokeRect(px - 3, py - 3, 6, 6); }
-    else { g.fillStyle = '#333'; g.beginPath(); g.arc(px, py, 3, 0, 7); g.fill(); }
+    if (x.m_obs_origin === 'manual') { g.strokeStyle = CC.bands[0]; g.strokeRect(px - 3, py - 3, 6, 6); }
+    else { g.fillStyle = CC.legend; g.beginPath(); g.arc(px, py, 3, 0, 7); g.fill(); }
   });
 }

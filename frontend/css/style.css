@@ -722,3 +722,24 @@ a.swiss-tag-subname:hover { text-decoration: underline; }
 
 /* ─── 概览页基本信息表：固定布局下长内容在单元格内折行，不挤压标签列 ─── */
 #metaTable td:last-child { overflow-wrap: anywhere; }
+
+/* ─── 光谱 × 滤光片工具（specphot，#/tools/specphot） ─── */
+/* W-15①：结果表首列（波段）冻结，加背景防透叠；表头层级更高（自 workbench.js 注入样式迁入） */
+.sp-result-table th:first-child, .sp-result-table td:first-child {
+  position: sticky; left: 0; background-color: var(--bs-table-bg); z-index: 1;
+}
+.sp-result-table thead th:first-child { z-index: 3; }
+.sp-result-table.table-hover tbody tr:hover > *:first-child {
+  background-color: var(--bs-table-hover-bg);
+}
+/* W-15②：≤576px 参数抽屉——sp-closed 只在窄屏生效，桌面永远展开 */
+@media (max-width: 575.98px) {
+  .sp-param-body.sp-closed { display: none; }
+}
+#spCv { height: 240px; cursor: crosshair; touch-action: none; }
+#spCmpPlot { min-height: 120px; }
+.sp-cmp-canvas { width: 100%; height: 220px; display: block; }
+.sp-w90 { width: 90px; }    /* 谱图显示范围输入 */
+.sp-w110 { width: 110px; }  /* E(B−V) 手填 / 锚点星等 */
+.sp-w130 { width: 130px; }  /* 锚点时刻 MJD */
+.sp-w160 { width: 160px; }  /* 锚点备注 */

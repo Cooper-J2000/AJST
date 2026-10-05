@@ -175,8 +175,9 @@ export function renderS2Panel(el, ctx) {
       ? 'host_ext_mode=off：无 de-reddened 曲线（F-87①），导出禁用'
       : deredReady ? '导出 §4.3「宿主 de-reddened 曲线导出」块 CSV（TXT-11+TXT-22 头，纯前端派生件）'
         : '响应无 de_reddened 逐点数据，导出禁用';
-  el.innerHTML = `<div class="card mb-3"><div class="card-body py-2 small">
-    <strong>③ 参数（S2）</strong>
+  el.innerHTML = `<div class="card mb-3">
+    <div class="card-header py-2">③ 参数（S2）</div>
+    <div class="card-body py-2 small">
     <div class="mt-1">模型（U-21/U-22，§3.8.1 别名）：${MODELS.map(m =>
       `<label class="me-2"><input type="checkbox" class="form-check-input sp-cm" value="${m}"
         ${p.models.includes(m) ? 'checked' : ''} ${computing ? 'disabled' : ''}>${m}</label>`).join('')}</div>
@@ -241,7 +242,6 @@ export function renderS2Panel(el, ctx) {
 export function s2Missing(ctx) {
   const S = ctx.S, p = S.contParams;
   const out = [];
-  if (!ctx.isAuthed()) out.push('未登录：计算需要登录');
   if (!((S.sourceKind === 'catalog' && S.spectrumId != null) || !!S.upload)) out.push('缺谱：先装载一条谱');
   if (!p.models.length) out.push('缺模型：至少勾选 1 个模型（U-21/U-22）');
   if (p.host_ext_mode === 'prescribe') {

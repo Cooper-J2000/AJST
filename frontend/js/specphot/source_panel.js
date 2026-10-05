@@ -2,7 +2,7 @@
 // 三来源：库内谱（U-34，R-32 宿主 GET /api/spectra，全库一次 GET）/ 上传文件 / 粘贴文本
 // （U-35 → API-7 parse 预检，只解析不落盘，F-0i6）。元数据四项 ra/dec/z/mjd（U-36/37/38）
 // + 波长框架显示（U-39，F-79）+ 银河消光（U-33 → API-8 ebv）。
-import { api, isAuthed } from '../api.js';
+import { api } from '../api.js';
 import { esc, escAttr } from '../utils.js';
 import { parseCoord, attachCoordHint } from '../coords.js';
 
@@ -17,17 +17,35 @@ const TXT = {
 
 let _el = null, _ctx = null;
 
-// ─── 装载库内谱清单（U-34：无 tid 时不带过滤参数 ⇒ 一次 GET 列出全库，禁分页新建端点） ───
-async function fillSpecSelect(sel, currentId) {
-  try {
+// ─── 库内谱清单（U-34：无 tid 时不带过滤参数 ⇒ 一次 GET 列出全库，禁分页新建端点） ───
+// 谱数上百后平铺下拉无法翻找 ⇒ 可输入筛选（input + datalist，与标签/波段输入同一 idioms）；
+// 清单按页面挂载缓存（renderSourcePanel 进页时作废重取），渲染轮次不再每轮重 GET。
+let _specItems = null;      // [{id, label}]
+function specLabel(s) {
+  const date = s.observation_date ? String(s.observation_date).slice(0, 10) : '';
+  return [`#${s.id}`, s.transient_id || '?', s.instrument || s.filename || '', date]
+    .filter(Boolean).join(' · ');
+}
+async function ensureSpecItems() {
+  if (!_specItems) {
     const list = await api('GET', '/spectra');
-    sel.innerHTML = '<option value="">选择库内谱…</option>' + (list || []).map(s => {
-      const label = `#${s.id} · ${s.transient_id || '?'} · ${s.instrument || s.filename || ''}`;
-      return `<option value="${s.id}" ${String(currentId) === String(s.id) ? 'selected' : ''}>${escAttr(label)}</option>`;
-    }).join('');
-  } catch (e) {
-    sel.innerHTML = `<option value="">谱清单加载失败：${escAttr(e.message)}</option>`;
+    _specItems = (list || []).map(s => ({ id: s.id, label: specLabel(s) }));
   }
+  return _specItems;
+}
+// 填充 datalist 候选 + 回填当前选中谱的标签（renderPanel 重画后 input 是空的）
+function fillSpecCandidates() {
+  const input = _el.querySelector('.sp-selspec');
+  const dl = _el.querySelector('#spSpecList');
+  if (!input || !dl) return;
+  ensureSpecItems().then(items => {
+    dl.innerHTML = items.map(x => `<option value="${escAttr(x.label)}"></option>`).join('');
+    const cur = items.find(x => String(x.id) === String(_ctx.S.spectrumId));
+    if (cur && !input.value) input.value = cur.label;
+  }).catch(e => {
+    const hint = _el.querySelector('.sp-selhint');
+    if (hint) { hint.hidden = false; hint.textContent = `谱清单加载失败：${e.message}`; }
+  });
 }
 
 // ─── 上传/粘贴 → API-7 解析（只解析不落盘；成功 adopt，失败内联报错且不清空已填参数） ───
@@ -56,13 +74,13 @@ async function parseText(text, kind) {
 // ─── 渲染（整条重画；状态全在 S） ───
 export function renderSourcePanel(el, ctx) {
   _el = el; _ctx = ctx;
+  _specItems = null;   // 进页重取清单（它页新上传的谱可见）
   renderPanel();
 }
 
 function renderPanel() {
   if (!_el) return;
   const S = _ctx.S, ctx = _ctx;
-  const authed = isAuthed();
   const kind = S.sourceKind;
   const up = S.upload;
   const prov = S.spectrumInfo || null;
@@ -80,15 +98,15 @@ function renderPanel() {
     const v = S.metaUserEdits && S.metaUserEdits[key] ? 'user' : (mp[key] || '');
     if (!v) return '';
     const label = PROV_LABEL[v] || esc(v);
-    return `<span class="badge bg-light text-dark border ms-1" title="meta_provenance=${escAttr(v)}">${label}</span>`;
+    return `<span class="badge badge-neutral ms-1" title="meta_provenance=${escAttr(v)}">${label}</span>`;
   };
   const ebvTxt = S.ebv.value != null
     ? `E(B−V)=${S.ebv.value}（R_V=${S.ebv.rv}，${S.ebv.law}）` : '未查询';
 
   _el.innerHTML = `
-  <div class="card mb-2"><div class="card-body py-2">
-    <div class="d-flex flex-wrap gap-3 align-items-center">
-      <strong>来源</strong>
+  <div class="card mb-2">
+    <div class="card-header d-flex flex-wrap gap-3 align-items-center py-2">
+      来源
       ${[['catalog', '库内谱'], ['upload', '上传文件'], ['paste', '粘贴文本']].map(([v, label]) => `
         <div class="form-check form-check-inline mb-0">
           <input class="form-check-input sp-src" type="radio" name="spSrc" value="${v}" ${kind === v ? 'checked' : ''}>
@@ -96,11 +114,15 @@ function renderPanel() {
       <span class="ms-auto"></span>
       ${prov && S.tid ? `<a class="btn btn-sm btn-outline-secondary" href="#/transient/${escAttr(S.tid)}">回到该源详情（U-43）</a>` : ''}
     </div>
-
+    <div class="card-body py-2">
     ${kind === 'catalog' ? `
       <div class="row g-2 align-items-center mt-1">
         <div class="col-md-6">
-          <select class="form-select form-select-sm sp-selspec" title="U-34：宿主 GET /api/spectra 全库清单"></select>
+          <input class="form-control form-control-sm sp-selspec" list="spSpecList" autocomplete="off"
+            placeholder="输入源名 / #id / 仪器 / 日期筛选库内谱…"
+            title="U-34：宿主 GET /api/spectra 全库清单；输入即筛选候选，选中（或直填 #id）后装载">
+          <datalist id="spSpecList"></datalist>
+          <div class="small text-danger sp-selhint mt-1" hidden></div>
         </div>
         <div class="col-md-6 small text-secondary">
           ${prov ? `#${esc(prov.spectrum_id)} · ${prov.n_points} 点 · 可配对锚点 ${prov.n_catalog_anchors} · `
@@ -111,15 +133,14 @@ function renderPanel() {
 
     ${kind === 'upload' ? `
       <div class="mt-1">
-        <input type="file" class="form-control form-control-sm sp-file" accept=".txt,.csv,.dat,.fits,.fit,.ecsv"
-          ${authed ? '' : 'disabled title="需登录后解析（API-7 要求登录）"'}>
+        <input type="file" class="form-control form-control-sm sp-file" accept=".txt,.csv,.dat,.fits,.fit,.ecsv">
         <div class="small text-secondary">2/3 列文本（波长Å 流量 [误差]）、逗号或空白分隔、# 注释与 # key: value 头（与宿主同语法，F-75）；也接受 .fits（BINTABLE 表或一维线性 WCS 谱）与 .ecsv（astropy ECSV）—— λ 单位按 TUNIT/列单位换算成 Å，元数据头键同文本集（F-76 P2+）。</div>
       </div>` : ''}
     ${kind === 'paste' ? `
       <div class="mt-1">
         <textarea class="form-control form-control-sm sp-paste" rows="4" placeholder="粘贴谱文本（语法同上传）"
-          ${authed ? '' : 'disabled'} ${S.parseError ? 'aria-invalid="true" aria-describedby="spParseError"' : ''}></textarea>
-        <button class="btn btn-sm btn-outline-primary mt-1 sp-parsepaste" ${authed ? '' : 'disabled'}>解析粘贴文本</button>
+          ${S.parseError ? 'aria-invalid="true" aria-describedby="spParseError"' : ''}></textarea>
+        <button class="btn btn-sm btn-outline-primary mt-1 sp-parsepaste">解析粘贴文本</button>
       </div>` : ''}
 
     ${up ? `
@@ -191,10 +212,10 @@ function renderPanel() {
               title="${gext ? '该谱已带宿主侧银河消光改正，不再二次施加（V-16/CA-30）' : '关闭 ⇒ 结果按未改正的观测谱给出'}">
             <label class="form-check-label" for="spMwSwitch">改正</label>
           </div>
-          <input type="number" step="any" min="0" class="form-control form-control-sm sp-ebv" style="width:110px"
+          <input type="number" step="any" min="0" class="form-control form-control-sm sp-ebv sp-w110"
             value="${escAttr(S.params.ebv_override)}" placeholder="E(B−V) 手填覆盖" aria-label="E(B−V) 手填覆盖">
-          <button class="btn btn-sm btn-outline-secondary sp-ebvq" ${authed ? '' : 'disabled'}
-            title="${authed ? '按坐标查询 E(B−V)（API-8）' : '需登录'}">查询 E(B−V)</button>
+          <button class="btn btn-sm btn-outline-secondary sp-ebvq"
+            title="按坐标查询 E(B−V)（API-8）">查询 E(B−V)</button>
         </div>
         <div class="text-secondary">${gext ? '⚠ 该谱已改正，不再二次施加（CA-30）。' : esc(ebvTxt)}</div>
         ${gext && parentId ? `<div class="sp-parent-link">↩ 这条谱已改过（gext_corr），父谱为
@@ -241,19 +262,31 @@ function wire(ctx) {
       ctx.switchSource(kind);          // IA-19：换来源比换谱更彻底（元数据/锚点/掩膜/结果全清）
       renderPanel();
       ctx.refreshChrome();
-      if (kind === 'catalog') fillSpecSelect(_el.querySelector('.sp-selspec'), null);
     }
   }));
 
   const sel = _el.querySelector('.sp-selspec');
   if (sel) {
-    fillSpecSelect(sel, S.spectrumId);
+    fillSpecCandidates();
     sel.addEventListener('change', async () => {
-      const id = Number(sel.value);
-      if (!id) return;
+      const v = sel.value.trim();
+      if (!v) return;
+      const items = _specItems || [];
+      let hit = items.find(x => x.label === v);
+      if (!hit) {                          // 直填 #id / 纯数字 id 也受理
+        const m = v.match(/^#?(\d+)$/);
+        if (m) hit = items.find(x => String(x.id) === m[1]);
+      }
+      const hint = _el.querySelector('.sp-selhint');
+      if (!hit) {
+        if (hint) { hint.hidden = false; hint.textContent = '未匹配到库内谱：从下拉候选选择，或直接填 #id'; }
+        return;
+      }
+      if (hint) hint.hidden = true;
+      if (String(hit.id) === String(S.spectrumId)) return;   // 同一谱不重复装载
       ctx.switchSource('catalog');
       S.sourceKind = 'catalog';
-      await ctx.loadCatalogSpectrum(id);
+      await ctx.loadCatalogSpectrum(Number(hit.id));
       renderPanel(); ctx.refreshChrome();
     });
   }
