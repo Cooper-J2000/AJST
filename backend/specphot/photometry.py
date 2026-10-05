@@ -1446,9 +1446,25 @@ def _row_result(b, rb, aset, d, mag_system, mode_eff, s_anchor, h_map,
     + CA-12（TXT-6）。"""
     integ, warns = rb['int'], list(rb['int']['warnings'])
     m_ab, fnu = rb['m_syn_ab'], integ['fnu_cgs']
-    sane = C_MAG_SANITY_LO <= m_ab <= C_MAG_SANITY_HI
+    # κ* 守卫：GLS 闭式解在病态数据下可给非正 κ*（合成/锚定流量符号或量级病态），
+    # 此时 anchored 无量可出 —— mag 族按 null 出并书面说明，不让 log10(κ*) 变 500。
+    kappa_ok = (mode_eff == 'anchored' and s_anchor is not None
+                and s_anchor.get('value') is not None
+                and float(s_anchor['value']) > 0)
+    if mode_eff == 'anchored' and s_anchor is not None and not kappa_ok:
+        warns.append({'code': 'CA-03', 'reason': 'kappa_nonpositive',
+                      'message': '锚定缩放因子 κ* 非正，定标不可用：mag 族按 null 出'
+                                 '（不用负值/零冒充，F-49 方向固定 scales_spectrum）'})
+    mag_ab = (fluxcal.anchored_mag(m_ab, s_anchor['value']) if kappa_ok else m_ab)
+    # 合理域闸判的是**模式生效后的星等**：direct 下即 m_syn 本身（F-14 原文语境）；
+    # anchored 下原始刻度本就不可信（这正是锚定模式存在的前提），闸的对象必须是
+    # κ* 改正后的 mag —— 否则归一化/另有刻度的谱在 anchored 下被整行误杀
+    #（2026-10-05 审查 SP-A：27/112 条库内谱 anchored 全 null 即此因）。
+    sane = C_MAG_SANITY_LO <= mag_ab <= C_MAG_SANITY_HI
+    mag_available = sane and (mode_eff != 'anchored' or kappa_ok)
     if not sane:
-        warns.append({'code': 'CA-03', 'message': f'm_syn={m_ab:.2f} 越出合理域 '
+        what = '定标后 mag' if kappa_ok else 'm_syn'
+        warns.append({'code': 'CA-03', 'message': f'{what}={mag_ab:.2f} 越出合理域 '
                       f'[{C_MAG_SANITY_LO},{C_MAG_SANITY_HI}]，mag 族按 null 出'})
     if extrapolated:
         warns.append({'code': 'CA-12',
@@ -1468,7 +1484,7 @@ def _row_result(b, rb, aset, d, mag_system, mode_eff, s_anchor, h_map,
     elif integ['weights_val'] is not None and (use_col or sigma_px[0] > 0):
         sp = sigma_px[np.asarray(integ['weights_idx'], dtype=int)]
         s_flux, infl = errs.propagate_band_sigma(integ['weights_val'], sp, rho_prop)
-        m_stat = errs.mag_err_from_flux(fnu, s_flux) if sane and fnu > 0 else None
+        m_stat = errs.mag_err_from_flux(fnu, s_flux) if mag_available and fnu > 0 else None
     if model_mode:
         warns.append({'code': 'CA-15', 'reason': 'model_mode_no_pixel_sigma',
                       'message': 'model 定标：合成量来自 S2 模型曲线，无逐像素 σ；'
@@ -1493,7 +1509,7 @@ def _row_result(b, rb, aset, d, mag_system, mode_eff, s_anchor, h_map,
     # 定标（F-49…F-52/F-56）
     participating = mode_eff == 'anchored' and b in h_map
     v_kappa = 0.0
-    if mode_eff == 'anchored' and s_anchor:
+    if kappa_ok:
         v_kappa = errs.mag_err_cal_nonparticipant(s_anchor['sigma'], s_anchor['value']) ** 2
         m_cal = (math.sqrt(max(v_kappa - 2.0 * h_map[b] * (m_stat or 0.0) ** 2, 0.0))
                  if participating else math.sqrt(v_kappa))
@@ -1505,16 +1521,14 @@ def _row_result(b, rb, aset, d, mag_system, mode_eff, s_anchor, h_map,
     else:
         # §3.5 σ_cal direct 行 / TXT-23：σ_cal 无法评估 ⇒ null + 书面原因，不是 0
         m_cal = None
-    mag_ab = (fluxcal.anchored_mag(m_ab, s_anchor['value'])
-              if mode_eff == 'anchored' and s_anchor else m_ab)
-    mag = to_out(mag_ab) if sane else None
-    f_mjy = response.ab_mag_to_f_mjy(mag_ab) if sane else None
+    mag = to_out(mag_ab) if mag_available else None
+    f_mjy = response.ab_mag_to_f_mjy(mag_ab) if mag_available else None
     # 比对（F-24：每波段至多一行 —— AnchorSet 已拒同波段冲突；catalog 行自带配对 kind）
     row_a = next((r for r in aset.rows if r['band'] == b), None)
     m_obs = m_obs_mjd = dt_obs = d_m = d_m_err = m_kind = m_origin = None
     if row_a:
         m_origin, m_obs_mjd = row_a['anchor_origin'], row_a['mjd']
-    if row_a and sane:
+    if row_a and mag_available:
         if row_a['anchor_origin'] == 'catalog':
             m_kind, dt_obs = row_a['kind'], row_a['dt_obs_d']
         else:                                        # manual 行同走 F-61 容差（F-78④）
@@ -1537,7 +1551,17 @@ def _row_result(b, rb, aset, d, mag_system, mode_eff, s_anchor, h_map,
             var_in = (m_stat or 0.0) ** 2 + (float(row_a['mag_err'] or 0.0)) ** 2
             var = (errs.delta_m_var_anchored(var_in, h_map[b]) if participating
                    else var_in + v_kappa if mode_eff == 'anchored' else var_in)
-            d_m_err = math.sqrt(var)
+            if var < 0:
+                # GLS 杠杆 h_i = f_i(C⁻¹f)_i/(fᵀC⁻¹f) 只保证 Σh_i=1，相关噪声下
+                # 单个 h_i 可 >1 ⇒ (1−h_i)·var_in 为负：按 TXT-23 纪律 null + 书面
+                # 原因，不让 sqrt(负数) 变 500、也不用 0 冒充（2026-10-05 审查 SP-B）。
+                d_m_err = None
+                warns.append({'code': 'CA-15', 'reason': 'delta_m_var_negative',
+                              'message': '杠杆收缩后 delta_m 方差为负（杠杆 h_i>1，'
+                                         '相关噪声下可出现）：delta_m_err 按 null 出，'
+                                         '不用 0 冒充（TXT-23）'})
+            else:
+                d_m_err = math.sqrt(var)
             if row_a['mag_err'] is None:
                 # §4.2 delta_m 行：m_obs 来自手加锚点而无 mag_err ⇒ delta_m_err
                 # 只含合成侧一项，并写明缺输入 σ（TXT-23）。
@@ -1590,8 +1614,9 @@ def _row_result(b, rb, aset, d, mag_system, mode_eff, s_anchor, h_map,
             'interp': 'linear_T_on_spec', 'weighting': integ['weighting'],
             'band_mode': integ['band_mode'], 'mag_system': mag_system,
             'mag': mag, 'f_mjy': f_mjy,
-            'mag_err_stat': m_stat if sane else None, 'mag_err_cal': m_cal if sane else None,
-            'mag_err_resp': rb['mag_err_resp'] if sane else None, 'f_err_mjy': f_err,
+            'mag_err_stat': m_stat if mag_available else None,
+            'mag_err_cal': m_cal if mag_available else None,
+            'mag_err_resp': rb['mag_err_resp'] if mag_available else None, 'f_err_mjy': f_err,
             'sigma_method': sig_method, 'rho_lag1': rho, 'corr_infl': infl,
             'not_in_budget': list(errs.NOT_IN_BUDGET),
             'lambda_pivot_aa': integ['lambda_pivot_aa'],

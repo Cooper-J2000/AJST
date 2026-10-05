@@ -101,7 +101,17 @@ def resolve_mode(mode_requested, uncal_kind, *, flux_scale_suspect=False,
     if mode_requested == 'auto':
         if direct_ok:
             return {'mode_effective': 'direct', 'warnings': []}
-        mode_requested = 'anchored' if anchors_available >= 1 else 'model'
+        if anchors_available >= 1:
+            mode_requested = 'anchored'
+        elif model_available:
+            mode_requested = 'model'
+        else:
+            # auto 无路可走：以前落到 model 报 E-13 feature_disabled（501），
+            # 文案还是期次闸门措辞，用户无从行动。改为 E-10/409 指明可行下一步。
+            raise SpecLoadError('E-10', 'auto 定标无可用路径：谱非绝对流量（或流量'
+                                '量级不可信）、无可配对实测锚点、也未携带 S2 '
+                                'use_model——可手加锚点或先做 S2 连续谱拟合',
+                                status=409, reason='auto_no_calibration_path')
     if mode_requested == 'anchored':
         if anchors_available < 1:
             raise SpecLoadError('E-10', '无可配对实测点，anchored 需要至少 1 个锚点',
@@ -109,7 +119,7 @@ def resolve_mode(mode_requested, uncal_kind, *, flux_scale_suspect=False,
         return {'mode_effective': 'anchored', 'warnings': []}
     # model：§3.3 model 行——用 S2 模型曲线代替观测谱；无 use_model ⇒ 未开放
     if not model_available:
-        raise SpecLoadError('E-13', 'model 定标依赖 S2 模型拟合（P2 开放）',
+        raise SpecLoadError('E-13', 'model 定标需携带 use_model（S2 拟合结果）',
                             details={'phase': 'P2'})
     return {'mode_effective': 'model', 'warnings': []}
 
