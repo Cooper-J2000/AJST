@@ -66,7 +66,7 @@ import time
 import numpy as np
 from flask import jsonify, request
 
-from app import get_session, require_auth
+from app import get_session
 from models import FilterDef, Lightcurve, Transient
 import coords
 import extinction
@@ -614,7 +614,6 @@ def _model_curve(ls, defs, bands, um):
 # ─── API-2 ───────────────────────────────────────────────────────────────
 
 @specphot_bp.route('/photometry', methods=['POST'])
-@require_auth
 def photometry():
     if not _compute_gate.acquire(blocking=False):
         return _err('server_busy', '已有计算在跑，请稍后重试',

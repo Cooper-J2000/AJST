@@ -46,7 +46,6 @@ import time
 import numpy as np
 from flask import jsonify, request
 
-from app import require_auth
 
 from . import (specphot_bp, SPEC_PHOT_VERSION, _compute_gate, _err,
                _load_error_response, _result_cache, _cache_lock)
@@ -417,7 +416,6 @@ def _union_segs(segs):
 # ─── API-4 ───────────────────────────────────────────────────────────────
 
 @specphot_bp.route('/line', methods=['POST'])
-@require_auth
 def line():
     if not _compute_gate.acquire(blocking=False):
         return _err('server_busy', '已有计算在跑，请稍后重试',

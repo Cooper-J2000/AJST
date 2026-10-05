@@ -17,7 +17,6 @@ import re
 
 from flask import jsonify, request
 
-from app import require_auth
 
 from . import (specphot_bp, SPEC_PHOT_VERSION, _compute_gate, _err,
                _load_error_response)
@@ -53,7 +52,6 @@ def _decode_fits_payload(body):
 
 
 @specphot_bp.route('/parse', methods=['POST'])
-@require_auth
 def parse():
     if not _compute_gate.acquire(blocking=False):
         return _err('server_busy', '已有计算在跑，请稍后重试',

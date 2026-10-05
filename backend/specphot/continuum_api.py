@@ -24,7 +24,6 @@ import time
 import numpy as np
 from flask import jsonify, request
 
-from app import require_auth
 from sedfit import laws as _host_laws          # F-88③：_NOMINAL_RV/_INTRINSIC_RV 实测值
 from sedfit.models import _dl_cm as _host_dl_cm   # 宿主纯计算件（Planck18，F-27 复用）
 
@@ -239,7 +238,6 @@ def _arbitrate_best(best, comparable, ftest):
 # ─── API-3 ───────────────────────────────────────────────────────────────
 
 @specphot_bp.route('/continuum', methods=['POST'])
-@require_auth
 def continuum():
     if not _compute_gate.acquire(blocking=False):
         return _err('server_busy', '已有计算在跑，请稍后重试',

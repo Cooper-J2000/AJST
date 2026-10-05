@@ -13,7 +13,7 @@ import time
 
 from flask import jsonify, request
 
-from app import get_session, require_auth
+from app import get_session
 from models import Spectrum, FilterDef, Lightcurve, Transient
 import coords
 import extinction
@@ -195,7 +195,6 @@ def health():
 # ─── API-8：按坐标查 E(B−V)（A-8：全站第一个按坐标的消光端点） ─────────
 
 @specphot_bp.route('/ebv', methods=['POST'])
-@require_auth
 def ebv():
     body = request.get_json(force=True, silent=True)
     if not isinstance(body, dict):
