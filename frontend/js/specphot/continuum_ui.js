@@ -205,6 +205,9 @@ export function renderS2Panel(el, ctx) {
       <button class="btn btn-outline-secondary btn-sm sp-cexppng" ${!deredReady || computing ? 'disabled' : ''}
         title="${escAttr(csvTitle.replace('CSV', 'PNG'))}">导出 PNG（双谱图，含 TXT-22 图注）</button>
       <span class="text-secondary">S2 拟合（API-3）；掩膜与预处理通道与 S1 同源（F-107③）</span></div>
+    <div class="mt-1 text-warning small">${esc(S.busyNotice || '')}</div>
+    <div class="mt-1 text-warning small">${esc(S.featureNotice || '')}</div>
+    <div class="mt-1 text-danger small" role="alert">${esc(S.errorMsg || '')}</div>
     <div class="mt-1 ${missing.length ? 'text-warning' : 'text-success'}">缺项清单（IA-16）：${missing.length
       ? '<ul class="mb-0">' + missing.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>' : '无，可以计算'}</div>
   </div></div>`;

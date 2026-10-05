@@ -224,6 +224,9 @@ export function renderLinesPanel(el, ctx) {
       <button class="btn btn-outline-secondary btn-sm sp-lexpjson" ${!S.lastLines || computing ? 'disabled' : ''}
         title="U-17/F-44：API-4 响应原文">导出 JSON</button>
     </div>
+    <div class="mt-1 text-warning small">${esc(S.busyNotice || '')}</div>
+    <div class="mt-1 text-warning small">${esc(S.featureNotice || '')}</div>
+    <div class="mt-1 text-danger small" role="alert">${esc(S.errorMsg || '')}</div>
     <div class="mt-1 ${missing.length ? 'text-warning' : 'text-success'}">缺项清单（IA-16）：${missing.length
       ? '<ul class="mb-0">' + missing.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>' : '无，可以计算'}</div>
   </div></div>`;
