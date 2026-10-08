@@ -45,18 +45,26 @@ scripts: 新增 preflight 预检（8 组护栏，对应已踩过的坑）
 
 ## 3. 可选 trailer（多 agent 场景建议带）
 
-```
+```text
 core: lightcurves MJD 权威时间列（v2.23）
 
 动机：time 是画图缓存列，mjd 才是权威时间，写入必须联动。
-验收：scripts/acceptance/run_all.sh → 236 passed
+
+Verified: scripts/acceptance/run_all.sh → 236 passed
 Agent: hermes
 ```
 
 - `Agent: hermes | kimi-code | opencode` —— 谁改的。多 agent 并行时这是唯一的归因线索。
-  trailer 块前**必须空一行**，否则 git 不认它是 trailer（2026-10-02 实测：同批四条提交里
-  只有末条被 `git log --format='%(trailers)'` 认出）。
-- `验收:` / `Verified:` —— 改完实际跑过的命令与结果。写**真实输出**，不写"应该没问题"。
+- `Verified:` —— 改完实际跑过的命令与结果。写**真实输出**，不写"应该没问题"。
+- **trailer 块的硬性规则（2026-10-08 实测补正）**：
+  1. `token` 与分隔冒号都必须是 **ASCII**：`Verified:` ✅；`验收：` ❌、`Verified：`（全角冒号）❌。
+     这类行会让**整块 trailer 被 git 静默忽略**——不是"时灵时不灵"，是整块失效。历史提交
+     `05d218a` / `8363aef` 的 trailer 就因此没被 `%(trailers)` 读出；`d64794f` 的
+     `Agent: kimi-code` 因单独成段而正常。
+  2. trailer 块必须是**最后一个段落**，块前**空一行**，且**块内每一行都得是 trailer**：
+     正文（如 `动机：…`）若与 trailer 同段，会把整块带塌；正文请用空行与 trailer 段隔开。
+  3. 续行（行首带空白）会并入上一条 trailer；同一条 trailer 的多行不要用空行分隔。
+- 核对：`git log -1 --format='%(trailers)'` 有输出即认；或 `git interpret-trailers --parse < 消息`。
 
 ## 4. 检查在哪
 
