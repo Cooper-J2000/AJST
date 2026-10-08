@@ -292,7 +292,10 @@ window.lcEditStart = (id) => {
         <option value="" ${val === '-' ? 'selected' : ''}>-</option>
       </select>`;
     } else {
-      cell.innerHTML = `<input type="text" class="form-control form-control-sm lc-edit-input" data-field="${field}" value="${val === '-' ? '' : escAttr(val)}" style="width:90px">` +
+      // time/mjd 记「用户是否手改」（data-src="user"）：保存时未手改的 MJD 不提交，
+      // 交由服务端按 time 反算，避免「mjd 列权威」把用户对 time 的改动压掉
+      const srcAttr = (field === 'time' || field === 'mjd') ? ' oninput="this.dataset.src=\'user\'"' : '';
+      cell.innerHTML = `<input type="text" class="form-control form-control-sm lc-edit-input" data-field="${field}" value="${val === '-' ? '' : escAttr(val)}" style="width:90px"${srcAttr}>` +
         (field === 'mjd' ? `<div class="small text-secondary text-nowrap">MJD 与相对秒数可互算，填其一即可</div>` : '');
     }
     editing = true;
@@ -320,9 +323,15 @@ window.lcEditSave = async (id) => {
   if (!row) return;
   const inputs = row.querySelectorAll('.lc-edit-input');
   const body = {};
+  // 用户改了 time、但没手改 MJD 时省略 MJD 提交：源有 T0 时服务端会用 time 反算 MJD，
+  // 从而不把 time 的改动压掉。无 T0（无法反算）或用户手改了 MJD 时照常提交。
+  const timeEdited = !!row.querySelector('.lc-edit-input[data-field="time"][data-src="user"]');
+  const mjdEdited = !!row.querySelector('.lc-edit-input[data-field="mjd"][data-src="user"]');
+  const omitMjd = _lcT0MJD != null && timeEdited && !mjdEdited;
   inputs.forEach(inp => {
     const field = inp.dataset.field;
     let val = inp.value.trim();
+    if (field === 'mjd' && omitMjd) return;
     if (field === 'host_subtracted') {
       body[field] = val === 'null' ? null : val === 'true';
     } else if (['upperlimit', 'gext_corr', 'discard'].includes(field)) {
@@ -355,8 +364,9 @@ window.lcAddNewRow = () => {
   if (!tbody) return;
   // 波段候选：滤光片 id（按波长排序）+ 本源已有波段名去重
   const bandCands = [...new Set([...getFilterIdsSorted(), ...lcItems.map(p => p.band).filter(Boolean)])];
+  // time 的乘积因子变动 → 重新补算 MJD（修复「先填 time、后改因子不换算」）
   const tfacSelect = (field) =>
-    `<select class="form-select form-select-sm lc-new-tfac" data-for="${field}" style="width:82px" title="输入值乘以此因子后以秒入库">` +
+    `<select class="form-select form-select-sm lc-new-tfac" data-for="${field}" style="width:82px" title="输入值乘以此因子后以秒入库"${field === 'time' ? ' onchange="lcNewTimeSync(this)"' : ''}>` +
     LC_NEW_TFACS.map(([v, label]) => `<option value="${v}" ${v === 1 ? 'selected' : ''}>${label}</option>`).join('') +
     `</select>`;
   const tr = document.createElement('tr');
@@ -382,9 +392,11 @@ window.lcAddNewRow = () => {
         LC_NEW_UNITS.map(u => `<option value="${escAttr(u)}" ${u === 'mJy' ? 'selected' : ''}>${esc(u)}</option>`).join('') +
         `</select>`;
     } else if (f === 'time' || f === 'time_err') {
-      input = `<div class="d-flex gap-1 align-items-center"><input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="${f}" style="width:80px"${f === 'time' ? ' oninput="lcNewTimeSync(this)"' : ''}>${tfacSelect(f)}</div>`;
+      // time：input 仅记为「用户手填」，change（失焦 / 因子改动）时才补算 MJD（time_err 不参与互换）
+      const tAttrs = f === 'time' ? ' oninput="lcNewFieldInput(this)" onchange="lcNewTimeSync(this)"' : '';
+      input = `<div class="d-flex gap-1 align-items-center"><input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="${f}" style="width:80px"${tAttrs}>${tfacSelect(f)}</div>`;
     } else if (f === 'mjd') {
-      input = `<input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="MJD" style="width:110px" oninput="lcNewTimeSync(this)">` +
+      input = `<input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="MJD" style="width:110px" oninput="lcNewFieldInput(this)" onchange="lcNewTimeSync(this)">` +
         `<div class="small text-secondary text-nowrap">MJD 与相对秒数可互算，填其一即可（源有 T0 时自动互填）</div>`;
     } else {
       input = `<input type="text" class="form-control form-control-sm lc-new-input" data-field="${f}" placeholder="${f}" style="width:90px">`;
@@ -409,36 +421,73 @@ window.lcAddNewCancel = () => {
   if (row) row.remove();
 };
 
-// 新增行 time ↔ MJD 实时互算（仅源有 T0 时）：填一侧、另一侧为空则自动填上另一侧。
-// time 侧按当前乘积因子换算成秒再求 MJD；MJD 侧换算出秒并把因子复位为 x1
-window.lcNewTimeSync = (inp) => {
-  if (_lcT0MJD == null) return;
+// 新增行 time/MJD 联动的「来源」标记：用户手填过的字段 data-src="user"，
+// 由另一侧自动补算出来的字段 data-src="auto"。保存时据此判定权威侧——
+// 用户手填的 time 永远优先，自动补算出的 MJD 绝不高过它。
+window.lcNewFieldInput = (inp) => {
+  inp.dataset.src = 'user';
+  // 清空本字段时，同步清掉「由它自动补算」的另一侧，避免陈旧值被带进提交
   const row = document.getElementById('lcNewRow');
-  const otherField = inp.dataset.field === 'time' ? 'mjd' : 'time';
-  const otherEl = row && row.querySelector(`.lc-new-input[data-field="${otherField}"]`);
-  if (!otherEl || otherEl.value.trim()) return;   // 另一侧已有值不覆盖
-  const v = parseFloat(inp.value);
-  if (!isFinite(v)) return;
-  if (otherField === 'mjd') {
-    const facEl = inp.closest('td')?.querySelector('.lc-new-tfac');
+  if (!row) return;
+  const field = inp.dataset.field;
+  const otherField = field === 'time' ? 'mjd' : (field === 'mjd' ? 'time' : null);
+  if (!otherField || inp.value.trim()) return;
+  const otherEl = row.querySelector(`.lc-new-input[data-field="${otherField}"]`);
+  if (otherEl && otherEl.dataset.src === 'auto') {
+    otherEl.value = '';
+    delete otherEl.dataset.src;
+  }
+};
+
+// 新增行 time ↔ MJD 联动（仅源有 T0 时）：由用户手填的一侧、或 time 的乘积因子变动触发，
+// 补算另一侧；已被用户手填的一侧永不覆盖。补算只在 change（失焦 / 改动）时机做，
+// 不在逐字输入时就填 MJD——避免「time 还没输完，MJD 已被半截值定格」。
+window.lcNewTimeSync = (el) => {
+  if (_lcT0MJD == null || !el) return;
+  const row = document.getElementById('lcNewRow');
+  if (!row) return;
+  let ownField = el.dataset.field;                       // time / mjd 输入框
+  if (!ownField && el.classList.contains('lc-new-tfac')) ownField = el.dataset.for; // time 的因子下拉
+  if (ownField !== 'time' && ownField !== 'mjd') return;
+  const timeEl = row.querySelector('.lc-new-input[data-field="time"]');
+  const mjdEl = row.querySelector('.lc-new-input[data-field="mjd"]');
+  if (!timeEl || !mjdEl) return;
+  if (ownField === 'time') {
+    if (mjdEl.dataset.src === 'user') return;            // 用户手填的 MJD 优先，不覆盖
+    const v = parseFloat(timeEl.value);
+    if (!isFinite(v)) return;
+    const facEl = timeEl.closest('td')?.querySelector('.lc-new-tfac');
     const fac = facEl ? parseFloat(facEl.value) : 1;
     const sec = v * (isFinite(fac) ? fac : 1);
-    otherEl.value = String(Number((_lcT0MJD + sec / 86400).toFixed(6)));
+    mjdEl.value = String(Number((_lcT0MJD + sec / 86400).toFixed(6)));
+    mjdEl.dataset.src = 'auto';
   } else {
-    otherEl.value = String(Number(((v - _lcT0MJD) * 86400).toFixed(3)));
-    const facEl = otherEl.closest('td')?.querySelector('.lc-new-tfac');
+    if (timeEl.dataset.src === 'user') return;           // 用户手填的 time 优先，不覆盖
+    const v = parseFloat(mjdEl.value);
+    if (!isFinite(v)) return;
+    timeEl.value = String(Number(((v - _lcT0MJD) * 86400).toFixed(3)));
+    timeEl.dataset.src = 'auto';
+    const facEl = timeEl.closest('td')?.querySelector('.lc-new-tfac');
     if (facEl) facEl.value = '1';   // 自动填的是秒，因子复位 x1 避免二次换算
   }
 };
 
 window.lcAddNewSave = async () => {
-  const inputs = document.querySelectorAll('#lcNewRow .lc-new-input');
+  const row = document.getElementById('lcNewRow');
+  if (!row) return;
+  const inputs = row.querySelectorAll('.lc-new-input');
   if (!inputs.length) return;
   const body = { transient_id: currentTid };
   let missing = false;
+  // MJD 输入非「用户手填」（空、或由 time 自动补算而来）时不提交：
+  // 交由服务端按 time × 因子反算 MJD。这样用户手填的 time 始终是权威侧，
+  // 「mjd 列优先级更高」只在用户确实手填了 MJD 时才生效。
+  const mjdEl = row.querySelector('.lc-new-input[data-field="mjd"]');
+  const mjdHandFilled = !!mjdEl && mjdEl.dataset.src === 'user';
   inputs.forEach(inp => {
     const field = inp.dataset.field;
     let val = inp.value.trim();
+    if (field === 'mjd' && !mjdHandFilled) return;
     if (!val && ['band', 'flux_density', 'flux_density_unit'].includes(field)) {
       missing = true;
       return;
