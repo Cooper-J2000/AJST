@@ -52,7 +52,10 @@ git add -A && git commit -m "data: …（vX.YZ）" && git push
 ```
 代码改动同理，在代码仓库根提交推送（格式见 `docs/COMMIT-CONVENTION.md`）。
 
-**合并外部 PR**：`gh pr merge <n> --rebase`；合并后 `git pull --ff-only`。
+**合并外部 PR**：`gh pr merge <n> --merge` —— 统一用 **merge commit**（2026-10-12 维护者裁定）：数据仓库一源一 PR，
+merge commit 让每个源在 main 上是一个**可整块回滚的节点**（`git revert -m 1 <merge>`），`git log --first-parent`
+能逐 PR 扫读；#1–#51 已是此形态（此前本行误写 `--rebase`）。合并后 `git pull --ff-only`（远端若已有他人/Action
+的新提交，用 `git pull --rebase`）。
 
 ## 4. 不进 GitHub 的数据（本地保留）
 
