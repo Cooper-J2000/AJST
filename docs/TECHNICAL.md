@@ -102,7 +102,7 @@
 | `time` | FLOAT | **统一以秒为单位**；相对 T0 的秒数**画图加速缓存**（v2.23 起权威时间为 `mjd`，可随时由 mjd 重算覆盖） |
 | `time_err` | FLOAT | 时间误差（秒） |
 | `time_unit` | VARCHAR(8) | 固定为 `s`（ETL 自动统一） |
-| `mjd` | FLOAT | **观测时间的唯一权威依据**（v2.23 新增，可空；源无 T0 时为 NULL、time 维持原值） |
+| `mjd` | FLOAT | **观测时间的唯一权威依据**（v2.23 新增，可空；源无 T0 时为 NULL、time 维持原值）。数据文件里由 `T0 + time` 换算的 `mjd` 须**保留 7 位小数**（4–5 位小数的舍入会造成与 `time` 差数秒，违反 L3 不变量；契约见 AJST-Data `SCHEMA.md` §3，`tools/validate.py` 在 PR 阶段按警告级拦截） |
 | `band` | VARCHAR(32) | 波段标识 |
 | `flux_density` | FLOAT | **原始值**（星等或流量密度，不强制转换） |
 | `flux_density_err` | FLOAT | 原始误差 |
@@ -319,7 +319,7 @@ time,time_err,time_unit,mjd,band,flux_density,flux_density_err,flux_density_unit
 ```
 
 注意：CSV 中的单位是**原始单位**，导入时仅时间统一为秒，流量/星等保留原始单位入库。
-`mjd` 列（v2.23 新增，`time_unit` 之后）是观测时间的**唯一权威依据**；旧 CSV 无此列可正常导入（导入时按 t0+time/86400 补齐），给 mjd 不给 time 时也会自动重算 time。
+`mjd` 列（v2.23 新增，`time_unit` 之后）是观测时间的**唯一权威依据**；旧 CSV 无此列可正常导入（导入时按 t0+time/86400 补齐），给 mjd 不给 time 时也会自动重算 time。**数据文件里由 `T0 + time` 换算的 `mjd` 保留 7 位小数**（≈8.6 ms）；若 `mjd` 直接来自来源则按其精度写。该口径由数据仓库 `tools/validate.py`（警告级）与三层验收的 L3 不变量（`test_time_agrees_with_mjd_and_t0`，容差 1 s）两头守着。
 
 ---
 
