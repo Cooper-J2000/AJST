@@ -279,6 +279,7 @@ window.saveDetailEdit = async () => {
     redshift_type: val('editZType') || null,
     redshift_ref: val('editZRef'),
     pos_error: num('editPosErr'),
+    pos_error_confidence: val('editPosErrConf'),
     pos_ref: val('editPosRef'),
     comment: val('editComment'),
     trigger_instrument: val('editTrigger'),

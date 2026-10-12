@@ -263,6 +263,7 @@ def import_one_transient(sess, tid):
         t.redshift_ref = data.get('redshift_ref')
         t.pos_error = parse_float(data.get('pos_error'))
         t.pos_error_unit = data.get('pos_error_unit') or 'arcsec'
+        t.pos_error_confidence = data.get('pos_error_confidence')
         t.pos_ref = data.get('pos_ref')
         t.tags = data.get('tag') or []
         t.aliases = data.get('alias') or []
@@ -285,6 +286,7 @@ def import_one_transient(sess, tid):
             redshift_type=data.get('redshift_type'), redshift_ref=data.get('redshift_ref'),
             pos_error=parse_float(data.get('pos_error')),
             pos_error_unit=data.get('pos_error_unit') or 'arcsec',
+            pos_error_confidence=data.get('pos_error_confidence'),
             pos_ref=data.get('pos_ref'), tags=data.get('tag') or [],
             aliases=data.get('alias') or [], comment=data.get('comment'),
             sub_tag=data.get('sub_tag') or [],
@@ -659,6 +661,7 @@ def from_dump(sess, prune=False, prune_force=False):
             'comment': t.comment,
             'sub_tag': t.sub_tag or [],
             'pos_error_unit': t.pos_error_unit or 'arcsec',
+            'pos_error_confidence': t.pos_error_confidence,
             'extra_data': t.extra_data or None,
         }
         # 研究文章一并落盘（articles 字段始终写入，空列表表示该源无文章，

@@ -177,9 +177,22 @@ def test_transient_detail_round_trip(client):
     tid = first['id']
     detail = _json(client.get(f'/api/transients/{tid}'))
     assert detail['id'] == tid
-    for k in ('ra', 'dec', 'lc_count'):
+    for k in ('ra', 'dec', 'lc_count', 'pos_error_confidence'):
         assert k in detail, f'详情缺字段 {k}'
     assert detail['lc_count'] == first['lc_count']
+
+
+def test_pos_error_confidence_is_controlled(client):
+    """v2.36：定位误差置信水平必须在列表与详情都出现，且取值受限（90/68/3sigma/1sigma 或 null）"""
+    allowed = (None, '90', '68', '3sigma', '1sigma')
+    items = _json(client.get('/api/transients?per_page=50'))['items']
+    assert items, '库里没有源'
+    for it in items:
+        assert 'pos_error_confidence' in it, '列表缺 pos_error_confidence 字段'
+        assert it['pos_error_confidence'] in allowed, \
+            f"{it['id']} 的 pos_error_confidence={it['pos_error_confidence']!r} 不在受控取值内"
+    detail = _json(client.get(f"/api/transients/{items[0]['id']}"))
+    assert 'pos_error_confidence' in detail, '详情缺 pos_error_confidence 字段'
 
 
 def test_spectrum_detail_and_download_round_trip(client):

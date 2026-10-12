@@ -123,6 +123,8 @@ class Transient(Base):
     redshift_ref    = Column(Text, nullable=True)
     pos_error       = Column(Float, nullable=True)
     pos_error_unit  = Column(String(16), default='arcsec')
+    # 定位误差的置信水平（受控取值 90 / 68 / 3sigma / 1sigma；2026-10-12 起，见 AJST-Data SCHEMA §2）
+    pos_error_confidence = Column(String(16), nullable=True)
     pos_ref         = Column(Text, nullable=True)
     gext_ebv        = Column(Float, nullable=True)   # 本坐标处 CSFD 尘图 E(B-V) 缓存（坐标变更时刷新）
     gext_distmod    = Column(Float, nullable=True)  # 红移对应距离模数 μ 缓存（红移变更时刷新）
@@ -176,6 +178,7 @@ class Transient(Base):
             'redshift_ref': self.redshift_ref,
             'pos_error': self.pos_error,
             'pos_error_unit': self.pos_error_unit,
+            'pos_error_confidence': self.pos_error_confidence,
             'pos_ref': self.pos_ref,
             'sub_tag': self.sub_tag or [],
             'tags': self.tags or [],

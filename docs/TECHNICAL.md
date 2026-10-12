@@ -75,9 +75,10 @@
 | `t0_offset_ref` | TEXT | T0 偏移量引用（v2.23 新增，纯元数据） |
 | `trigger_instrument` | VARCHAR(64) | 触发仪器 |
 | `redshift` | FLOAT | 红移值 |
-| `redshift_type` | VARCHAR(16) | `value` / `phot_z` / `spec` / `spec-host` / `upperlimit` |
+| `redshift_type` | VARCHAR(16) | `value` / `phot` / `spec` / `spec-host` / `upperlimit` / `est`（`phot_z` 已于 2026-10-12 归并为 `phot`） |
 | `redshift_ref` | TEXT | 红移引用（GCN 编号等） |
 | `pos_error` | FLOAT | 位置误差 |
+| `pos_error_confidence` | VARCHAR(16) | 位置误差的置信水平，受控取值 `90` / `68` / `3sigma` / `1sigma`（2026-10-12 起；来源未标注则 NULL，见 AJST-Data `SCHEMA.md` §2） |
 | `pos_error_unit` | VARCHAR(16) | 缺省 `arcsec` |
 | `pos_ref` | TEXT | 位置引用 |
 | `gext_ebv` | FLOAT | 该源坐标处 CSFD 尘图 E(B-V) 的**派生缓存**（2026-09-21 起，见 §四）；坐标写入时刷新，不随文件落盘，为 NULL 时改为现查尘图 |
@@ -2409,6 +2410,19 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 ---
 
 ## 十一、版本历史
+
+### v2.36（2026-10-12）— 定位误差置信水平（`pos_error_confidence`）+ 红移类型取值归并
+
+- `transients` 新增列 `pos_error_confidence VARCHAR(16)`（`init_db()` 幂等加列），受控取值
+  `90` / `68` / `3sigma` / `1sigma`；来源未标注置信水平时为 NULL。惯例：高能卫星探测器（Swift/Fermi/IPN）
+  通常 90%，光学设备通常 1σ；来源明确给出时从原文（口径见 AJST-Data `SCHEMA.md` §2 与《数据审核提示词》§3.9）。
+- 全链打通：`models.py`（列 + `to_dict`）、`app.py`（幂等迁移）、`etl.py`（info→库 更新/新建两路 + `--dump` 回写）、
+  `routes/transients.py`（`PUT /api/transients/<id>` 可写该字段）、前端（详情页展示「位置误差（90%）」、
+  编辑面板与新建页新增「误差置信水平」下拉）。
+- 同时归并红移类型取值：`phot_z` → `phot`（7 个 EP 源，库与文件同改），前端下拉与
+  `SCHEMA.md`/`TECHNICAL.md` 的取值表同步为 `value / phot / spec / spec-host / upperlimit / est`。
+- 背景：2026-10-12 审完的 44 个外部审核 PR 集中暴露「定位误差未标置信水平」（5 例），
+  该项经维护者裁定采用「SCHEMA 增加字段」方案（见 `Workplace_Agent/AJST-enrich/20261012/数据审核契约修订提案_20261012.md` B10）。
 
 ### v2.35（2026-10-08）— 数据表「添加记录」time/MJD 交互缺陷修复（半截输入定格 MJD / 改因子不换算）
 

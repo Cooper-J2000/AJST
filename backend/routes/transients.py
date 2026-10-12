@@ -369,7 +369,8 @@ def _apply_transient_fields(t, body):
     if 'dec' in body:
         t.dec = parse_dec(body['dec'])
     for field in ('trigger_instrument', 'redshift_type', 'redshift_ref',
-                  'pos_error_unit', 'pos_ref', 't0_ref', 't0_offset_ref'):
+                  'pos_error_unit', 'pos_error_confidence', 'pos_ref',
+                  't0_ref', 't0_offset_ref'):
         if field in body:
             v = body[field]
             setattr(t, field, str(v) if v not in (None, '') else None)

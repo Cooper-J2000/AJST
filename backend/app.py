@@ -71,6 +71,9 @@ def init_db():
             "ALTER TABLE transients ADD COLUMN IF NOT EXISTS t0_offset DOUBLE PRECISION"))
         conn.execute(text(
             "ALTER TABLE transients ADD COLUMN IF NOT EXISTS t0_offset_ref TEXT"))
+        # 2026-10-12：定位误差置信水平（受控取值 90/68/3sigma/1sigma，见 AJST-Data SCHEMA §2）
+        conn.execute(text(
+            "ALTER TABLE transients ADD COLUMN IF NOT EXISTS pos_error_confidence VARCHAR(16)"))
         # 2026-09-22：光变表新增 MJD 列（观测时间的权威依据；time 为相对 T0 的缓存列）
         conn.execute(text(
             "ALTER TABLE lightcurves ADD COLUMN IF NOT EXISTS mjd DOUBLE PRECISION"))

@@ -61,7 +61,10 @@ export async function render() {
                   <select class="form-select" id="fZType">
                     <option value="">-</option>
                     <option value="value">value</option>
-                    <option value="phot_z">phot_z</option>
+                    <option value="phot">phot</option>
+                    <option value="spec">spec</option>
+                    <option value="spec-host">spec-host</option>
+                    <option value="est">est</option>
                     <option value="upperlimit">upperlimit</option>
                   </select>
                 </div>
@@ -69,11 +72,21 @@ export async function render() {
                   <label class="form-label">红移引用</label>
                   <input type="text" class="form-control" id="fZRef" placeholder="GCN 42939">
                 </div>
-                <div class="col-md-3">
+                <div class="col-md-2">
                   <label class="form-label">位置误差</label>
                   <input type="number" class="form-control" id="fPosErr" step="any" placeholder="0.5">
                 </div>
-                <div class="col-md-3">
+                <div class="col-md-2">
+                  <label class="form-label">误差置信水平</label>
+                  <select class="form-select" id="fPosErrConf">
+                    <option value="">-</option>
+                    <option value="90">90%</option>
+                    <option value="68">68%</option>
+                    <option value="3sigma">3σ</option>
+                    <option value="1sigma">1σ</option>
+                  </select>
+                </div>
+                <div class="col-md-2">
                   <label class="form-label">误差单位</label>
                   <select class="form-select" id="fPosErrUnit">
                     <option value="arcsec">arcsec</option>
@@ -214,6 +227,7 @@ export async function render() {
       redshift_ref: getId('fZRef'),
       pos_error: parseFloatOrNull(getId('fPosErr')),
       pos_error_unit: getId('fPosErrUnit') || 'arcsec',
+      pos_error_confidence: getId('fPosErrConf') || null,
       pos_ref: getId('fPosRef'),
       tags,
       sub_tag: subTags,
