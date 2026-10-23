@@ -5,6 +5,18 @@
 > 公开说明 `README.md`；**技术文档唯一权威源 `docs/TECHNICAL.md`**。历史细节与未发布源名单
 > 都是**本机文件、不入库**（合作者只需 PR 与 git 历史）。
 
+## 0. 铁律（违反即返工；改流程前先读这一节）
+
+1. **合并外部 PR 一律 `gh pr merge <n> --merge`（merge commit），禁止 squash / rebase 合并**（2026-10-12 维护者裁定）。
+   数据仓库一源一 PR，merge commit 让每个源在 main 上是**可整块回滚的节点**：`git revert -m 1 <merge>` 一次撤掉一个源，
+   `git log --first-parent` 能逐 PR 扫读。#1–#51 是该形态；**#52–#83（2026-10-24）曾误用 squash**，维护者已裁定
+   「记档、下批起用 merge commit」，不回溯重写历史（记档见本机报告
+   `docs/ops-history/AJST-Data-PR批次审核-2026-10-24.md`）。细节见 §3。
+2. **真相方向不可反**：平时数据库是权威，网页端改动只写库；发布前必须 `etl.py --dump`。裸 `python3 backend/etl.py`
+   会 TRUNCATE 库再用文件覆盖库（跑前先 `pg_dump` 留底）。见 §2。
+3. **两份 `.gitignore` 自己都不进 git**：换机器 / 新 worktree 后第一件事是按 §6 重建，否则 `git add -A` 会把
+   EP 数据、GCN 存档、备份全部提交（不可逆）。见 §1 / §6。
+
 ## 1. 仓库布局
 
 ```
@@ -52,7 +64,7 @@ git add -A && git commit -m "data: …（vX.YZ）" && git push
 ```
 代码改动同理，在代码仓库根提交推送（格式见 `docs/COMMIT-CONVENTION.md`）。
 
-**合并外部 PR**：`gh pr merge <n> --merge` —— 统一用 **merge commit**（2026-10-12 维护者裁定）：数据仓库一源一 PR，
+**合并外部 PR**（铁律 1，见 §0）：`gh pr merge <n> --merge` —— 统一用 **merge commit**（2026-10-12 维护者裁定）：数据仓库一源一 PR，
 merge commit 让每个源在 main 上是一个**可整块回滚的节点**（`git revert -m 1 <merge>`），`git log --first-parent`
 能逐 PR 扫读；#1–#51 已是此形态（此前本行误写 `--rebase`）。合并后 `git pull --ff-only`（远端若已有他人/Action
 的新提交，用 `git pull --rebase`）。
