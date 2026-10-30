@@ -128,7 +128,7 @@ export function renderLinesPanel(el, ctx) {
   if (step === 1) {
     // F-34：线区候选来自宿主 spec_lines.js 线表（位置标记，M-6 未复核）；U-30 线型必选
     bodyHtml = `
-    <div class="mt-1">线区（F-34/U-24，候选 = 宿主 spec_lines.js，<span title="${escAttr(M6_TIP)}">只作位置标记 ⚠</span>）：
+    <div class="mt-1">线区 <i class="bi bi-info-circle text-secondary" title="${escAttr(M6_TIP)}"></i>
       <select class="form-select form-select-sm w-auto d-inline sp-lng">
         <option value="">手输 / 选组…</option>
         ${SPEC_LINE_GROUPS.filter(g => g.lines && g.hasZ).map(g =>
@@ -138,76 +138,69 @@ export function renderLinesPanel(el, ctx) {
         value="${escAttr(p.species)}" title="${escAttr(M6_TIP)}">
       λ_rest(Å)：<input type="number" step="any" min="0" class="form-control form-control-sm d-inline-block w-auto sp-llam"
         value="${escAttr(p.lambda_rest_aa)}">
-      半宽（F-35，±Å）：<input type="number" step="any" min="1" class="form-control form-control-sm d-inline-block w-auto sp-lhw"
+      半宽 ±Å：<input type="number" step="any" min="1" class="form-control form-control-sm d-inline-block w-auto sp-lhw"
         value="${escAttr(p.halfwidth)}"></div>
-    <div class="mt-1" title="${escAttr(TXT15[p.line_kind] || 'F-66：两类线在连续谱两侧角色相反，未确认不得进步 3（E-09）')}">
-      线型（U-30，必选无默认）：${['emission', 'absorption'].map(k =>
+    <div class="mt-1" title="${escAttr(TXT15[p.line_kind] || '两类线在连续谱两侧角色相反：发射加性 / 吸收乘性（F-66），未确认不得进步 3')}">
+      线型（必选，无默认）：${['emission', 'absorption'].map(k =>
         `<label class="me-2"><input type="radio" name="spLk" class="sp-lkind" value="${k}"
-          ${p.line_kind === k ? 'checked' : ''} ${computing ? 'disabled' : ''}>${k === 'emission' ? '发射 emission' : '吸收 absorption'}</label>`).join('')}
-      <span class="text-secondary small">TXT-15：${esc(TXT15[p.line_kind] || '选定为止——发射加性 / 吸收乘性，角色相反（F-66）')}</span></div>
-    <div class="mt-1">天光处理（U-31）：
+          ${p.line_kind === k ? 'checked' : ''} ${computing ? 'disabled' : ''}>${k === 'emission' ? '发射 emission' : '吸收 absorption'}</label>`).join('')}</div>
+    <div class="mt-1" title="大气吸收带永远只能 mask（F-72①）">天光处理：
       <label class="me-2"><input type="radio" name="spSky" class="sp-lsky" value="mask"
         ${p.sky_handling !== 'subtract' ? 'checked' : ''} ${computing ? 'disabled' : ''}>mask（剔除）</label>
-      <label class="me-2" title="F-86/U-31（P3c 上线）：线窗内命中的天光发射段（C_MASK_EMIS_TABLE 的 [O I] 气辉线）按线形联合线性扣除；失败自动退回 mask + CA-37。大气吸收带永远只能 mask（F-72①）">
+      <label class="me-2" title="线窗内命中的天光发射段（[O I] 气辉线）按线形联合线性扣除；失败自动退回 mask（F-86/U-31）">
         <input type="radio" name="spSky" class="sp-lsky" value="subtract"
-        ${p.sky_handling === 'subtract' ? 'checked' : ''} ${computing ? 'disabled' : ''}>subtract（按线形扣除，F-86）</label>
-      <span class="text-secondary small">大气吸收带永远只能 mask（F-72①）</span></div>`;
+        ${p.sky_handling === 'subtract' ? 'checked' : ''} ${computing ? 'disabled' : ''}>subtract（按线形扣除）</label></div>`;
   } else if (step === 2) {
     const additive = p.line_kind !== 'absorption';
     bodyHtml = `
-    <div class="mt-1">基线形态（W-23：随步 1 的线型同步切换，F-36/F-66）：</div>
+    <div class="mt-1">基线形态（随步 1 线型切换）：
+      <i class="bi bi-info-circle text-secondary" title="EW 符号（F-67）：内部恒算有符号 W_signed，对外 ew_obs_aa=|W| 并回显 ew_signed_aa——${additive ? '发射 > 0' : '吸收 < 0'}。${escAttr(TXT15[p.line_kind] || '')}"></i></div>
     <div class="border-start border-3 ps-2 mt-1 ${additive ? 'text-success' : 'text-primary'}">
       ${additive
-        ? '发射线 = <b>加性</b>基线：F(λ) = C(λ) + L(λ)，L ≥ 0；线区外残差 F−C 应回到 0；line_flux = ∫(F−C)dλ。'
-        : '吸收线 = <b>乘性</b>基线：F(λ) = C(λ)·[1 − r(λ)]，0 ≤ r ≤ 1；线区外残差 F/C−1 应回到 0；depth = 1−F/C（线心）。'}</div>
-    <div class="mt-1 small text-secondary">EW 符号（F-67）：内部恒算有符号 W_signed，对外 ew_obs_aa=|W| 并同时回显
-      line_kind 与 ew_signed_aa——${additive ? '发射 > 0' : '吸收 < 0'}；${esc(TXT15[p.line_kind] || '')}</div>
-    <div class="mt-1">基线阶数（U-25/F-36，Chebyshev·lnλ，每侧 25 点、2 次 σ 裁剪——服务端钉死 C_BASE_SIDE/C_BASE_ITER）：
+        ? '发射线 = <b>加性</b>基线：F(λ) = C(λ) + L(λ)，L ≥ 0；line_flux = ∫(F−C)dλ。'
+        : '吸收线 = <b>乘性</b>基线：F(λ) = C(λ)·[1 − r(λ)]，0 ≤ r ≤ 1；depth = 1−F/C（线心）。'}</div>
+    <div class="mt-1" title="Chebyshev·lnλ 基线，每侧 25 点、2 次 σ 裁剪（服务端钉死）">基线阶数
       <input type="number" min="0" max="${C_POLY_ORDER_MAX}" step="1"
         class="form-control form-control-sm d-inline-block w-auto sp-lorder" value="${escAttr(p.baseline_order)}"
-        ${computing ? 'disabled' : ''}></div>
-    <div class="mt-1 small text-secondary">掩膜段与预处理通道与 S1/S2 同源（F-107③，F-113①）：当前 ${S.maskRanges.length} 段手输/框选掩膜随请求携带。</div>`;
+        ${computing ? 'disabled' : ''}></div>`;
   } else {
     bodyHtml = `
-    <div class="mt-1">轮廓（U-26）：${PROFILES.map(k =>
+    <div class="mt-1">轮廓 ${PROFILES.map(k =>
       `<label class="me-2"><input type="radio" name="spLp" class="sp-lprof" value="${k}"
         ${p.profile === k ? 'checked' : ''} ${computing ? 'disabled' : ''}>${k}</label>`).join('')}
-      <label class="me-2 text-secondary" title="Q-21/F-39/U-26：全库无仪器分辨率 R（r_source='none'，前置 M-4：导入 FITS 携带 R/误差列）⇒ voigt 禁用（后端 E-14 voigt_disabled_no_r，T-22）；宽度只能作观测宽度报告（TXT-8/CA-08）">
-        <input type="radio" disabled>voigt（禁用：无 R，前置 M-4）</label></div>
-    <div class="mt-1">R（U-27，留空 = 无仪器分辨率）：<input type="number" step="any" min="0"
+      <label class="me-2 text-secondary" title="全库无仪器分辨率 R（前置 M-4）⇒ voigt 禁用；宽度只能作观测宽度报告（TXT-8/CA-08）">
+        <input type="radio" disabled>voigt（禁用：无 R）</label></div>
+    <div class="mt-1" title="留空 = 无仪器分辨率 ⇒ 宽度按观测宽度报告（TXT-8）">R
+      <input type="number" step="any" min="0"
       class="form-control form-control-sm d-inline-block w-auto sp-lR" value="${escAttr(p.R)}"
-      ${computing ? 'disabled' : ''}>
-      <span class="text-secondary small" title="TXT-8：${escAttr(TXT8)}">空值 ⇒ CA-08 + TXT-8（观测宽度）</span></div>
-    <div class="mt-1">line_frame（F-38/M-6，逐条核对后填）：
+      ${computing ? 'disabled' : ''}></div>
+    <div class="mt-1">line_frame
       <select class="form-select form-select-sm w-auto d-inline sp-lframe" ${computing ? 'disabled' : ''}>
         ${[['', 'null（未核对——vel_* 禁用）'], ['air', 'air（空气）'], ['vacuum', 'vacuum（真空）']]
           .map(([v, t]) => `<option value="${v}" ${(p.line_frame || '') === v ? 'selected' : ''}>${t}</option>`).join('')}
-      </select> <span class="text-secondary small" title="${escAttr(M6_TIP)}">⚠ M-6 未复核</span></div>
-    <div class="mt-1">z 覆写（Q-12，留空 = 谱记录/默认 0）：<input type="number" step="any" min="0"
+      </select> <span class="text-secondary small" title="${escAttr(M6_TIP)}">⚠ 线表帧未复核（M-6）</span></div>
+    <div class="mt-1" title="留空 = 谱记录 / 默认 0">z 覆写 <input type="number" step="any" min="0"
       class="form-control form-control-sm d-inline-block w-auto sp-lz" value="${escAttr(p.z)}" ${computing ? 'disabled' : ''}></div>
-    <div class="mt-1">n_boot（Q-15，≤${C_MAX_BOOT}）：<input type="number" min="1" max="${C_MAX_BOOT}" step="1"
+    <div class="mt-1">n_boot（≤${C_MAX_BOOT}）<input type="number" min="1" max="${C_MAX_BOOT}" step="1"
       class="form-control form-control-sm d-inline-block w-auto sp-lnb" value="${escAttr(p.n_boot)}" ${computing ? 'disabled' : ''}>
-      err_seed（Q-35，留空 = spec_hash 派生）：<input type="number" step="1"
+      err_seed <input type="number" step="1" title="留空 = spec_hash 派生"
       class="form-control form-control-sm d-inline-block w-auto sp-lseed" value="${escAttr(p.err_seed)}" ${computing ? 'disabled' : ''}></div>
-    <div class="mt-1 text-secondary" title="${escAttr(M6_TIP + ' W-25：任何 vel_* 强提交返回 E-14。')}">
-      <label><input type="checkbox" class="form-check-input sp-lvel" disabled> velocity_output（禁用）</label>
-      —— M-6 线表帧未复核 ⇒ vel_shift/vel_fwhm/z_fit 恒 null（W-25①② 两道独立的门，E-14）</div>
-    <div class="mt-1" title="${escAttr(U48_TIP)}">吸收系统 / 阻尼翼（U-48，只随 API-4 提交，F-105③）：
+    <div class="mt-1 text-secondary" title="${escAttr(M6_TIP)}">
+      <label><input type="checkbox" class="form-check-input sp-lvel" disabled> velocity_output</label>
+      禁用：M-6 线表帧未复核 ⇒ vel_* 恒 null</div>
+    <div class="mt-1" title="${escAttr(U48_TIP)}">吸收系统 / 阻尼翼（只随计算提交）
       <label class="me-2"><input type="checkbox" class="form-check-input sp-u48" data-k="absorber_ident"
-        ${p.absorber_ident ? 'checked' : ''} ${computing ? 'disabled' : ''}>absorber_ident（F-98）</label>
-      <label class="me-2" title="${p.absorber_ident ? (nOr(p.R) == null ? 'F-69：R 不可得（r_source=\'none\'）⇒ wing_logn 禁用——阻尼翼的形状需要仪器宽度' : 'F-99/F-100：红侧翼的 Voigt 剖面拟合（z/b 钉住）+ 双连续谱族对照') : 'W-35：未勾 absorber_ident 时禁用（依赖摆出来，不静默连带开启）'}">
+        ${p.absorber_ident ? 'checked' : ''} ${computing ? 'disabled' : ''}>absorber_ident</label>
+      <label class="me-2" title="${p.absorber_ident ? (nOr(p.R) == null ? 'R 不可得 ⇒ 禁用：阻尼翼的形状需要仪器宽度（F-69）' : '红侧翼的 Voigt 剖面拟合（z/b 钉住）+ 双连续谱族对照（F-99/F-100）') : '需先勾 absorber_ident（不静默连带开启）'}">
         <input type="checkbox" class="form-check-input sp-u48" data-k="wing_logn"
-        ${p.wing_logn ? 'checked' : ''} ${(!p.absorber_ident || nOr(p.R) == null || computing) ? 'disabled' : ''}>wing_logn（F-99/F-100${nOr(p.R) == null ? '，禁用：无 R（F-69）' : ''}）</label>
-      <label class="me-2" title="${p.absorber_ident ? 'F-104：饱和/未分辨方向判定（sat_flag 只由被链接线行 depth 导出）' : 'W-35：未勾 absorber_ident 时禁用'}">
+        ${p.wing_logn ? 'checked' : ''} ${(!p.absorber_ident || nOr(p.R) == null || computing) ? 'disabled' : ''}>wing_logn${nOr(p.R) == null ? '（禁用：无 R）' : ''}</label>
+      <label class="me-2" title="${p.absorber_ident ? '饱和/未分辨方向判定（sat_flag 由被链接线行 depth 导出，F-104）' : '需先勾 absorber_ident'}">
         <input type="checkbox" class="form-check-input sp-u48" data-k="metal_sat_check"
-        ${p.metal_sat_check ? 'checked' : ''} ${(!p.absorber_ident || computing) ? 'disabled' : ''}>metal_sat_check（F-104）</label>
-      <span class="text-secondary small">前置 M-4+M-6 缺 ⇒ 输出降级（null + 书面原因）；TXT-25 恒显于结果卡。</span></div>
-    <div class="mt-1 small text-secondary">TXT-8：${esc(TXT8)}</div>`;
+        ${p.metal_sat_check ? 'checked' : ''} ${(!p.absorber_ident || computing) ? 'disabled' : ''}>metal_sat_check</label></div>`;
   }
   el.innerHTML = `<div class="card mb-3">
     <div class="card-header d-flex align-items-center py-2">③ 参数（S3）
-      <span class="ms-2 fw-normal">${stepBar}</span>${staleBadge}
-      <span class="ms-auto small text-secondary fw-normal">S3 谱线测量（API-4，P3 切片 2）</span></div>
+      <span class="ms-2 fw-normal">${stepBar}</span>${staleBadge}</div>
     <div class="card-body py-2 small">
     ${bodyHtml}
     <hr class="my-2"><strong>⑤ 动作</strong>
@@ -227,8 +220,8 @@ export function renderLinesPanel(el, ctx) {
     <div class="mt-1 text-warning small">${esc(S.busyNotice || '')}</div>
     <div class="mt-1 text-warning small">${esc(S.featureNotice || '')}</div>
     <div class="mt-1 text-danger small" role="alert">${esc(S.errorMsg || '')}</div>
-    <div class="mt-1 ${missing.length ? 'text-warning' : 'text-success'}">缺项清单（IA-16）：${missing.length
-      ? '<ul class="mb-0">' + missing.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>' : '无，可以计算'}</div>
+    <div class="mt-1 ${missing.length ? 'text-warning' : 'text-success'}">${missing.length
+      ? '缺项：<ul class="mb-0">' + missing.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>' : '✓ 可以计算'}</div>
   </div></div>`;
   // 事件（改动 ⇒ 标需重算：步 1 的线区/线型决定步 2/3 的口径，U-23）
   const markStale = () => { S.lineStale = true; ctx.dirty(); };

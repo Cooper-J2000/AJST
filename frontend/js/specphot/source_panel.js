@@ -111,8 +111,6 @@ function renderPanel() {
         <div class="form-check form-check-inline mb-0">
           <input class="form-check-input sp-src" type="radio" name="spSrc" value="${v}" ${kind === v ? 'checked' : ''}>
           <label class="form-check-label">${label}</label></div>`).join('')}
-      <span class="ms-auto"></span>
-      ${prov && S.tid ? `<a class="btn btn-sm btn-outline-secondary" href="#/transient/${escAttr(S.tid)}">回到该源详情（U-43）</a>` : ''}
     </div>
     <div class="card-body py-2">
     ${kind === 'catalog' ? `
@@ -120,21 +118,22 @@ function renderPanel() {
         <div class="col-md-6">
           <input class="form-control form-control-sm sp-selspec" list="spSpecList" autocomplete="off"
             placeholder="输入源名 / #id / 仪器 / 日期筛选库内谱…"
-            title="U-34：宿主 GET /api/spectra 全库清单；输入即筛选候选，选中（或直填 #id）后装载">
+            title="输入即筛选候选，选中（或直填 #id）后装载">
           <datalist id="spSpecList"></datalist>
           <div class="small text-danger sp-selhint mt-1" hidden></div>
         </div>
         <div class="col-md-6 small text-secondary">
           ${prov ? `#${esc(prov.spectrum_id)} · ${prov.n_points} 点 · 可配对锚点 ${prov.n_catalog_anchors} · `
             + `median|F|=${prov.flux_median_cgs != null ? prov.flux_median_cgs.toExponential(3) : '—'} cgs · `
-            + `flux_type=${esc(prov.flux_type || '—')}/u_fluxes=${esc(prov.u_fluxes || '—')}` : '选择一条谱以回填元数据'}
+            + `flux_type=${esc(prov.flux_type || '—')}/u_fluxes=${esc(prov.u_fluxes || '—')}` : ''}
         </div>
       </div>` : ''}
 
     ${kind === 'upload' ? `
       <div class="mt-1">
         <input type="file" class="form-control form-control-sm sp-file" accept=".txt,.csv,.dat,.fits,.fit,.ecsv">
-        <div class="small text-secondary">2/3 列文本（波长Å 流量 [误差]）、逗号或空白分隔、# 注释与 # key: value 头（与宿主同语法，F-75）；也接受 .fits（BINTABLE 表或一维线性 WCS 谱）与 .ecsv（astropy ECSV）—— λ 单位按 TUNIT/列单位换算成 Å，元数据头键同文本集（F-76 P2+）。</div>
+        <div class="small text-secondary">文本（λ Å, Fλ[, 误差]）/ .fits / .ecsv
+          <i class="bi bi-info-circle" title="2/3 列文本，逗号或空白分隔，支持 # 注释与 # key: value 头；.fits 收 BINTABLE 表或一维线性 WCS 谱，.ecsv 收 astropy ECSV；λ 单位按 TUNIT/列单位换算成 Å"></i></div>
       </div>` : ''}
     ${kind === 'paste' ? `
       <div class="mt-1">
@@ -152,12 +151,12 @@ function renderPanel() {
       ${(up.warnings || []).length ? `<div class="mt-1">解析告警：${up.warnings.map(w =>
         `<span class="badge bg-warning text-dark me-1" title="${escAttr(w.message || '')}"
           data-code="${escAttr(w.code || '')}">${esc(w.code || '')}${w.reason ? '·' + esc(w.reason) : ''}</span>`).join('')}</div>` : ''}
-      <div class="small text-warning mt-1">⚠ ${TXT.t18}当前件：up:${esc(String(up.spec_hash || '').slice(0, 8))}，${up.n_points} 点，覆盖 ${up.lam_min ?? '—'}–${up.lam_max ?? '—'} Å。</div>`
+      <div class="small text-warning mt-1">⚠ ${TXT.t18}</div>`
       : (kind === 'upload' || kind === 'paste') && S.parseError ? `<div class="small text-danger mt-1" id="spParseError" role="alert">${esc(S.parseError)}</div>` : ''}
 
     <div class="row g-2 mt-1 small">
       <div class="col-md-3">
-        <label for="spRa">RA（U-36）${provTag('ra_deg')}</label>
+        <label for="spRa">RA${provTag('ra_deg')}</label>
         <input id="spRa" class="form-control form-control-sm sp-ra" value="${escAttr(S.metaForm.ra)}"
           placeholder="12:34:56.7 或十进制度">
       </div>
@@ -167,7 +166,7 @@ function renderPanel() {
           placeholder="-05:06:07 或十进制度">
       </div>
       <div class="col-md-2">
-        <label for="spZ">红移 z（U-37）${provTag('z')}</label>
+        <label for="spZ">红移 z${provTag('z')}</label>
         <input id="spZ" type="number" step="any" min="0" class="form-control form-control-sm sp-z"
           value="${escAttr(S.metaForm.z)}" placeholder="0">
       </div>
@@ -177,14 +176,14 @@ function renderPanel() {
           value="${escAttr(S.metaForm.mjd)}" placeholder="无">
       </div>
       <div class="col-md-2">
-        <label for="spCat">源类别（U-38）</label>
+        <label for="spCat">源类别
+          <i class="bi bi-info-circle text-secondary" title="${kind === 'catalog'
+            ? '以上为库内记录回填值，可改，改动按用户填报口径生效'
+            : '缺项按默认处理：z=0 按观测系、类别 other、MJD 缺 ⇒ 锚点只做幅值比对'}"></i></label>
         <select id="spCat" class="form-select form-select-sm sp-cat">
           ${['grb_early', 'grb_afterglow', 'sn_platform', 'other'].map(c =>
             `<option value="${c}" ${S.metaForm.category === c ? 'selected' : ''}>${c}</option>`).join('')}
         </select>
-      </div>
-      <div class="col-12 text-secondary">
-        ${kind === 'catalog' ? '以上为库内记录回填值（F-74：文件头键 &gt; 源记录 &gt; 兜底），可改，改动按 user 口径生效。' : '缺项按默认处理：z=0 按观测系、类别 other、mjd 缺 ⇒ 锚点只做幅值比对（F-77）。'}
       </div>
       ${S.zStaleNote ? `<div class="col-12 text-warning small" id="spZStaleNote">
         z 已改动：静止系相关字段（红移改正/静止系量）已过期（IA-4），重算后更新；本改动不触发请求。</div>` : ''}
@@ -192,19 +191,19 @@ function renderPanel() {
 
     <div class="row g-2 mt-1 small align-items-end">
       <div class="col-md-4">
-        <label for="spFrame">波长框架（U-39）</label>
+        <label for="spFrame">波长框架</label>
         ${kind === 'upload' || kind === 'paste' ? `
           <select id="spFrame" class="form-select form-select-sm sp-frame">
             ${[['vacuum', 'vacuum（真空）'], ['air', 'air（空气，积分前换真空恰好一次）'], ['unknown', 'unknown（不做框架假设）']].map(([v, l]) =>
               `<option value="${v}" ${((S.uploadFrame) || 'vacuum') === v ? 'selected' : ''}>${l}</option>`).join('')}
           </select>`
-        : `<input id="spFrame" class="form-control form-control-sm" value="${esc(frame || 'vacuum')}（库内谱，只读回显）" readonly>`}
+        : `<input id="spFrame" class="form-control form-control-sm" value="${esc(frame || 'vacuum')}" readonly title="库内谱框架，只读回显">`}
         ${frameDefaultVacuum
           ? `<div class="text-secondary sp-txt21 mt-1"><strong>CA-34 / TXT-21（框架未声明，按默认 vacuum）：</strong>${TXT.t21}</div>`
-          : `<div class="text-secondary" title="${escAttr(TXT.t21)}">框架口径 ⚠（CA-34 / TXT-21，悬停看全文）</div>`}
+          : `<div class="text-secondary" title="${escAttr(TXT.t21)}">框架口径 ⚠（悬停看全文）</div>`}
       </div>
-      <div class="col-md-5">
-        <label for="spMwSwitch">银河消光（U-33）</label>
+      <div class="col-md-8">
+        <label for="spMwSwitch">银河消光</label>
         <div class="d-flex gap-2 align-items-center">
           <div class="form-check form-switch mb-0">
             <input class="form-check-input sp-mw" type="checkbox" role="switch" id="spMwSwitch"
@@ -215,19 +214,12 @@ function renderPanel() {
           <input type="number" step="any" min="0" class="form-control form-control-sm sp-ebv sp-w110"
             value="${escAttr(S.params.ebv_override)}" placeholder="E(B−V) 手填覆盖" aria-label="E(B−V) 手填覆盖">
           <button class="btn btn-sm btn-outline-secondary sp-ebvq"
-            title="按坐标查询 E(B−V)（API-8）">查询 E(B−V)</button>
+            title="${escAttr(TXT.t19)}">查询 E(B−V)</button>
         </div>
         <div class="text-secondary">${gext ? '⚠ 该谱已改正，不再二次施加（CA-30）。' : esc(ebvTxt)}</div>
         ${gext && parentId ? `<div class="sp-parent-link">↩ 这条谱已改过（gext_corr），父谱为
           <a href="#/tools/specphot/${escAttr(parentId)}" title="装载父谱 #${escAttr(parentId)} 到本模块（原始谱未做银消改正）">父谱 #${escAttr(parentId)}</a>
           ——需要自行定消光口径时请改用父谱（W-22）。</div>` : ''}
-        ${(kind === 'upload' || kind === 'paste' || S.params.ebv_override) ? `<div class="text-secondary" title="${escAttr(TXT.t19)}">${TXT.t19}</div>` : ''}
-      </div>
-      <div class="col-md-3 text-secondary">
-        谱级顶栏（TXT-17）：<br>
-        ① 量级 median|F|：${prov && prov.flux_median_cgs != null ? prov.flux_median_cgs.toExponential(3) : (up ? '见解析回显' : '—')}<br>
-        ② ${gext ? `该谱已做过银河消光改正，本模块不再二次改正${parentId ? `（父谱 #${escAttr(parentId)}）` : ''}。` : '未带银河消光改正标记。'}<br>
-        ③ 框架：${esc(frame || '—')} ⇒ ${frame === 'unknown' ? '速度量禁用，线位只作参考' : '位置匹配按该框架理解'}。
       </div>
     </div>
   </div></div>`;

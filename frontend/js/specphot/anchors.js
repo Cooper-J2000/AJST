@@ -71,7 +71,7 @@ export function renderAnchors(el, ctx) {
       <td>${esc(r.mag)}</td>
       <td>${esc(r.mag_system || 'AB')}</td>
       <td>${r.mjd != null && r.mjd !== '' ? esc(r.mjd)
-        : '<span class="text-secondary">不做时刻比对（F-77）</span>'}</td>
+        : '<span class="text-secondary" title="无时刻 ⇒ 只做幅值比对">—</span>'}</td>
       <td>${r.mag_err != null ? esc(r.mag_err) : '<span class="text-secondary">—</span>'}</td>
       <td>${r.anchor_origin === 'catalog'
         ? '<span class="badge bg-secondary">源表</span>'
@@ -93,11 +93,11 @@ export function renderAnchors(el, ctx) {
       <table class="table table-sm table-striped mb-0 small">
         <thead><tr><th>锚定</th><th>波段</th><th>星等</th><th>系统</th><th>时刻 MJD</th>
           <th>mag_err</th><th>来源</th><th>备注</th><th></th></tr></thead>
-        <tbody>${trs || `<tr><td colspan="9" class="text-secondary">暂无行：库内实测点行在首次计算后由响应 anchor_rows 回显；上传/直入可先手加行（B5）。</td></tr>`}</tbody>
+        <tbody>${trs || `<tr><td colspan="9" class="text-secondary">暂无锚点行：首次计算后回显库内实测点，也可手加。</td></tr>`}</tbody>
       </table>
     </div>
     <details class="mt-1 small">
-      <summary>＋ 手加一行（U-41）</summary>
+      <summary title="${escAttr(TXT.t20)}">＋ 手加一行</summary>
       <div class="row g-2 mt-1 align-items-end" title="${escAttr(TXT.t20)}">
         <div class="col-auto"><label class="form-label mb-0">波段</label>
           <select class="form-select form-select-sm sp-aband">${bandOpts('')}</select></div>
@@ -114,7 +114,6 @@ export function renderAnchors(el, ctx) {
         <div class="col-auto"><label class="form-label mb-0">备注</label>
           <input type="text" class="form-control form-control-sm sp-anote sp-w160"></div>
         <div class="col-auto"><button class="btn btn-sm btn-outline-primary sp-aadd">加入</button></div>
-        <div class="col-12 text-secondary">${TXT.t20}</div>
       </div>
     </details>
   </div></div>`;

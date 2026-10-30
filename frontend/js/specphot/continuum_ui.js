@@ -142,7 +142,7 @@ export function renderContinuumResults(el, ctx) {
     ${topWarn}${fitWarn}
     <div class="small text-secondary mt-1">de_reddened（曲线 B，纯派生件）：n_points=${dr.n_points ?? 0} ·
       derivation_depth=${dr.derivation_depth ?? 0} · curve_hash=${esc(String(dr.curve_hash || 'none'))} ·
-      exported=${dr.exported === true}；图上双曲线叠加见①谱预览（U-47 开启时曲线 A/B 同轴同单位，F-89①）。</div>
+      exported=${dr.exported === true}</div>
   </div></div>`;
 }
 
@@ -164,9 +164,8 @@ export function renderS2Panel(el, ctx) {
   const ebvBoxVal = p.host_ext_mode === 'fit'
     ? (fitEbv == null ? '' : String(fitEbv)) : p.ebv;
   const ebvNote = p.host_ext_mode === 'fit'
-    ? (fitEbv == null ? 'fit 态只读：计算后在此显示由拟合 A_V 反算的 E(B−V)（F-88）'
-       : 'fit 态只读：由拟合 A_V 反算、仅供显示（F-88/F-90② 禁回喂）')
-    : `A_V = R_V·E(B−V) = ${av == null ? '—' : num(av, 4)}（显示换算，rv_source 见响应）`;
+    ? '只读：由拟合 A_V 反算（仅供显示，不回喂计算）'
+    : `A_V = R_V·E(B−V) = ${av == null ? '—' : num(av, 4)}`;
   // U-47（F-89①）：双谱叠加开关（纯显示口径，不触发计算、不转 stale）
   const deredReady = !!S.lastContinuum && S.lastContinuum.host_ext_mode !== 'off'
     && Number((S.lastContinuum.de_reddened || {}).n_points) > 0;
@@ -178,39 +177,41 @@ export function renderS2Panel(el, ctx) {
   el.innerHTML = `<div class="card mb-3">
     <div class="card-header py-2">③ 参数（S2）</div>
     <div class="card-body py-2 small">
-    <div class="mt-1">模型（U-21/U-22，§3.8.1 别名）：${MODELS.map(m =>
+    <div class="mt-1">模型 ${MODELS.map(m =>
       `<label class="me-2"><input type="checkbox" class="form-check-input sp-cm" value="${m}"
         ${p.models.includes(m) ? 'checked' : ''} ${computing ? 'disabled' : ''}>${m}</label>`).join('')}</div>
-    <div class="mt-1">host_ext_mode（U-45…U-47，F-87 三态）：${['off', 'fit', 'prescribe'].map(v =>
+    <div class="mt-1" title="off 不改正 / fit 拟合 / prescribe 指定 E(B−V)">宿主消光 host_ext_mode：${['off', 'fit', 'prescribe'].map(v =>
       `<label class="me-2"><input type="radio" name="spHem" class="sp-hem" value="${v}"
         ${p.host_ext_mode === v ? 'checked' : ''} ${computing ? 'disabled' : ''}>${v}</label>`).join('')}</div>
-    <div class="mt-1">双谱叠加（U-47，F-89①：U-45≠off 时图上曲线 A=改正前、B=改正后=派生件、未入库；纯显示开关）：
+    <div class="mt-1" title="host_ext≠off 时图上叠加曲线 A=改正前、B=改正后（派生件、未入库）；纯显示开关，不触发计算">双谱叠加
       <input type="checkbox" class="form-check-input sp-ovd" ${p.overDered !== false ? 'checked' : ''}
         ${computing ? 'disabled' : ''}></div>
-    <div class="mt-1">E(B−V)（U-46，仅 prescribe 必填，≤${C_HOST_EBV_MAX}）：
+    <div class="mt-1" title="仅 prescribe 必填，≤2.0">E(B−V)
       <input type="number" min="0" max="${C_HOST_EBV_MAX}" step="any" class="form-control form-control-sm d-inline-block w-auto sp-ebv"
         value="${escAttr(ebvBoxVal)}" ${ebvDis ? 'disabled' : ''}>
       <span class="text-secondary">${ebvNote}</span></div>
-    <div class="mt-1">law（U-32）：<select class="form-select form-select-sm w-auto d-inline sp-law" ${computing ? 'disabled' : ''}>
+    <div class="mt-1">law <select class="form-select form-select-sm w-auto d-inline sp-law" ${computing ? 'disabled' : ''}>
       ${LAWS.map(l => `<option ${p.law === l ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      R_V（留空 = rv_source 基准值）：<input type="number" step="any" class="form-control form-control-sm d-inline-block w-auto sp-rv" value="${escAttr(p.rv)}" ${computing ? 'disabled' : ''}>
-      <select class="form-select form-select-sm w-auto d-inline sp-rvs" ${computing ? 'disabled' : ''}>
-        ${['', 'nominal', 'intrinsic'].map(v => `<option value="${v}" ${p.rv_source === v ? 'selected' : ''}>${v || 'rv_source 缺省'}</option>`).join('')}</select></div>
-    <div class="mt-1">poly_order（仅 poly）：<input type="number" min="1" max="6" step="1" class="form-control form-control-sm d-inline-block w-auto sp-po" value="${escAttr(p.poly_order)}" ${computing || !p.models.includes('poly') ? 'disabled' : ''}></div>
+      R_V <input type="number" step="any" class="form-control form-control-sm d-inline-block w-auto sp-rv" value="${escAttr(p.rv)}"
+        title="留空 = rv_source 基准值" ${computing ? 'disabled' : ''}>
+      <select class="form-select form-select-sm w-auto d-inline sp-rvs" title="R_V 取值基准" ${computing ? 'disabled' : ''}>
+        ${['', 'nominal', 'intrinsic'].map(v => `<option value="${v}" ${p.rv_source === v ? 'selected' : ''}>${v || '缺省'}</option>`).join('')}</select></div>
+    <div class="mt-1" title="仅 poly 模型使用">poly_order <input type="number" min="1" max="6" step="1" class="form-control form-control-sm d-inline-block w-auto sp-po" value="${escAttr(p.poly_order)}" ${computing || !p.models.includes('poly') ? 'disabled' : ''}></div>
     <hr class="my-2"><strong>⑤ 动作</strong>
     <div class="d-flex gap-2 align-items-center mt-1">
-      <button class="btn btn-primary btn-sm sp-ccompute" ${missing.length || computing || busyLeft ? 'disabled' : ''}>计算</button>
+      <button class="btn btn-primary btn-sm sp-ccompute" ${missing.length || computing || busyLeft ? 'disabled' : ''}
+        title="S2 连续谱拟合；掩膜与预处理通道与 S1 同源">计算</button>
       <button class="btn btn-outline-secondary btn-sm sp-cexpjson" ${!S.lastContinuum || computing ? 'disabled' : ''}>导出 JSON</button>
       <button class="btn btn-outline-secondary btn-sm sp-cexpcsv" ${!deredReady || computing ? 'disabled' : ''}
         title="${escAttr(csvTitle)}">导出 CSV（曲线 B）</button>
       <button class="btn btn-outline-secondary btn-sm sp-cexppng" ${!deredReady || computing ? 'disabled' : ''}
         title="${escAttr(csvTitle.replace('CSV', 'PNG'))}">导出 PNG（双谱图，含 TXT-22 图注）</button>
-      <span class="text-secondary">S2 拟合（API-3）；掩膜与预处理通道与 S1 同源（F-107③）</span></div>
+    </div>
     <div class="mt-1 text-warning small">${esc(S.busyNotice || '')}</div>
     <div class="mt-1 text-warning small">${esc(S.featureNotice || '')}</div>
     <div class="mt-1 text-danger small" role="alert">${esc(S.errorMsg || '')}</div>
-    <div class="mt-1 ${missing.length ? 'text-warning' : 'text-success'}">缺项清单（IA-16）：${missing.length
-      ? '<ul class="mb-0">' + missing.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>' : '无，可以计算'}</div>
+    <div class="mt-1 ${missing.length ? 'text-warning' : 'text-success'}">${missing.length
+      ? '缺项：<ul class="mb-0">' + missing.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>' : '✓ 可以计算'}</div>
   </div></div>`;
   el.querySelectorAll('.sp-cm').forEach(cb => cb.addEventListener('change', () => {
     p.models = [...el.querySelectorAll('.sp-cm:checked')].map(x => x.value); ctx.dirty(); renderS2Panel(el, ctx);

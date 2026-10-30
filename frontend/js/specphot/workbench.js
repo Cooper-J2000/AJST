@@ -167,7 +167,7 @@ function missingList() {
   // 并列进缺项清单（不得由服务端默默择一；auto 缺省仅在首次计算前允许）
   const verdict = knownErrcolVerdict();
   if (verdict && verdict !== 'ok' && !S.params.errcol_choice) {
-    out.push(`误差列判定 ${verdict} ≠ ok：请在「误差列确认（U-53）」二选一后再计算`);
+    out.push(`误差列判定 ${verdict} ≠ ok：请在参数区「误差列判定」二选一后再计算`);
   }
   // U-22（§3.3 model 行，P2 2b）：model 定标需先有可比的 S2 拟合（F-33 单向耦合）
   if (S.params.mode === 'model') {
@@ -399,15 +399,14 @@ function errcolBlock(computing) {
   const verdict = knownErrcolVerdict();
   if (!verdict) return '';
   if (verdict === 'ok') {
-    return '<div class="text-secondary mt-1">误差列确认（U-53）：errcol_verdict=ok，无需确认</div>';
+    return '<div class="text-secondary mt-1">误差列判定 ok，无需确认</div>';
   }
   const cur = S.params.errcol_choice;
-  return `<div class="mt-1 sp-errcol">误差列判定 <b>${esc(verdict)}</b> ≠ ok
-    （U-53 二选一，F-110③；缺确认 ⇒ 计算禁用，IA-16）：
-    ${radio('sp-ec', 'spEc', 'proxy', cur, computing, '按代理误差重算（CA-47②）',
-            '回落 F-54 二阶差分代理；该误差列不参与本次结果')}
-    ${radio('sp-ec', 'spEc', 'as_provided', cur, computing, '坚持用该误差列（CA-47①）',
-            "sigma_method='spec_err' 常驻；该列已被判定不可信")}
+  return `<div class="mt-1 sp-errcol">误差列判定 <b>${esc(verdict)}</b> ≠ ok（二选一后才可计算）：
+    ${radio('sp-ec', 'spEc', 'proxy', cur, computing, '按代理误差重算',
+            '回落二阶差分代理误差；该误差列不参与本次结果（CA-47②）')}
+    ${radio('sp-ec', 'spEc', 'as_provided', cur, computing, '坚持用该误差列',
+            "sigma_method='spec_err' 常驻；该列已被判定不可信（CA-47①）")}
   </div>`;
 }
 
@@ -443,33 +442,33 @@ function renderRightPanel() {
       <div class="sp-param-body ${S.paramOpen ? '' : 'sp-closed'}" id="spParamBody">
       <div class="row g-2 small mt-1">
         <div class="col-6">
-          <div>加权（U-07）：</div>
+          <div>加权</div>
           ${['photon', 'energy'].map(v => radio('sp-w', 'spW', v, p.weighting, computing, v)).join('')}
         </div>
         <div class="col-6">
-          <div>定标模式（U-08）：</div>
+          <div>定标模式</div>
           ${['auto', 'anchored'].map(v => radio('sp-mode', 'spMode', v, p.mode, computing, v)).join('')}
           ${radio('sp-mode', 'spMode', 'direct', p.mode, directDis, 'direct', directDis ? directTip : '')}
           ${radio('sp-mode', 'spMode', 'model', p.mode, computing, 'model', 'model 定标：用 S2 连续谱模型曲线代替观测谱（§3.3 model 行，U-22）；需先在 S2 页签完成可比拟合')}
         </div>
         <div class="col-4">
-          <div>星等制（U-29）：</div>
+          <div>星等制</div>
           ${radio('sp-ms', 'spMs', 'AB', p.mag_system, computing, 'AB')}
           ${radio('', '', 'ST', '', true, 'ST', 'ST 需库内没有的 Vega 参考谱（P1 禁用，F-48/E-08）')}
           ${radio('sp-ms', 'spMs', 'Vega', p.mag_system, computing, 'Vega')}
         </div>
         <div class="col-4">
-          <div>误差处理（U-10）：</div>
+          <div>误差处理</div>
           ${['auto', 'force_proxy'].map(v => radio('sp-ep', 'spEp', v, p.err_policy, computing, v)).join('')}
         </div>
         <div class="col-4">
-          <label>时刻容差 dt_tol_d（U-11，天，留空 = 按类别表）：</label>
+          <label title="留空 = 按类别表">时刻容差 dt_tol_d（天）</label>
           <input type="number" min="0" step="any" class="form-control form-control-sm sp-dt" value="${escAttr(p.dt_tol_d)}" placeholder="自动" ${computing ? 'disabled' : ''}>
         </div>
       </div>
       <hr class="my-2">
-      <div class="small text-secondary mt-1">诊断增强（U-44，F-81…F-86，默认全关；
-        开关改动 ⇒ stale（IA-4），输出只进 diagnostics{} 子对象，不进主表必填列）：</div>
+      <div class="small mt-1"><strong>诊断增强</strong>
+        <i class="bi bi-info-circle text-secondary" title="默认全关；改动即需重算；输出只进 diagnostics{}，不进主表列"></i></div>
       <div class="row g-1 small mt-1">
         ${DIAG_META.map(([k, phase, tip]) => {
           const locked = phase !== 'P2c';
@@ -486,18 +485,17 @@ function renderRightPanel() {
       </div>
       <hr class="my-2">
       <div class="small">
-        <strong>预处理（U-49…U-53）</strong>
+        <strong>预处理</strong>
         <div class="row g-2 mt-0">
           <div class="col-4">
-            <div>合束因子（U-49）：</div>
+            <div>合束因子</div>
             <select class="form-select form-select-sm sp-factor" ${computing ? 'disabled' : ''}
-              title="合束（F-108，P2）：只加粗不减细的块内平均，面积守恒；目标采样 = 每分辨率元 2 点（C_REBIN_TARGET_PER_FWHM，F-108④）；改动 ⇒ stale（IA-4）。取值闭集 [1,2,3,4,6,8]（表外 E-14）">
+              title="合束（F-108）：只加粗不减细的块内平均，面积守恒；改动即需重算。取值闭集 [1,2,3,4,6,8]。当前全库无仪器分辨率（r_source='none'）⇒ 欠分辨闸门无从判定（CA-47③）">
               ${[1, 2, 3, 4, 6, 8].map(k => `<option value="${k}" ${Number(S.params.factor) === k ? 'selected' : ''}>${k}</option>`).join('')}
             </select>
-            <div class="text-secondary" title="F-108④/CA-47③：全库现状 r_source='none'">无 R ⇒ 欠分辨闸门无从判定（CA-47③）</div>
           </div>
           <div class="col-3">
-            <div>绘图平滑（U-51）：</div>
+            <div>绘图平滑</div>
             <label class="form-check form-check-inline" title="display_smoothed（F-109）：只改图不改数——开启不转 stale、不进任何哈希、不进导出件（纯前端绘制）；开启时 TXT-26 常驻图注">
               <input type="checkbox" class="form-check-input sp-smooth-on" ${S.params.smooth_on ? 'checked' : ''}> 开启
             </label>
@@ -506,7 +504,7 @@ function renderRightPanel() {
               title="核长（全宽）C_SMOOTH_BOX_PX=3 默认，上限 7（越界 E-14）" ${computing ? 'disabled' : ''}>
           </div>
           <div class="col-5">
-            <div>掩膜段手输（U-50，Å）：</div>
+            <div title="与图上框选同一份掩膜；lo<hi 且须与覆盖重叠，总段数 ≤ 32">掩膜段（Å）</div>
             <div class="d-flex gap-1">
               <input type="number" step="any" class="form-control form-control-sm sp-mask-lo"
                 placeholder="lo" aria-label="掩膜段起点 Å" ${computing ? 'disabled' : ''}>
@@ -515,7 +513,6 @@ function renderRightPanel() {
               <button type="button" class="btn btn-outline-secondary btn-sm py-0 sp-mask-add"
                 ${computing ? 'disabled' : ''}>加入</button>
             </div>
-            <div class="text-secondary">与 U-13 框选同一个布尔数组；lo&lt;hi 且须与覆盖重叠（V-13），总段数 ≤ ${C_MAX_EXCLUDE}</div>
           </div>
         </div>
         ${errcolBlock(computing)}
@@ -533,7 +530,6 @@ function renderRightPanel() {
             title="U-17/F-44：§4.3 列序 + TXT-11 头注释；无结果时禁用">导出 CSV</button>
           <button class="btn btn-outline-secondary btn-sm sp-expjson" ${!r || computing ? 'disabled' : ''}
             title="U-17/F-44：API-2 响应原文">导出 JSON</button>
-          <span class="small text-secondary">${esc(TXT.t13)}</span>
         </div>
         <div class="mt-1 text-warning small" id="spBusyNotice">${busyLeft
           ? `服务忙，${busyLeft}s 后可重试（429）` : esc(S.busyNotice || '')}</div>
@@ -541,7 +537,7 @@ function renderRightPanel() {
         <div class="mt-1 text-danger small" id="spComputeError" role="alert">${esc(S.errorMsg || '')}</div>
       </div>
       <div class="small mt-2 ${missing.length ? 'text-warning' : 'text-success'}">
-        缺项清单（IA-16）：${missing.length ? '<ul class="mb-0">' + missing.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>' : '无，可以计算'}
+        ${missing.length ? '缺项：<ul class="mb-0">' + missing.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>' : '✓ 可以计算'}
       </div>
       </div><!-- /sp-param-body（W-15② 窄屏抽屉） -->
     </div></div>`;

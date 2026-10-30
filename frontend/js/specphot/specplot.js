@@ -25,9 +25,9 @@ const C_SMOOTH_BOX_MAX_PX = 7;  // U-51 核长上限（与后端 constants.py �
 const TXT26 = '本图为显示平滑（boxcar 核长 N 像元，即全宽 N 像元），只用于看图；'
   + '所有数值、误差与导出件都取自未平滑的逐点谱。（TXT-26，U-51 开启时恒显）';
 const LINE_GROUPS = ['h', 'he', 'si_ii', 'ca_ii', 'fe_ii', 'mg_ii'];   // 默认叠加的宿主线组
-const HINT = 'U-13（P1 行为）：拖选 = 加入掩膜段 · 点击掩膜段 = 删除 · Shift+拖选 = 框选缩放（横纵轴） · '
-  + '双击/按钮 = 恢复全域 · 输入框 = 直接键入显示范围（可超出默认全域）'
-  + '（确认 UI 与 U-50 手输归 P1b；掩膜段进请求体 mask，改段即转 stale）';
+const HINT = '拖选 = 加入掩膜段 · 点击掩膜段 = 删除 · Shift+拖选 = 框选缩放（横纵轴）· '
+  + '双击/按钮 = 恢复全域 · 输入框 = 直接键入显示范围（可超出默认全域）；'
+  + '掩膜段随请求生效，改段即需重算';
 
 let _el = null, _ctx = null, _cv = null, _view = null, _drag = null, _spec = null, _dom = null;
 let _rngFocus = false;
@@ -99,8 +99,7 @@ export function renderSpecPlot(el, ctx) {
     <div class="card mb-3">
       <div class="card-header d-flex align-items-center py-2">
         ① 谱预览
-        <span class="small text-secondary fw-normal ms-2">λ 轴 Å；拖选 = 加掩膜段 · Shift+拖选 = 框选缩放（横纵轴可调）· 双击/按钮 = 恢复全域；竖带 = 波段曲线覆盖区；
-          斜纹 = 掩膜段（n_masked_pixels 由计算回显）</span>
+        <i class="bi bi-info-circle text-secondary ms-2" title="${escAttr(HINT)}"></i>
         <button class="btn btn-outline-secondary btn-sm ms-auto sp-zreset" title="恢复全域（U-13）">恢复全域</button>
       </div>
       <div class="card-body py-2">
@@ -123,7 +122,6 @@ export function renderSpecPlot(el, ctx) {
       </div>
       <div class="small" id="spOverlayCaption"></div>
       <div class="small" id="spSmoothCaption"></div>
-      <div class="small text-secondary">${HINT}</div>
     </div></div>`;
   _cv = el.querySelector('#spCv');
   _capEl = el.querySelector('#spOverlayCaption');

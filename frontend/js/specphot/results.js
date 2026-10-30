@@ -291,7 +291,7 @@ function renderDiagnostics(resp) {
       <div class="text-secondary">${esc(d.anchor_reinsert.note || '')}</div></div>`);
   }
   return `<div class="card mb-3"><div class="card-body py-2">
-    <strong>诊断增强</strong><span class="small text-secondary ms-2">diagnostics{}（U-44 开启项；关闭时不进入任何计算路径，T-48）</span>
+    <strong>诊断增强</strong> <i class="bi bi-info-circle text-secondary" title="仅列出开启的诊断项输出；关闭时不进入任何计算路径"></i>
     ${rows.join('')}</div></div>`;
 }
 
@@ -350,6 +350,7 @@ export function renderResults(el, ctx) {
     <div class="card mb-3"><div class="card-body py-2">
       <div class="d-flex align-items-center">
         <strong>结果表</strong>
+        <i class="bi bi-info-circle text-secondary ms-1" title="误差三列分列，不合成总误差（F-57）；每列求法/口径见表头与展开卡的 err_source/err_scope；Δm 着色：|Δm|>0.2 红、>0.5 深红"></i>
         <span class="small text-secondary ms-2">spectrum_source=${esc(r.spectrum_source)}
           ${r.spectrum_id != null ? '#' + r.spectrum_id : 'up:' + esc(String(r.spec_hash || '').slice(0, 8))}
           · mode ${esc(r.mode_requested)}→${esc(r.mode_effective)} · flux_kind=${esc(r.flux_kind)}</span>
@@ -374,8 +375,6 @@ export function renderResults(el, ctx) {
           <tbody>${resultRows(r)}</tbody>
         </table>
       </div>
-      <div class="small text-secondary mt-1" title="${escAttr(TXT.t23)}">TXT-23：误差三列分列（不合成总误差，F-57）；
-        每列求法/口径见表头与展开卡的 err_source/err_scope；Δm 着色：|Δm|&gt;0.2 红、&gt;0.5 深红。</div>
     </div></div>`;
   el.querySelectorAll('.sp-row').forEach(tr => tr.addEventListener('click', () => {
     const d = el.querySelector(`.sp-detail[data-i="${tr.dataset.i}"]`);
@@ -407,8 +406,7 @@ export function renderComparison(el, ctx) {
   const rows = r ? (r.results || []).filter(x => x.m_obs != null) : [];
   el.innerHTML = `
   <div class="card mb-3"><div class="card-body py-2">
-    <strong>对照面板</strong>
-    <div class="small text-secondary mt-1" title="${escAttr(TXT.t4)}">TXT-4：${TXT.t4}</div>
+    <strong>对照面板</strong> <i class="bi bi-info-circle text-secondary" title="${escAttr(TXT.t4)}"></i>
     ${!r ? '<div class="text-secondary small mt-2">尚无计算结果。</div>' : rows.length ? `
       <div class="table-responsive mt-2" style="max-height:300px;overflow:auto">
         <table class="table table-sm table-striped mb-0 small">
