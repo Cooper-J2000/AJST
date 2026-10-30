@@ -80,7 +80,7 @@ export function renderContinuumResults(el, ctx) {
       const lo = f.err_low ? f.err_low[k] : null, hi = f.err_high ? f.err_high[k] : null;
       const es = f.err_source ? f.err_source[k] : null;
       const mark = bnd.has(k)
-        ? ' <sup class="text-warning" title="网格最优解落在搜索网格端点：报告值是边界值而非似然峰（F-65/CA-24，W-24）">边界值</sup>'
+        ? ' <sup class="text-warning" title="网格最优解落在搜索网格端点：报告值是边界值而非似然峰">边界值</sup>'
         : '';
       return `<div>${k} = ${num(v, 4)} (+${num(hi)}/−${num(lo)})${mark}`
         + `<span class="text-secondary"> [${esc(es || 'none')}]</span></div>`;
@@ -92,7 +92,7 @@ export function renderContinuumResults(el, ctx) {
       <td>${esc(f.comparable ? 'ok' : 'CA-44')}</td>
       <td><div class="small">${ps}</div></td>
       <td class="small">${en ? `status=${en.status}·opt=${num(en.optimality, 3)}·nfev=${en.nfev}·start=${en.n_starts}` : '线性层'}</td>
-      <td class="small">${cl ? `${num(cl.factor_lo)}…${num(cl.factor_hi)}（三候选区间，TXT-7）` : '—'}</td></tr>`;
+      <td class="small">${cl ? `${num(cl.factor_lo)}…${num(cl.factor_hi)}（三候选区间）` : '—'}</td></tr>`;
   }).join('');
   // P2b 评审（fit.warnings 接线）：S2 卡此前只显示 TXT-22/ebv_ignored/闸门行，
   // 顶层与逐模型 warnings（CA-24 边界值、CA-44、CA-11、CA-15、CA-38 等）被
@@ -112,11 +112,11 @@ export function renderContinuumResults(el, ctx) {
   const pp = r.preprocess || {};
   const gateRow = pp.n_high_leverage != null
     ? `<div class="small ${pp.baseline_edge_spread != null && pp.baseline_edge_spread > 0.25 ? 'text-warning' : 'text-secondary'} mt-1">`
-      + `端点闸门（F-112）：baseline_edge_spread=${num(pp.baseline_edge_spread, 3)} ／ `
+      + `端点检查：baseline_edge_spread=${num(pp.baseline_edge_spread, 3)} ／ `
       + `edge_spread_after_downgrade=${num(pp.edge_spread_after_downgrade, 3)} ／ `
-      + `n_high_leverage=${esc(pp.n_high_leverage)}（只标记不剔除，Σh_ii=p 恒成立）`
+      + `n_high_leverage=${esc(pp.n_high_leverage)}（只标记不剔除）`
       + ((pp.suggested_edge_ranges || []).length
-        ? ` ／ 建议掩膜段 ${esc(JSON.stringify(pp.suggested_edge_ranges))}——<b>未经确认不会被掩掉</b>（U-52 确认路径）`
+        ? ` ／ 建议掩膜段 ${esc(JSON.stringify(pp.suggested_edge_ranges))}——<b>未经确认不会被掩掉</b>`
         : '')
       + `</div>`
     : '';
@@ -125,18 +125,18 @@ export function renderContinuumResults(el, ctx) {
       <span class="small text-secondary ms-2">host_ext_mode=${esc(r.host_ext_mode)} · law=${esc(r.law)} ·
       rv=${num(r.rv, 3)}(${esc(r.rv_source)}) · z_eff=${num(r.z_eff, 4)} ·
       拟合区 ${r.fit_region ? r.fit_region.n_pixels : '—'} px</span></div>
-    ${r.host_ext_mode !== 'off' ? `<div class="small text-secondary mt-1 border-start border-3 ps-2">TXT-22：${esc(txt22Text(r))}</div>` : ''}
-    ${r.ebv_ignored ? '<div class="small text-warning mt-1">Q-32/F-90②：off/fit 模式下携带的 ebv 已忽略（ebv_ignored=true），未参与计算。</div>' : ''}
+    ${r.host_ext_mode !== 'off' ? `<div class="small text-secondary mt-1 border-start border-3 ps-2">${esc(txt22Text(r))}</div>` : ''}
+    ${r.ebv_ignored ? '<div class="small text-warning mt-1">off/fit 模式下携带的 E(B−V) 已忽略，未参与计算。</div>' : ''}
     ${gateRow}
     <div class="table-responsive mt-1" style="max-height:340px;overflow:auto">
       <table class="table table-sm table-hover mb-0 small sp-result-table">
         <thead><tr><th>模型</th><th>χ²/dof</th><th>BIC</th><th>n_par</th><th>可比</th>
           <th>参数 ± 区间（err_source）</th><th>engine_status</th><th>closure</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
-    <div class="small text-secondary mt-1">verdict（F-29/T-17）：best=<b>${esc(String(r.verdict.best || '—'))}</b> ·
+    <div class="small text-secondary mt-1">verdict：best=<b>${esc(String(r.verdict.best || '—'))}</b> ·
       F 检验 ${(r.verdict.ftest || []).map(e => `${esc(e.pair.join('⊂'))}: p=${num(e.p, 4)}→${esc(e.verdict)}`).join('；') || '—'} ·
       ΔBIC ${(r.verdict.dbic || []).map(e => `${esc(e.pair.join(' vs '))}: ${num(e.dbic, 3)}→${esc(e.verdict)}`).join('；') || '—'}</div>
-    ${(r.verdict.davies || []).length ? `<div class="small text-warning mt-1">断点检验（F-29③/T-18，Davies）：${(r.verdict.davies || []).map(e =>
+    ${(r.verdict.davies || []).length ? `<div class="small text-warning mt-1">断点检验（Davies）：${(r.verdict.davies || []).map(e =>
       `${esc(e.pair.join('⊂'))}: p=${num(e.p, 4)}（p_method=${esc(e.p_method)}，n_boot=${esc(e.n_boot)}）→<b>${esc(e.verdict)}</b>`
       + `；旁证 p_chi2mix=${num(e.p_chi2mix, 4)}（边界 χ² 混合 50:50，不得作为判定依据）`).join('；')}</div>` : ''}
     ${topWarn}${fitWarn}
@@ -169,10 +169,10 @@ export function renderS2Panel(el, ctx) {
   // U-47（F-89①）：双谱叠加开关（纯显示口径，不触发计算、不转 stale）
   const deredReady = !!S.lastContinuum && S.lastContinuum.host_ext_mode !== 'off'
     && Number((S.lastContinuum.de_reddened || {}).n_points) > 0;
-  const csvTitle = !S.lastContinuum ? '先计算一次（API-3）'
+  const csvTitle = !S.lastContinuum ? '先计算一次'
     : S.lastContinuum.host_ext_mode === 'off'
-      ? 'host_ext_mode=off：无 de-reddened 曲线（F-87①），导出禁用'
-      : deredReady ? '导出 §4.3「宿主 de-reddened 曲线导出」块 CSV（TXT-11+TXT-22 头，纯前端派生件）'
+      ? 'host_ext=off：无 de-reddened 曲线，导出禁用'
+      : deredReady ? '导出 de-reddened 曲线 CSV'
         : '响应无 de_reddened 逐点数据，导出禁用';
   el.innerHTML = `<div class="card mb-3">
     <div class="card-header py-2">③ 参数（S2）</div>
@@ -205,7 +205,7 @@ export function renderS2Panel(el, ctx) {
       <button class="btn btn-outline-secondary btn-sm sp-cexpcsv" ${!deredReady || computing ? 'disabled' : ''}
         title="${escAttr(csvTitle)}">导出 CSV（曲线 B）</button>
       <button class="btn btn-outline-secondary btn-sm sp-cexppng" ${!deredReady || computing ? 'disabled' : ''}
-        title="${escAttr(csvTitle.replace('CSV', 'PNG'))}">导出 PNG（双谱图，含 TXT-22 图注）</button>
+        title="${escAttr(csvTitle.replace('CSV', 'PNG'))}">导出 PNG（双谱图）</button>
     </div>
     <div class="mt-1 text-warning small">${esc(S.busyNotice || '')}</div>
     <div class="mt-1 text-warning small">${esc(S.featureNotice || '')}</div>
@@ -244,11 +244,11 @@ export function s2Missing(ctx) {
   const S = ctx.S, p = S.contParams;
   const out = [];
   if (!((S.sourceKind === 'catalog' && S.spectrumId != null) || !!S.upload)) out.push('缺谱：先装载一条谱');
-  if (!p.models.length) out.push('缺模型：至少勾选 1 个模型（U-21/U-22）');
+  if (!p.models.length) out.push('缺模型：至少勾选 1 个模型');
   if (p.host_ext_mode === 'prescribe') {
     const v = Number(p.ebv);
-    if (p.ebv === '' || !isFinite(v) || v < 0) out.push('prescribe 需给出 E(B−V)（U-46，无默认）');
-    else if (v > C_HOST_EBV_MAX) out.push(`E(B−V) 超过 C_HOST_EBV_MAX=${C_HOST_EBV_MAX}（Q-32）`);
+    if (p.ebv === '' || !isFinite(v) || v < 0) out.push('prescribe 需给出 E(B−V)（无默认）');
+    else if (v > C_HOST_EBV_MAX) out.push(`E(B−V) 超过上限 ${C_HOST_EBV_MAX}`);
   }
   return out;
 }

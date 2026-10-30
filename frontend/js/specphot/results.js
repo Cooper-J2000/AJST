@@ -9,10 +9,10 @@ import { renderComparePlot } from './specplot.js';
 const C_OVERLAP_MIN = 0.95;     // 与后端 constants.py 同值
 const C_MAX_EXCLUDE = 32;       // 与后端 constants.py 同值（Q-2 / F-107⑤）
 const TXT = {
-  t2: '当前曲线为滤光片透过率，未含探测器 QE、镜面反射、大气消光中随波长变化的因子；绝对星等与颜色都带有与源色相关的系统偏差（量级与其成立前提以 F-17 为唯一载体，本行不复写数值）。', // TXT-2
+  t2: '当前曲线为滤光片透过率，未含探测器 QE、镜面反射、大气消光中随波长变化的因子；绝对星等与颜色都带有与源色相关的系统偏差。', // TXT-2
   t3: '误差为代理量（无误差列时由二阶差分估计，已乘一致性因子），只含随机不确定度，不含定标与波长定标系统误差。', // TXT-3
   t4: '合成 vs 锚点（预览，未入库）· 空心三角 = 合成点，实心圆 = 锚点；手加锚点用方框标出，并注明其星等系与时刻由用户自行填报。', // TXT-4
-  t5n: '已用 N 个波段的实测点求单一缩放因子 κ*；缩放方向（乘在光谱上）、σ_κ、波段协方差是否启用与所用实测值同时列出。', // TXT-5
+  t5n: '已用实测点求单一缩放因子 κ*；缩放方向（乘在光谱上）、σ_κ、波段协方差与所用实测值同时列出。', // TXT-5
   t9: '谱与测光时刻相差 X 天，暂现源在此期间可能已显著变化，二者不宜直接互推。', // TXT-9
   t10: '该波段无透过率曲线，结果按中心波长处单色近似，仅供量级参考。', // TXT-10
   t12: '该谱无可用绝对流量口径，只能走 anchored / model 定标。', // TXT-12
@@ -199,26 +199,26 @@ function resultRows(resp) {
     ].filter(Boolean).join(' ');
     const detail = `
       <div class="small text-secondary mt-1 sp-detail" data-i="${i}" style="display:none">
-        <div>λ 四兄弟（F-18）：pivot=${num(r.lambda_pivot_aa, 1)} · eff=${num(r.lambda_eff_aa, 1)} ·
+        <div>λ 口径：pivot=${num(r.lambda_pivot_aa, 1)} · eff=${num(r.lambda_eff_aa, 1)} ·
           phot=${num(r.lambda_phot_aa, 1)} · iso=${num(r.lambda_iso_aa, 1)} Å</div>
         <div>像素：used=${r.n_used_pixels} · masked=${r.n_masked_pixels} · nonpos=${r.n_nonpos}
           (frac=${num(r.nonpos_frac, 4)}) · gap_bridged=${r.gap_bridged} · n_dup_lam=${r.n_dup_lam}
           ${r.dup_lam_rel_spread != null ? `(相对散布 ${num(r.dup_lam_rel_spread, 4)})` : ''}</div>
         <div>曲线：${esc(r.curve_kind)}/${esc(r.curve_source)} · nodes=${r.curve_nodes ?? '—'} ·
           px/FWHM=${num(r.curve_px_per_fwhm, 1)} · interp=${esc(r.interp)} ·
-          in_coverage=${r.in_coverage} · extrapolated=${r.extrapolated}${r.extrapolated ? '（TXT-6：覆盖范围外外推，不可靠）' : ''}</div>
+          in_coverage=${r.in_coverage} · extrapolated=${r.extrapolated}${r.extrapolated ? '（覆盖范围外外推，不可靠）' : ''}</div>
         <div>时刻：dt_obs=${num(r.dt_obs_d, 3)} d / 容差 ${num(r.dt_tol_eff_d, 3)} d
           (time_precision_d=${num(r.time_precision_d, 3)}) · origin=${esc(r.m_obs_origin || '—')} ·
           kind=${esc(r.m_obs_kind || '—')}${r.m_obs_kind === 'interpolated'
-            ? `<span class="text-warning">（TXT-9：${TXT.t9.replace('X 天', '见 dt_obs')}）</span>` : ''}</div>
-        <div>消光：delta_a_band_mono=${num(r.delta_a_band_mono, 4)}（TXT-14：银河消光在观测系波长逐点改正、波段积分之前完成）</div>
-        <div>误差（TXT-23 成对展示）：${Object.entries(r.err_source || {})
+            ? `<span class="text-warning">（${TXT.t9.replace('X 天', '见 dt_obs')}）</span>` : ''}</div>
+        <div>消光：delta_a_band_mono=${num(r.delta_a_band_mono, 4)}（银河消光在观测系波长逐点改正、波段积分之前完成）</div>
+        <div>误差（成对展示求法/口径）：${Object.entries(r.err_source || {})
           .map(([k, v]) => `${k}=${esc(v)}/${esc((r.err_scope || {})[k] ?? '—')}`).join(' · ')}</div>
         <div>σ_stat 通路：sigma_method=${esc(r.sigma_method)} · rho_lag1=${num(r.rho_lag1, 3)} ·
-          corr_infl=${num(r.corr_infl, 3)}${proxy ? ' <span class="badge bg-warning text-dark">代理（CA-06）</span>' : ''}
+          corr_infl=${num(r.corr_infl, 3)}${proxy ? ' <span class="badge bg-warning text-dark">代理误差</span>' : ''}
           ${r.corr_infl > 1 && r.mag_err_stat != null
-            ? `（放大前 ${num(r.mag_err_stat / r.corr_infl, 4)} → 放大后 ${num(r.mag_err_stat, 4)}，F-55）` : ''}</div>
-        <div>不在误差预算内（F-58）：${esc((r.not_in_budget || []).join('、'))}</div>
+            ? `（放大前 ${num(r.mag_err_stat / r.corr_infl, 4)} → 放大后 ${num(r.mag_err_stat, 4)}）` : ''}</div>
+        <div>不在误差预算内：${esc((r.not_in_budget || []).join('、'))}</div>
         ${(r.warnings || []).length ? `<div class="text-warning">行内告警：${r.warnings
           .map(w => `[${esc(w.code)}] ${esc(w.message)}`).join('；')}</div>` : ''}
       </div>`;
@@ -249,8 +249,8 @@ function renderOutlierConfirm(resp, ctx) {
   if (!w) return '';
   const rows = w.segments.map((seg, i) => `<li class="ms-3">${num(seg[0], 1)}–${num(seg[1], 1)} Å
       <button type="button" class="btn btn-outline-secondary btn-sm py-0 ms-1 sp-outlier-accept"
-        data-i="${i}" title="写入用户掩膜（F-107① 用户数值段类），下次计算生效">剔除并记录</button></li>`).join('');
-  return `<div class="small mt-1" title="F-111②：离群点的正确去处是掩膜而不是损失函数；服务端不自动剔除">
+        data-i="${i}" title="写入掩膜，下次计算生效">剔除并记录</button></li>`).join('');
+  return `<div class="small mt-1" title="离群点的正确去处是掩膜而不是损失函数；服务端不自动剔除">
       <span class="badge bg-secondary">离群候选</span> ${esc(w.message)}
       <ul class="mb-0 sp-outlier-list">${rows}</ul></div>`;
 }
@@ -264,7 +264,7 @@ function renderDiagnostics(resp) {
   const rows = [];
   if (d.beta_matrix) {
     const cells = d.beta_matrix.cells || [];
-    rows.push(`<div class="small mt-1"><strong>β 矩阵（F-82，causal_use=${esc(d.beta_matrix.causal_use || 'diagnostic_only')}）</strong>
+    rows.push(`<div class="small mt-1"><strong>β 矩阵（causal_use=${esc(d.beta_matrix.causal_use || 'diagnostic_only')}）</strong>
       ${cells.length ? `<div class="table-responsive"><table class="table table-sm mb-1 small">
         <thead><tr><th>波段对</th><th>β ± σ_β</th><th>color ± stat/cal</th><th>dt (d)</th></tr></thead>
         <tbody>${cells.map(c => `<tr><td>${esc(c.band_i)}–${esc(c.band_j)}</td>
@@ -275,19 +275,19 @@ function renderDiagnostics(resp) {
       <div class="text-secondary">${esc(d.beta_matrix.note || '')}</div></div>`);
   }
   if (d.resp_perturb) {
-    rows.push(`<div class="small mt-1"><strong>通带形状扰动（F-83）</strong>：resp_method=perturbation，
-      扰动组数 perturb_n=${d.resp_perturb.perturb_n}（请求 ${d.resp_perturb.perturb_n_requested}${d.resp_perturb.downscaled ? '，预算触顶已降规模（Q-27/ST-9）' : ''}），
-      幅度 C_SHAPE_PERT_EPS=${d.resp_perturb.eps}（工程假定，CA-39：库内无一条曲线自带形状误差）。</div>`);
+    rows.push(`<div class="small mt-1"><strong>通带形状扰动</strong>：resp_method=perturbation，
+      扰动组数 perturb_n=${d.resp_perturb.perturb_n}（请求 ${d.resp_perturb.perturb_n_requested}${d.resp_perturb.downscaled ? '，预算触顶已降规模' : ''}），
+      幅度 eps=${d.resp_perturb.eps}（工程假定：库内曲线不自带形状误差）。</div>`);
   }
   if (d.anchor_reinsert) {
     const cells = (d.anchor_reinsert.cells || []).filter(c => c.band != null);
-    rows.push(`<div class="small mt-1"><strong>锚点残差再插入（F-84，causal_use=${esc(d.anchor_reinsert.causal_use || 'diagnostic_only')}）</strong>
+    rows.push(`<div class="small mt-1"><strong>锚点残差再插入（causal_use=${esc(d.anchor_reinsert.causal_use || 'diagnostic_only')}）</strong>
       ${cells.length ? `<div class="table-responsive"><table class="table table-sm mb-1 small">
-        <thead><tr><th>波段</th><th>m_syn_local</th><th>Δm_local（与实测差）</th><th>1−h_i（F-56 收缩）</th></tr></thead>
+        <thead><tr><th>波段</th><th>m_syn_local</th><th>Δm_local（与实测差）</th><th>1−h_i（收缩）</th></tr></thead>
         <tbody>${cells.map(c => `<tr><td>${esc(c.band)}</td><td>${num(c.m_syn_local, 4)}</td>
           <td>${num(c.delta_m_local, 4)}</td><td>${num(c.shrink_1_minus_h, 4)}</td></tr>`).join('')}</tbody></table></div>`
         : `<span class="text-secondary">${esc((d.anchor_reinsert.note || '').split('｜').pop())}</span>`}
-      <div class="text-secondary">m_syn_local 是诊断镜像列，不顶替主列 mag（F-11：单一全局缩放因子不被架空）；与 (1−h_i) 收缩量并排显示。</div>
+      <div class="text-secondary">m_syn_local 是诊断镜像列，不顶替主列 mag；与 (1−h_i) 收缩量并排显示。</div>
       <div class="text-secondary">${esc(d.anchor_reinsert.note || '')}</div></div>`);
   }
   return `<div class="card mb-3"><div class="card-body py-2">
@@ -297,12 +297,12 @@ function renderDiagnostics(resp) {
 
 // ─── 结果区总渲染（徽章条在 workbench；这里：TXT-2/12 + 告警 + 表 + 脚注） ───
 
-// W-18：TXT-28 空态文案（逐字取自规格 §2.6 TXT-28 行，前端不另写一句）；
-// 容器 #specphot-empty 内恰一个 <a id="specphot-empty-register">，包住「滤光片」页短语，
+// 空态文案（维护者 2026-10-31 裁定：界面不出现规格内部编号，编号只留在代码注释与
+// 服务端告警数据里）；容器 #specphot-empty 内恰一个 <a id="specphot-empty-register">，
 // href 运行时从宿主 index.html 顶栏「滤光片」导航项 DOM 取（不写路由字面量）⇒ 宿主改路由不陈旧。
 const T28_BEFORE = '本源登记的波段都还没有透过率/响应曲线 ⇒ 没有曲线可卷，本模块不猜。下一步：到宿主';
 const T28_LINK = '「滤光片」页';
-const T28_AFTER = '为需要的波段登记曲线（本页只读，不代填）；急看量级可先切 mono 单色近似（F-15、TXT-10，它给的是量级而不是结果），或改用 anchored 模式以实测测光点定标（F-49、F-51）。';
+const T28_AFTER = '为需要的波段登记曲线（本页只读，不代填）；急看量级可先切 mono 单色近似（它给的是量级而不是结果），或改用 anchored 模式以实测测光点定标。';
 const TXT13 = '只处理来源条当前装载的这一条谱（库内谱或本次上传件）。';
 function filtersNavHref() {
   for (const a of document.querySelectorAll('#navLinks a.nav-link')) {
@@ -326,9 +326,9 @@ function renderEmptyState(el) {   // W-18：触发面 = 无来源 / 未计算 / 
   box.appendChild(a);
   box.appendChild(document.createTextNode(T28_AFTER));
   body.appendChild(box);
-  const note = document.createElement('div');   // TXT-13 旁注在场（在 #specphot-empty 之外，保证其 textContent 逐字）
+  const note = document.createElement('div');   // 旁注（在 #specphot-empty 之外，保证其 textContent 逐字）
   note.className = 'small text-secondary mt-2';
-  note.textContent = 'TXT-13：' + TXT13;
+  note.textContent = TXT13;
   body.appendChild(note);
   card.appendChild(body);
   el.innerHTML = '';
@@ -350,17 +350,17 @@ export function renderResults(el, ctx) {
     <div class="card mb-3"><div class="card-body py-2">
       <div class="d-flex align-items-center">
         <strong>结果表</strong>
-        <i class="bi bi-info-circle text-secondary ms-1" title="误差三列分列，不合成总误差（F-57）；每列求法/口径见表头与展开卡的 err_source/err_scope；Δm 着色：|Δm|>0.2 红、>0.5 深红"></i>
+        <i class="bi bi-info-circle text-secondary ms-1" title="误差三列分列，不合成总误差；每列求法/口径见表头与展开卡的 err_source/err_scope；Δm 着色：|Δm|>0.2 红、>0.5 深红"></i>
         <span class="small text-secondary ms-2">spectrum_source=${esc(r.spectrum_source)}
           ${r.spectrum_id != null ? '#' + r.spectrum_id : 'up:' + esc(String(r.spec_hash || '').slice(0, 8))}
           · mode ${esc(r.mode_requested)}→${esc(r.mode_effective)} · flux_kind=${esc(r.flux_kind)}</span>
       </div>
       ${anyTransmission ? `<div class="small text-warning mt-1">⚠ ${TXT.t2}</div>` : ''}
-      ${uncal ? `<div class="small text-warning mt-1">TXT-12：${TXT.t12}</div>` : ''}
+      ${uncal ? `<div class="small text-warning mt-1">⚠ ${TXT.t12}</div>` : ''}
       ${renderWarnings(r)}
       ${renderOutlierConfirm(r, ctx)}
       ${renderDiagnostics(r)}
-      ${anchored ? `<div class="small mt-1" title="${escAttr(TXT.t5n)}">TXT-5（anchored）：已用 ${sa.n_bands_used} 个波段
+      ${anchored ? `<div class="small mt-1" title="${escAttr(TXT.t5n)}">锚定缩放（anchored）：已用 ${sa.n_bands_used} 个波段
         求单一缩放因子 κ*=${num(sa.value, 6)}（方向 ${esc(sa.direction || '—')}），σ_κ=${num(sa.sigma, 6)}，
         协方差 ${esc(sa.cov_method || '—')}，χ²=${num(sa.chi2, 3)}/dof=${sa.dof ?? '—'}，
         锚点色域 ${sa.anchor_lambda_range_aa ? sa.anchor_lambda_range_aa.map(x => num(x, 0)).join('–') + ' Å' : '—'}；

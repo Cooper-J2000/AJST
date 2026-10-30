@@ -11,7 +11,7 @@ const C_MAX_UPLOAD_BYTES = 2_000_000;   // F-76（与后端 constants.py 同值�
 const PROV_LABEL = { source: '源表', file: '源表', user: '已手改', default: '默认' };
 const TXT = {
   t18: '本次上传只在本页内存中参与计算，未写入光谱库、未落盘；要入库请改用「光谱数据」页的上传对话框。', // TXT-18
-  t19: 'E(B−V) 按你填写的坐标现算（宿主 CSFD 图，R_V=3.1），不是库内该源的记录值；改坐标即重算。图不可用时按"未改正"出数并挂 CA-23。', // TXT-19
+  t19: 'E(B−V) 按你填写的坐标现算（宿主 CSFD 图，R_V=3.1），不是库内该源的记录值；改坐标即重算。图不可用时按「未改正」出数并附告警。', // TXT-19
   t21: '上传谱的波长未带框架标记，本模块按真空处理；若实际是空气波长，窄带偏移即达 0.92–2.20 Å（≈82–87 km/s），会同时污染通带边界与线位。库内谱相反：它已由宿主换到真空，但 wavelength_type 留空时「真空」是推定值。', // TXT-21
 };
 
@@ -186,7 +186,7 @@ function renderPanel() {
         </select>
       </div>
       ${S.zStaleNote ? `<div class="col-12 text-warning small" id="spZStaleNote">
-        z 已改动：静止系相关字段（红移改正/静止系量）已过期（IA-4），重算后更新；本改动不触发请求。</div>` : ''}
+        z 已改动：静止系相关字段（红移改正/静止系量）已过期，重算后更新；本改动不触发请求。</div>` : ''}
     </div>
 
     <div class="row g-2 mt-1 small align-items-end">
@@ -199,7 +199,7 @@ function renderPanel() {
           </select>`
         : `<input id="spFrame" class="form-control form-control-sm" value="${esc(frame || 'vacuum')}" readonly title="库内谱框架，只读回显">`}
         ${frameDefaultVacuum
-          ? `<div class="text-secondary sp-txt21 mt-1"><strong>CA-34 / TXT-21（框架未声明，按默认 vacuum）：</strong>${TXT.t21}</div>`
+          ? `<div class="text-secondary sp-txt21 mt-1"><strong>⚠ 波长框架未声明，按真空处理：</strong>${TXT.t21}</div>`
           : `<div class="text-secondary" title="${escAttr(TXT.t21)}">框架口径 ⚠（悬停看全文）</div>`}
       </div>
       <div class="col-md-8">
@@ -208,7 +208,7 @@ function renderPanel() {
           <div class="form-check form-switch mb-0">
             <input class="form-check-input sp-mw" type="checkbox" role="switch" id="spMwSwitch"
               ${S.params.mw_correct ? 'checked' : ''} ${gext ? 'disabled' : ''}
-              title="${gext ? '该谱已带宿主侧银河消光改正，不再二次施加（V-16/CA-30）' : '关闭 ⇒ 结果按未改正的观测谱给出'}">
+              title="${gext ? '该谱已带银河消光改正，不再二次施加' : '关闭 ⇒ 结果按未改正的观测谱给出'}">
             <label class="form-check-label" for="spMwSwitch">改正</label>
           </div>
           <input type="number" step="any" min="0" class="form-control form-control-sm sp-ebv sp-w110"
@@ -216,10 +216,10 @@ function renderPanel() {
           <button class="btn btn-sm btn-outline-secondary sp-ebvq"
             title="${escAttr(TXT.t19)}">查询 E(B−V)</button>
         </div>
-        <div class="text-secondary">${gext ? '⚠ 该谱已改正，不再二次施加（CA-30）。' : esc(ebvTxt)}</div>
+        <div class="text-secondary">${gext ? '⚠ 该谱已带银消改正，不再二次施加。' : esc(ebvTxt)}</div>
         ${gext && parentId ? `<div class="sp-parent-link">↩ 这条谱已改过（gext_corr），父谱为
           <a href="#/tools/specphot/${escAttr(parentId)}" title="装载父谱 #${escAttr(parentId)} 到本模块（原始谱未做银消改正）">父谱 #${escAttr(parentId)}</a>
-          ——需要自行定消光口径时请改用父谱（W-22）。</div>` : ''}
+          ——需要自行定消光口径时请改用父谱。</div>` : ''}
       </div>
     </div>
   </div></div>`;

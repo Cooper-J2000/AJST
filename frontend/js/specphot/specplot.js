@@ -23,7 +23,7 @@ const C_MAX_EXCLUDE = 32;   // Q-2 / V-13（与后端 specphot/constants.py 同�
 const C_DRAW_PTS = 2400;    // 绘制降采样上限（F-109 同族：只改图不改数）
 const C_SMOOTH_BOX_MAX_PX = 7;  // U-51 核长上限（与后端 constants.py 同值，越界 E-14）
 const TXT26 = '本图为显示平滑（boxcar 核长 N 像元，即全宽 N 像元），只用于看图；'
-  + '所有数值、误差与导出件都取自未平滑的逐点谱。（TXT-26，U-51 开启时恒显）';
+  + '所有数值、误差与导出件都取自未平滑的逐点谱。';
 const LINE_GROUPS = ['h', 'he', 'si_ii', 'ca_ii', 'fe_ii', 'mg_ii'];   // 默认叠加的宿主线组
 const HINT = '拖选 = 加入掩膜段 · 点击掩膜段 = 删除 · Shift+拖选 = 框选缩放（横纵轴）· '
   + '双击/按钮 = 恢复全域 · 输入框 = 直接键入显示范围（可超出默认全域）；'
@@ -85,7 +85,7 @@ function updateOverlayCaption() {
   if (!_capEl) return;
   const t = _deredResp ? txt22Text(_deredResp) : '';
   _capEl.innerHTML = t
-    ? `<span class="text-secondary" title="${escAttr(t)}">TXT-22：${esc(t)}</span>`
+    ? `<span class="text-secondary" title="${escAttr(t)}">${esc(t)}</span>`
     : '';
 }
 
@@ -100,7 +100,7 @@ export function renderSpecPlot(el, ctx) {
       <div class="card-header d-flex align-items-center py-2">
         ① 谱预览
         <i class="bi bi-info-circle text-secondary ms-2" title="${escAttr(HINT)}"></i>
-        <button class="btn btn-outline-secondary btn-sm ms-auto sp-zreset" title="恢复全域（U-13）">恢复全域</button>
+        <button class="btn btn-outline-secondary btn-sm ms-auto sp-zreset" title="恢复全域">恢复全域</button>
       </div>
       <div class="card-body py-2">
       <canvas id="spCv" class="w-100"
@@ -134,7 +134,7 @@ export function renderSpecPlot(el, ctx) {
   el.querySelector('.sp-zreset').addEventListener('click', () => { _view = null; clearRangeEdits(); draw(); });
   const spx = smoothPx(ctx.S);
   el.querySelector('#spSmoothCaption').innerHTML = spx
-    ? `<span class="text-warning" title="${escAttr(TXT26)}">TXT-26：${escAttr(TXT26.replace('N 像元', spx + ' 像元'))}</span>`
+    ? `<span class="text-warning" title="${escAttr(TXT26)}">${escAttr(TXT26.replace('N 像元', spx + ' 像元'))}</span>`
     : '';
   if (!_wired) {
     _wired = true;
@@ -413,7 +413,7 @@ function drawDered(g, X, Y, useLog, M, W, ov) {
   g.fillStyle = CC.tickSub;
   g.fillText('— 曲线 A：改正前', W - M.r - 4, M.t + 10);
   g.fillStyle = CC.type.I;
-  g.fillText('— 曲线 B：改正后 = 派生件、未入库（U-47）', W - M.r - 4, M.t + 22);
+  g.fillText('— 曲线 B：改正后 = 派生件、未入库', W - M.r - 4, M.t + 22);
   g.textAlign = 'left';
 }
 
@@ -449,7 +449,7 @@ function onUp() {
     draw(); return;
   }
   if ((S.maskRanges || []).length >= C_MAX_EXCLUDE) {
-    S.featureNotice = `掩膜段已达上限 ${C_MAX_EXCLUDE}（Q-2），先删一段再加`;
+    S.featureNotice = `掩膜段已达上限 ${C_MAX_EXCLUDE}，先删一段再加`;
     _ctx.refreshChrome(); return;
   }
   S.maskRanges.push([lamA, lamB]);   // px 递增 ⇒ lamA < lamB
@@ -478,8 +478,8 @@ export function renderComparePlot(el, ctx) {
   const rows = r ? (r.results || []).filter(x => x.delta_m != null && x.lambda_pivot_aa != null) : [];
   if (!rows.length) { el.innerHTML = '<div class="small text-secondary">无 Δm 数据（需配对锚点且该波段合成成功）。</div>'; return; }
   el.innerHTML = '<canvas class="sp-cmp-canvas"></canvas>'
-    + '<div class="small text-secondary">TXT-4：合成 vs 锚点（预览，未入库）· 点 = Δm=m_obs−mag（按 λ_pivot），'
-    + '竖条 = Δm_err，方框 = 手加锚点行，实心圆 = 源表锚点行；红虚线 = Δm=0。数据只来自同一次响应（IA-12）。</div>';
+    + '<div class="small text-secondary">合成 vs 锚点（预览，未入库）· 点 = Δm = m_obs − mag（按 λ_pivot），'
+    + '竖条 = Δm_err；方框 = 手加锚点，实心圆 = 源表锚点；红虚线 = Δm=0。</div>';
   const cv = el.querySelector('canvas');
   const W = el.clientWidth || 600, H = 220, dpr = window.devicePixelRatio || 1;
   cv.width = W * dpr; cv.height = H * dpr;

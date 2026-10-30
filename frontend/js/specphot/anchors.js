@@ -67,7 +67,7 @@ export function renderAnchors(el, ctx) {
       <td>${r._readonly
         ? `<input type="checkbox" class="form-check-input mt-0 sp-achk" data-band="${escAttr(key)}" ${checked ? 'checked' : ''}>`
         : `<input type="checkbox" class="form-check-input mt-0 sp-achk" data-band="${escAttr(key)}" ${checked ? 'checked' : ''}>`}</td>
-      <td>${esc(r.band)}${bad ? ' <i class="bi bi-exclamation-triangle text-danger" title="CA-33：同波段出现两行，请选一条"></i>' : ''}</td>
+      <td>${esc(r.band)}${bad ? ' <i class="bi bi-exclamation-triangle text-danger" title="同波段出现两行，请选一条"></i>' : ''}</td>
       <td>${esc(r.mag)}</td>
       <td>${esc(r.mag_system || 'AB')}</td>
       <td>${r.mjd != null && r.mjd !== '' ? esc(r.mjd)
@@ -86,7 +86,7 @@ export function renderAnchors(el, ctx) {
     <div class="card-header d-flex align-items-center py-2">
       ④ 定标锚点表
       <span class="small text-secondary fw-normal ms-2">手加 ${S.manualRows.length}/${C_MAX_ANCHORS}
-        ${conflicts.size ? `<span class="text-danger ms-2">CA-33：波段 ${[...conflicts].join('、')} 冲突，计算已禁用——请选一条</span>` : ''}</span>
+        ${conflicts.size ? `<span class="text-danger ms-2">波段 ${[...conflicts].join('、')} 冲突，计算已禁用——请选一条</span>` : ''}</span>
     </div>
     <div class="card-body py-2">
     <div class="table-responsive mt-1" style="max-height:280px;overflow:auto">
@@ -106,8 +106,8 @@ export function renderAnchors(el, ctx) {
         <div class="col-auto"><label class="form-label mb-0">星等系</label>
           <select class="form-select form-select-sm sp-ams">
             <option value="AB" selected>AB</option>
-            <option value="ST" disabled title="ST 待 M-5（P1 不可用）">ST</option>
-            <option value="Vega" disabled title="Vega 待该波段登记 vega2ab（F-9）——P1 手加行固定 AB">Vega</option>
+            <option value="ST" disabled title="暂不可用">ST</option>
+            <option value="Vega" disabled title="该波段未登记 vega2ab，暂不可用">Vega</option>
           </select></div>
         <div class="col-auto"><label class="form-label mb-0">时刻 MJD（可空）</label>
           <input type="number" step="any" class="form-control form-control-sm sp-amjd sp-w130"></div>

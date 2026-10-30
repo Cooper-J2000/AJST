@@ -16,12 +16,12 @@ const C_MAX_BOOT = 1000;                            // Q-15
 // TXT-8（S3 步 3 脚注，常驻）与 TXT-15（步 1 线型旁，随 line_kind 语义切换，W-23）
 const TXT8 = '未提供仪器分辨率时，宽度是观测宽度（含仪器卷积），不是本征线宽。';
 const TXT15 = {
-  emission: '发射线的流量是「高出连续谱的部分」（加性）；EW 的符号约定为发射正（F-66/F-67）。',
-  absorption: '吸收线的「深度」是「低于连续谱的部分」（乘性）；EW 的符号约定为吸收负（F-66/F-67）。',
+  emission: '发射线的流量是「高出连续谱的部分」（加性）；EW 的符号约定为发射正。',
+  absorption: '吸收线的「深度」是「低于连续谱的部分」（乘性）；EW 的符号约定为吸收负。',
 };
-// M-6/F-38：宿主线表整数 Å 且未标空气/真空帧（82–87 km/s 系统差）⇒ 只作位置标记
-const M6_TIP = 'M-6/F-38：宿主线表静止系波长全为整数 Å 且未标空气/真空帧（偏移即 '
-  + '82–87 km/s 系统差），未经复核只作位置标记，不得用于速度；vel_*/z_fit 恒 null。';
+// 宿主线表整数 Å 且未标空气/真空帧（82–87 km/s 系统差）⇒ 只作位置标记
+const M6_TIP = '宿主线表的静止系波长全为整数 Å 且未标空气/真空帧（歧义即 82–87 km/s 系统差），'
+  + '未经复核只作位置标记，不能用于速度；vel_*/z_fit 恒为 null。';
 // TXT-24（U-48 任一项开启时常驻；CA-45 触发时换成"系统项"那句，F-100③）与
 // TXT-25（forest_stats 空值旁常驻说明；闭集四值，T-71）
 const TXT24 = '该 log N(H I) 来自 Lyα 阻尼翼的 Voigt 拟合：z 固定在金属线测得区间内（z_source）、'
@@ -31,9 +31,9 @@ const TXT24_CA45 = '两族之差已超过统计误差 ⇒ 主导项是连续谱�
 const TXT25 = '本模块不产出 Lyman-森林统计量与中性氢分数：forest_stats 恒为空值，'
   + 'forest_stats_reasons[] 给出全部适用原因（单条视线 / 连续谱未定 / 分辨率低于参照 / LLS 弥散）。'
   + '原因集是闭集，不得自创第五条、不得留空。';
-const U48_TIP = 'U-48/P3d：三开关只随 API-4 提交（F-105③）；未勾 absorber_ident 时另两项禁用'
-  + '（不静默连带开启）；R 不可得（r_source=\'none\'，F-69）时 wing_logn 禁用——阻尼翼的形状需要仪器宽度。'
-  + 'M-6/M-4 前置缺 ⇒ 输出按缺前置降级（null + 书面原因）；全关时数值与既有键与基线逐字节相同（T-72①）。';
+const U48_TIP = '三个开关只随计算提交；未勾 absorber_ident 时另两项禁用（不静默连带开启）；'
+  + '无仪器分辨率 R 时 wing_logn 禁用——阻尼翼的形状需要仪器宽度；'
+  + '前置数据缺失时输出按缺前置降级（null + 书面原因）；全关时结果与基线完全一致。';
 
 function num(v, d = 4) {
   return (v == null || !isFinite(Number(v))) ? '—' : Number(v).toFixed(d);
@@ -98,13 +98,13 @@ export function linesMissing(ctx) {
   const S = ctx.S, p = S.lineParams;
   const out = [];
   if (!((S.sourceKind === 'catalog' && S.spectrumId != null) || !!S.upload)) out.push('缺谱：先装载一条谱');
-  if (!(Number(p.lambda_rest_aa) > 0)) out.push('缺线心：line.lambda_rest_aa 必填且为正数（F-34）');
+  if (!(Number(p.lambda_rest_aa) > 0)) out.push('缺线心：λ_rest 必填且为正数');
   if (!['emission', 'absorption'].includes(p.line_kind)) {
-    out.push('缺线型：line_kind 未确认（U-30 必选无默认，未确认不得进步 3 —— E-09）');
+    out.push('缺线型：发射/吸收必选，未确认不能进入下一步');
   }
   if (p.line_kind === 'absorption' && p.sky_handling === 'subtract') {
-    out.push("U-31/F-72②：天光『按线形扣除』只作用于天光发射表（F-86 扣除 [O I] 气辉线后再测吸收线）——"
-             + '若线心本身落在气辉线上仍会被 F-72③ 拒绝；确认这是你要的操作');
+    out.push('天光「按线形扣除」只作用于天光发射表（扣除 [O I] 气辉线后再测吸收线）——'
+             + '若线心本身落在气辉线上仍会被拒绝；确认这是你要的操作');
   }
   return out;
 }
@@ -140,21 +140,21 @@ export function renderLinesPanel(el, ctx) {
         value="${escAttr(p.lambda_rest_aa)}">
       半宽 ±Å：<input type="number" step="any" min="1" class="form-control form-control-sm d-inline-block w-auto sp-lhw"
         value="${escAttr(p.halfwidth)}"></div>
-    <div class="mt-1" title="${escAttr(TXT15[p.line_kind] || '两类线在连续谱两侧角色相反：发射加性 / 吸收乘性（F-66），未确认不得进步 3')}">
+    <div class="mt-1" title="${escAttr(TXT15[p.line_kind] || '两类线在连续谱两侧角色相反：发射加性 / 吸收乘性，未确认不得进入下一步')}">
       线型（必选，无默认）：${['emission', 'absorption'].map(k =>
         `<label class="me-2"><input type="radio" name="spLk" class="sp-lkind" value="${k}"
           ${p.line_kind === k ? 'checked' : ''} ${computing ? 'disabled' : ''}>${k === 'emission' ? '发射 emission' : '吸收 absorption'}</label>`).join('')}</div>
-    <div class="mt-1" title="大气吸收带永远只能 mask（F-72①）">天光处理：
+    <div class="mt-1" title="大气吸收带永远只能 mask">天光处理：
       <label class="me-2"><input type="radio" name="spSky" class="sp-lsky" value="mask"
         ${p.sky_handling !== 'subtract' ? 'checked' : ''} ${computing ? 'disabled' : ''}>mask（剔除）</label>
-      <label class="me-2" title="线窗内命中的天光发射段（[O I] 气辉线）按线形联合线性扣除；失败自动退回 mask（F-86/U-31）">
+      <label class="me-2" title="线窗内命中的天光发射段（[O I] 气辉线）按线形联合线性扣除；失败自动退回 mask">
         <input type="radio" name="spSky" class="sp-lsky" value="subtract"
         ${p.sky_handling === 'subtract' ? 'checked' : ''} ${computing ? 'disabled' : ''}>subtract（按线形扣除）</label></div>`;
   } else if (step === 2) {
     const additive = p.line_kind !== 'absorption';
     bodyHtml = `
     <div class="mt-1">基线形态（随步 1 线型切换）：
-      <i class="bi bi-info-circle text-secondary" title="EW 符号（F-67）：内部恒算有符号 W_signed，对外 ew_obs_aa=|W| 并回显 ew_signed_aa——${additive ? '发射 > 0' : '吸收 < 0'}。${escAttr(TXT15[p.line_kind] || '')}"></i></div>
+      <i class="bi bi-info-circle text-secondary" title="EW 符号：内部恒算有符号 W_signed，对外 ew_obs_aa=|W| 并回显 ew_signed_aa——${additive ? '发射 > 0' : '吸收 < 0'}。${escAttr(TXT15[p.line_kind] || '')}"></i></div>
     <div class="border-start border-3 ps-2 mt-1 ${additive ? 'text-success' : 'text-primary'}">
       ${additive
         ? '发射线 = <b>加性</b>基线：F(λ) = C(λ) + L(λ)，L ≥ 0；line_flux = ∫(F−C)dλ。'
@@ -168,9 +168,9 @@ export function renderLinesPanel(el, ctx) {
     <div class="mt-1">轮廓 ${PROFILES.map(k =>
       `<label class="me-2"><input type="radio" name="spLp" class="sp-lprof" value="${k}"
         ${p.profile === k ? 'checked' : ''} ${computing ? 'disabled' : ''}>${k}</label>`).join('')}
-      <label class="me-2 text-secondary" title="全库无仪器分辨率 R（前置 M-4）⇒ voigt 禁用；宽度只能作观测宽度报告（TXT-8/CA-08）">
+      <label class="me-2 text-secondary" title="全库无仪器分辨率 R ⇒ voigt 禁用；宽度只能按观测宽度报告">
         <input type="radio" disabled>voigt（禁用：无 R）</label></div>
-    <div class="mt-1" title="留空 = 无仪器分辨率 ⇒ 宽度按观测宽度报告（TXT-8）">R
+    <div class="mt-1" title="留空 = 无仪器分辨率 ⇒ 宽度按观测宽度报告">R
       <input type="number" step="any" min="0"
       class="form-control form-control-sm d-inline-block w-auto sp-lR" value="${escAttr(p.R)}"
       ${computing ? 'disabled' : ''}></div>
@@ -178,7 +178,7 @@ export function renderLinesPanel(el, ctx) {
       <select class="form-select form-select-sm w-auto d-inline sp-lframe" ${computing ? 'disabled' : ''}>
         ${[['', 'null（未核对——vel_* 禁用）'], ['air', 'air（空气）'], ['vacuum', 'vacuum（真空）']]
           .map(([v, t]) => `<option value="${v}" ${(p.line_frame || '') === v ? 'selected' : ''}>${t}</option>`).join('')}
-      </select> <span class="text-secondary small" title="${escAttr(M6_TIP)}">⚠ 线表帧未复核（M-6）</span></div>
+      </select> <span class="text-secondary small" title="${escAttr(M6_TIP)}">⚠ 线表帧未复核</span></div>
     <div class="mt-1" title="留空 = 谱记录 / 默认 0">z 覆写 <input type="number" step="any" min="0"
       class="form-control form-control-sm d-inline-block w-auto sp-lz" value="${escAttr(p.z)}" ${computing ? 'disabled' : ''}></div>
     <div class="mt-1">n_boot（≤${C_MAX_BOOT}）<input type="number" min="1" max="${C_MAX_BOOT}" step="1"
@@ -187,14 +187,14 @@ export function renderLinesPanel(el, ctx) {
       class="form-control form-control-sm d-inline-block w-auto sp-lseed" value="${escAttr(p.err_seed)}" ${computing ? 'disabled' : ''}></div>
     <div class="mt-1 text-secondary" title="${escAttr(M6_TIP)}">
       <label><input type="checkbox" class="form-check-input sp-lvel" disabled> velocity_output</label>
-      禁用：M-6 线表帧未复核 ⇒ vel_* 恒 null</div>
+      禁用：线表帧未复核 ⇒ vel_* 恒为 null</div>
     <div class="mt-1" title="${escAttr(U48_TIP)}">吸收系统 / 阻尼翼（只随计算提交）
       <label class="me-2"><input type="checkbox" class="form-check-input sp-u48" data-k="absorber_ident"
         ${p.absorber_ident ? 'checked' : ''} ${computing ? 'disabled' : ''}>absorber_ident</label>
-      <label class="me-2" title="${p.absorber_ident ? (nOr(p.R) == null ? 'R 不可得 ⇒ 禁用：阻尼翼的形状需要仪器宽度（F-69）' : '红侧翼的 Voigt 剖面拟合（z/b 钉住）+ 双连续谱族对照（F-99/F-100）') : '需先勾 absorber_ident（不静默连带开启）'}">
+      <label class="me-2" title="${p.absorber_ident ? (nOr(p.R) == null ? 'R 不可得 ⇒ 禁用：阻尼翼拟合需要仪器宽度' : '红侧翼的 Voigt 剖面拟合（z/b 钉住）+ 双连续谱族对照') : '需先勾 absorber_ident（不静默连带开启）'}">
         <input type="checkbox" class="form-check-input sp-u48" data-k="wing_logn"
         ${p.wing_logn ? 'checked' : ''} ${(!p.absorber_ident || nOr(p.R) == null || computing) ? 'disabled' : ''}>wing_logn${nOr(p.R) == null ? '（禁用：无 R）' : ''}</label>
-      <label class="me-2" title="${p.absorber_ident ? '饱和/未分辨方向判定（sat_flag 由被链接线行 depth 导出，F-104）' : '需先勾 absorber_ident'}">
+      <label class="me-2" title="${p.absorber_ident ? '饱和/未分辨方向判定（sat_flag 由被链接线行 depth 导出）' : '需先勾 absorber_ident'}">
         <input type="checkbox" class="form-check-input sp-u48" data-k="metal_sat_check"
         ${p.metal_sat_check ? 'checked' : ''} ${(!p.absorber_ident || computing) ? 'disabled' : ''}>metal_sat_check</label></div>`;
   }
@@ -207,15 +207,15 @@ export function renderLinesPanel(el, ctx) {
     <div class="d-flex flex-wrap gap-2 align-items-center mt-1">
       <button class="btn btn-outline-secondary btn-sm sp-lprev" ${step <= 1 || computing ? 'disabled' : ''}>上一步</button>
       <button class="btn btn-outline-secondary btn-sm sp-lnext" ${step >= 3 || computing ? 'disabled' : ''}
-        ${step === 1 && !canNext1 ? 'title="E-09：line_kind 未确认（U-30 必选）；线心必填" data-gate="1" disabled' : ''}>下一步</button>
+        ${step === 1 && !canNext1 ? 'title="线型必选、线心必填后才能进入下一步" data-gate="1" disabled' : ''}>下一步</button>
       <button class="btn btn-primary btn-sm sp-lcompute" ${missing.length || computing || busyLeft ? 'disabled' : ''}
-        title="步 3 的计算核（API-4）；步 1/2 也可直接算——缺项清单照常把门">计算</button>
+        title="步 1/2 也可直接计算，缺项照常把门">计算</button>
       <button class="btn btn-outline-secondary btn-sm sp-lexpcsv" ${!S.lastLines || computing ? 'disabled' : ''}
-        title="§4.3 谱线导出块（TXT-11+TXT-23+双哈希头，F-44）">导出 CSV（线表）</button>
+        title="谱线导出（含误差口径与双哈希头）">导出 CSV（线表）</button>
       <button class="btn btn-outline-secondary btn-sm sp-lexpabs" ${!S.lastLines || computing ? 'disabled' : ''}
-        title="§4.3 第四块：吸收系统表导出（列集恒定；U-48 关 ⇒ 表头照写、无数据行，F-105①④/T-72②）">导出 CSV（吸收系统）</button>
+        title="吸收系统表导出；未开启吸收系统诊断时只有表头">导出 CSV（吸收系统）</button>
       <button class="btn btn-outline-secondary btn-sm sp-lexpjson" ${!S.lastLines || computing ? 'disabled' : ''}
-        title="U-17/F-44：API-4 响应原文">导出 JSON</button>
+        title="响应原文">导出 JSON</button>
     </div>
     <div class="mt-1 text-warning small">${esc(S.busyNotice || '')}</div>
     <div class="mt-1 text-warning small">${esc(S.featureNotice || '')}</div>
@@ -302,7 +302,7 @@ export function renderLinesResults(el, ctx) {
   if (!r) {
     el.innerHTML = '<div class="card mb-3"><div class="card-body py-2">'
       + '<strong>S3 谱线测量</strong><div class="small text-secondary mt-1">'
-      + '尚未计算：右侧三步向导——选线区 → 定基线 → 拟合轮廓（U-23）。</div></div></div>';
+      + '尚未计算：右侧三步向导——选线区 → 定基线 → 拟合轮廓。</div></div></div>';
     return;
   }
   const row = (r.lines || [])[0] || {};
@@ -320,12 +320,12 @@ export function renderLinesResults(el, ctx) {
       profile=${esc(row.model)} · z_eff=${num(r.z_eff, 4)} · r_source=${esc(row.r_source)} ·
       λ_center_obs=${num(r.lambda_center_obs_aa, 2)} Å ± ${num(r.half_width_aa, 1)}</span>
       <span class="ms-auto badge ${row.detected ? 'bg-success' : 'bg-secondary'}">${row.detected ? '检出' : '未检出'}</span></div>
-    <div class="small mt-1">TXT-15：${esc(TXT15[row.line_kind] || '')}
-      <span class="text-secondary">F-67：${isEm ? 'depth 恒 null（发射线）' : 'line_flux 恒 null（吸收线）'}</span></div>
+    <div class="small mt-1">${esc(TXT15[row.line_kind] || '')}
+      <span class="text-secondary">${isEm ? '发射线：depth 恒为 null' : '吸收线：line_flux 恒为 null'}</span></div>
     <div class="table-responsive mt-1"><table class="table table-sm mb-0 small sp-result-table"><tbody>
       <tr><td>λ_obs</td><td>${ewPair(row.lambda_obs_vac_aa, row.lambda_err_aa, 3)} Å
         <span class="text-secondary">[err_source.lambda_obs_vac_aa=${esc((row.err_source || {}).lambda_obs_vac_aa || 'none')}]</span></td></tr>
-      <tr><td>EW</td><td>signed ${ewPair(row.ew_signed_aa, row.ew_err_aa)} Å（TXT-15 符号约定）·
+      <tr><td>EW</td><td>signed ${ewPair(row.ew_signed_aa, row.ew_err_aa)} Å（符号约定见上）·
         |W| ${num(row.ew_obs_aa, 3)} Å · rest ${ewPair(row.ew_rest_aa, row.ew_rest_err_aa)} Å
         （ew_err_form=${esc(row.ew_err_form)}：photon ${num((row.ew_err_terms || {}).photon)} /
         continuum ${num((row.ew_err_terms || {}).continuum)} /
@@ -334,35 +334,33 @@ export function renderLinesResults(el, ctx) {
         ? `<tr><td>line_flux</td><td>${ewPair(row.line_flux, row.line_flux_err)} erg/s/cm²
             <span class="text-secondary">[err_source=${esc((row.err_source || {}).line_flux || 'none')}]</span></td></tr>`
         : `<tr><td>depth</td><td>${num(row.depth, 4)}（+${num(row.depth_err_hi, 4)}/−${num(row.depth_err_lo, 4)}；
-            ${esc((row.err_source || {}).depth || 'none')}——不对称分位不得当 1σ 读，F-95②）</td></tr>`}
+            ${esc((row.err_source || {}).depth || 'none')}——不对称分位不得当 1σ 读）</td></tr>`}
       <tr><td>FWHM_obs</td><td>${ewPair(row.fwhm_obs_aa, row.fwhm_obs_err_aa, 3)} Å
-        <span class="text-secondary">TXT-8：${esc(row.width_note || TXT8)}</span> ·
+        <span class="text-secondary">${esc(row.width_note || TXT8)}</span> ·
         fwhm_intr/vel_fwhm/z_fit = ${esc(String(row.fwhm_intr_aa))}/${esc(String(row.vel_fwhm_kms))}/${esc(String(row.z_fit))}
-        <span title="${escAttr(row.velocity_family_note || 'M-6 留位')}">（M-6 留位）</span></td></tr>
-      <tr><td>snr_res</td><td>${num(row.snr_res, 2)}（snr_def=${esc(row.snr_def)}，F-68 每分辨率元口径） ·
+        <span title="${escAttr(row.velocity_family_note || '线表帧未复核 ⇒ 速度族量恒为 null')}">（暂不可用）</span></td></tr>
+      <tr><td>snr_res</td><td>${num(row.snr_res, 2)}（snr_def=${esc(row.snr_def)}，每分辨率元口径） ·
         n_win_pix=${esc(String(row.n_win_pix))} · χ²/dof=${num(row.chi2, 2)}/${esc(String(row.dof))} ·
         cov_method=${esc(String(row.cov_method))} · rho_used=${num(row.rho_used, 3)}</td></tr>
-      ${row.detected ? '' : `<tr><td>上限</td><td>W &lt; ${num(row.upper_limit_3sigma, 3)} Å（3σ，F-68/CA-44④）——
+      ${row.detected ? '' : `<tr><td>上限</td><td>W &lt; ${num(row.upper_limit_3sigma, 3)} Å（3σ）——
         ${esc(row.null_reason || '')}</td></tr>`}
       <tr><td>基线</td><td>type=${esc(row.baseline_type || 'poly')}（${esc((row.baseline || {}).poly_basis || '')}）·
         order=${esc(String((row.baseline || {}).order))} · cond_2=${num((row.baseline || {}).cond_2, 3)} ·
-        n_nodes=${esc(String((row.baseline || {}).n_nodes))}（F-36 侧带）</td></tr>
+        n_nodes=${esc(String((row.baseline || {}).n_nodes))}</td></tr>
       <tr><td>线比/柱密度</td><td>ratio=${esc(String(row.ratio))} · ratio_ref=${esc(String(row.ratio_ref))} ·
-        column_density=${esc(String(row.column_density))}（单行请求 + M-6 振子强度库未备 ⇒ null + 书面原因，见 notes）</td></tr>
+        column_density=${esc(String(row.column_density))}（单行请求且振子强度库未备 ⇒ null，原因见 notes）</td></tr>
     </tbody></table></div>
-    <div class="small text-secondary mt-1">err_source（TXT-23 逐键口径）：${es || '—'}</div>
-    <div class="small ${excl ? 'text-warning' : 'text-secondary'} mt-1">掩膜（F-72①②，两类措辞不混用）：${excl
+    <div class="small text-secondary mt-1">err_source 逐键口径：${es || '—'}</div>
+    <div class="small ${excl ? 'text-warning' : 'text-secondary'} mt-1">掩膜：${excl
       ? '<ul class="mb-0">' + excl + '</ul>' : '线窗内无掩膜段命中'}</div>
-    ${row.sky_subtract ? `<div class="small ${row.sky_subtract.reverted ? 'text-warning' : 'text-secondary'} mt-1">天光处理（F-86/U-31）：
+    ${row.sky_subtract ? `<div class="small ${row.sky_subtract.reverted ? 'text-warning' : 'text-secondary'} mt-1">天光处理：
       sky_subtracted=${esc(String(row.sky_subtracted))} · n_sky_lines=${esc(String(row.sky_subtract.n_sky_lines))} ·
-      RMS 比=${num(row.sky_subtract.rms_ratio, 3)}（C_SKY_RESID_FLOOR=0.7）——${esc(row.sky_subtract.note || '')}</div>` : ''}
-    <div class="small text-secondary mt-1">W-25①（线表侧）：line_frame=${esc(String((g.w25_1_line_side || {}).line_frame))} ·
-      verified=${esc(String((g.w25_1_line_side || {}).verified))}——未经 M-6 复核 ⇒ vel_* 只作禁用、强提交返回
-      E-14（line_frame_unverified）。</div>
-    <div class="small text-secondary mt-1">W-25②（谱级）：lambda_frame=${esc(String((g.w25_2_spectrum_side || {}).lambda_frame))} ·
-      blocked=${esc(String((g.w25_2_spectrum_side || {}).blocked))}——unknown ⇒ vel_*/z_fit 禁用
-      （lambda_frame_unknown）。两道独立的门，文案不合并。</div>
-    <div class="small text-secondary mt-1">diagnostics.cross_link_gate（F-103）：${esc(JSON.stringify((r.diagnostics || {}).cross_link_gate || {}))}</div>
+      RMS 比=${num(row.sky_subtract.rms_ratio, 3)}（阈值 0.7）——${esc(row.sky_subtract.note || '')}</div>` : ''}
+    <div class="small text-secondary mt-1">线表侧框架：line_frame=${esc(String((g.w25_1_line_side || {}).line_frame))} ·
+      verified=${esc(String((g.w25_1_line_side || {}).verified))}——未经复核 ⇒ vel_* 恒为 null。</div>
+    <div class="small text-secondary mt-1">谱级框架：lambda_frame=${esc(String((g.w25_2_spectrum_side || {}).lambda_frame))} ·
+      blocked=${esc(String((g.w25_2_spectrum_side || {}).blocked))}——unknown ⇒ vel_*/z_fit 禁用。</div>
+    <div class="small text-secondary mt-1">cross_link_gate：${esc(JSON.stringify((r.diagnostics || {}).cross_link_gate || {}))}</div>
     ${absorberCardHtml(ctx)}
     ${warn ? `<div class="small text-warning mt-1">告警：${warn}</div>` : ''}
   </div></div>`;
@@ -393,14 +391,14 @@ function absorberCardHtml(ctx) {
       <div class="small">族A（${esc(String(sy.cont_family_a))}）logN=${num(sy.wing_logn, 3)}
         [+${num(sy.wing_logn_err_hi, 3)}/−${num(sy.wing_logn_err_lo, 3)}] ·
         族B（${esc(String(sy.cont_family_b))}）logN_alt=${num(sy.wing_logn_alt, 3)}
-        [+${num(sy.wing_logn_alt_err_hi, 3)}/−${num(sy.wing_logn_alt_err_lo, 3)}]——TXT-24：${esc(spreadBad ? TXT24_CA45 : TXT24)}</div>
+        [+${num(sy.wing_logn_alt_err_hi, 3)}/−${num(sy.wing_logn_alt_err_lo, 3)}]——${esc(spreadBad ? TXT24_CA45 : TXT24)}</div>
       ${(sy.notes || []).length ? `<div class="small text-secondary">notes：${(sy.notes || []).map(n => esc(n)).join('；')}</div>` : ''}
-      ${sw ? `<div class="small text-warning">系统告警（CA-45/CA-46 不折叠，导出件同一行可见）：${sw}</div>` : ''}
+      ${sw ? `<div class="small text-warning">系统告警：${sw}</div>` : ''}
     </div>`;
   }).join('');
-  return `${u48on ? `<div class="small text-secondary mt-1">TXT-25：${esc(TXT25)}
+  return `${u48on ? `<div class="small text-secondary mt-1">${esc(TXT25)}
       （forest_stats=${esc(String((r.diagnostics || {}).forest_stats))}，forest_stats_reasons=${esc(JSON.stringify(dg.forest_stats_reasons || []))}）</div>` : ''}
-    ${cards ? `<div class="mt-1"><b>吸收系统卡（U-48/F-105④）</b>${cards}</div>` : ''}`;
+    ${cards ? `<div class="mt-1"><b>吸收系统</b>${cards}</div>` : ''}`;
 }
 
 // ─── S3 计算（API-4；状态机与 S1/S2 同一套 IA 状态） ─────────────────────────

@@ -101,17 +101,17 @@ async function spPost(path, body, signal = null) {
 // 步 1 的 U-31（F-86），本 S1/S2 面板的开关不消费 ⇒ 禁用并指路） ─────────────
 const DIAG_META = [
   ['z_from_lines', 'M6',
-   '由线位反推红移（F-81）：实现已随 P3c 就位，但候选线表须 M-6 复核（line_frame + f 值，registry 复核表仍为空）才有判据——整数 Å 线表的空气/真空歧义即 82–87 km/s。解锁条件：M-6 完成。开启后新增 diagnostics{}.z_from_lines（z_fit/σ_z/逐线采信-否决），CA-36 可达；计算 ≤300 ms（FFT 互相关，无迭代）'],
+   '由线位反推红移：候选线表尚未完成复核（整数 Å 线表的空气/真空歧义即 82–87 km/s），暂不解锁。开启后新增 z_from_lines 诊断（z_fit / σ_z / 逐线采信-否决）；计算 ≤300 ms，无迭代'],
   ['beta_matrix', 'P2c',
-   '两两颜色 β 矩阵（F-82）：新增 diagnostics{}.beta_matrix 上三角格集（每格 beta/σ_β/color/dt_d），CA-40 可达；新增主表列：无；新增计算规模：O(波段²) 纯函数，可忽略'],
+   '两两颜色 β 矩阵：新增逐波段对的 beta / σ_β / color / dt 格集；新增计算 O(波段²) 纯函数，可忽略'],
   ['resp_perturb', 'P2c',
-   '通带形状扰动 ⇒ 真实 σ_resp（F-83）：mag_err_resp 换扰动散布口径（resp_method=perturbation，CA-39）；新增主表列：无（既有两列换值）；新增计算规模：60 组 × 波段数次向量化积分（≤2 s 预算内，触顶降规模并回显 perturb_n，Q-27/ST-9）'],
+   '通带形状扰动 ⇒ 真实 σ_resp：mag_err_resp 换扰动散布口径；60 组 × 波段数次向量化积分（≤2 s 预算，触顶降规模并回显 perturb_n）'],
   ['anchor_reinsert', 'P2c',
-   '锚点残差再插入（F-84）：新增列 m_syn_local（诊断镜像，不顶替 mag）+ diagnostics{}.anchor_reinsert 每波段 (1−h_i) 收缩量并排；新增计算规模：每参与波段 1 次重积分'],
+   '锚点残差再插入：新增 m_syn_local 诊断镜像列（不顶替主列 mag）与逐波段收缩量 (1−h_i)；每参与波段 1 次重积分'],
   ['frame_probe', 'M6',
-   '上传件波长框架反证（F-85）：实现已随 P3c 就位，但参考特征（大气带/天光线）的真空位置须经 M-6 复核才有判据（C_MASK 表整数 Å 中心既非 air 也非 vacuum 精确值）。解锁条件：M-6 完成。开启后新增 diagnostics{}.frame_probe（frame_suggestion/n_support/log_lik_ratio），只进诊断、不自动改写 U-39'],
+   '上传件波长框架反证：参考特征（大气带/天光线）的真空位置待复核 ⇒ 暂不解锁。开启后新增 frame_probe 诊断（frame_suggestion / n_support / log_lik_ratio），只进诊断、不自动改写框架设置'],
   ['sky_subtract', 'U31',
-   "天光发射线联合线性扣除（F-86）：已随 P3c 上线，但消费点在 S3 步 1 的 U-31（sky_handling='subtract'，API-4 线测量；CA-37 失败自动退回 mask，sky_subtraction 计入 not_in_budget）。本 S1/S2 测光面板不消费该开关"],
+   '天光发射线联合线性扣除：消费点在 S3 步 1 的「天光处理 = subtract」，本测光面板不消费该开关 ⇒ 此处禁用'],
 ];
 
 // ─── IA-11 参数记忆：sessionStorage（不存结果、绝不存上传谱数组） ───
@@ -154,7 +154,7 @@ function missingList() {
   if (!hasSpec) out.push('缺谱：先选择一条库内谱，或上传 / 粘贴并解析成功');
   if (hasSpec && !S.selectedBands.length) out.push('缺波段：至少勾选 1 个波段');
   const conf = conflictBands(S);
-  if (conf.size) out.push(`锚点冲突（CA-33）：同波段出现两行 ${[...conf].join('、')}，请选一条`);
+  if (conf.size) out.push(`锚点冲突：同波段出现两行（${[...conf].join('、')}），请选一条`);
   for (const [key, label] of [['ra', 'RA'], ['dec', 'Dec']]) {
     const v = String(S.metaForm[key] || '').trim();
     if (v && parseCoord(v, key === 'ra').err) out.push(`${label} 坐标无法解析（十进制度或 12:34:56.7）`);
@@ -249,7 +249,7 @@ function renderBadges() {
         title="${escAttr(TXT.t1)}" style="${grey ? 'opacity:.5' : ''}">${k}: ${v}${warn}</span>`;
   const kind = r ? [...new Set(r.results.map(x => x.curve_kind))].join('/') : '—';
   const kindWarn = kind.includes('transmission') || kind.includes('unknown') ? '⚠' : '';
-  const up = S.upload ? ` <span class="text-secondary small" title="来源标记（IA-17）">up:${esc(String(S.upload.spec_hash || '').slice(0, 8))}</span>` : '';
+  const up = S.upload ? ` <span class="text-secondary small" title="上传件来源标记">up:${esc(String(S.upload.spec_hash || '').slice(0, 8))}</span>` : '';
   el.innerHTML = `
     <div class="d-flex flex-wrap gap-2 align-items-center py-1 border-bottom">
       ${seg('模式', r ? esc(r.mode_effective) : '—')}
@@ -286,11 +286,11 @@ function rebinScreenLine(r) {
   if ((p.factor || 1) <= 1) return '';
   const nodes = r.results && r.results[0] && r.results[0].curve_nodes;
   const rhoNote = p.rebin_gain == null
-    ? ' <span class="text-warning">无相关估计 ⇒ 收益不可声明（CA-49③）</span>' : '';
-  return `<div class="small text-secondary py-1">合束回显（CA-49 三键同屏）：`
+    ? ' <span class="text-warning">无相关估计 ⇒ 收益不可声明</span>' : '';
+  return `<div class="small text-secondary py-1">合束回显：`
     + `rebin_gain=<b>${p.rebin_gain ?? 'null'}</b>${rhoNote} ／ curve_nodes=${nodes ?? 'none'} ／ `
-    + `px_per_fwhm_after=${p.px_per_fwhm_after ?? 'null（无 R ⇒ 闸门无从判定，CA-47③）'} ／ `
-    + `<span title="F-107③/F-29①">要并排比较两个因子，需要同一 preprocess_hash</span></div>`;
+    + `px_per_fwhm_after=${p.px_per_fwhm_after ?? 'null（无仪器分辨率 ⇒ 无从判定）'} ／ `
+    + `要并排比较两个因子，需要同一 preprocess_hash</div>`;
 }
 
 // ─── ② 波段选择（U-04 系统筛选 + U-05 chips） ───
@@ -319,9 +319,9 @@ function renderBandCard() {
       const monoOk = !b.has_curve && S.params.allow_mono === true;   // 单色回退开启 ⇒ 无曲线波段可选
       const dis = (!b.has_curve && !monoOk) || (full && !on);
       const title = b.has_curve
-        ? `λ=${b.wavelength ?? '—'} Å · 曲线口径 ${esc(b.curve_kind || '未登记')}${b.has_curve ? '' : ''}`
-        : (monoOk ? '无透过率曲线：将以 mono 单色近似计算（CA-04/CA-01，仅量级参考）'
-                  : '无透过率曲线，仅可单色近似——勾选下方「单色回退（mono）」后可选');
+        ? `λ=${b.wavelength ?? '—'} Å · 曲线口径 ${esc(b.curve_kind || '未登记')}`
+        : (monoOk ? '无透过率曲线：按单色近似计算，仅量级参考'
+                  : '无透过率曲线：勾选下方「单色回退」后可选');
       const dot = b.has_curve ? '' : (monoOk
         ? ' <span class="badge text-bg-warning py-0" title="mono 单色近似">mono</span>'
         : '<i class="bi bi-slash-circle text-secondary ms-1"></i>');
@@ -338,7 +338,7 @@ function renderBandCard() {
       </div>
       <div class="card-body py-2">
       <div class="small">${chips || '<span class="text-secondary">该筛选下无波段</span>'}</div>
-      <div class="form-check form-check-inline small mt-1" title="开启后无曲线波段可走 mono 单色近似；开启即必挂 CA-04">
+      <div class="form-check form-check-inline small mt-1" title="开启后无曲线波段按单色近似计算（仅量级参考）">
         <input class="form-check-input sp-mono" type="checkbox" id="spAllowMono" ${S.params.allow_mono ? 'checked' : ''}>
         <label class="form-check-label" for="spAllowMono">单色回退（mono）<span class="text-danger">⚠</span></label>
       </div>
@@ -404,9 +404,9 @@ function errcolBlock(computing) {
   const cur = S.params.errcol_choice;
   return `<div class="mt-1 sp-errcol">误差列判定 <b>${esc(verdict)}</b> ≠ ok（二选一后才可计算）：
     ${radio('sp-ec', 'spEc', 'proxy', cur, computing, '按代理误差重算',
-            '回落二阶差分代理误差；该误差列不参与本次结果（CA-47②）')}
+            '回落二阶差分代理误差；该误差列不参与本次结果')}
     ${radio('sp-ec', 'spEc', 'as_provided', cur, computing, '坚持用该误差列',
-            "sigma_method='spec_err' 常驻；该列已被判定不可信（CA-47①）")}
+            '结果将一直标注使用该误差列；该列已被判定不可信')}
   </div>`;
 }
 
@@ -425,7 +425,7 @@ function renderRightPanel() {
   // W-17：flux_kind 非 absolute ⇒ direct 置灰 + tooltip 指向 CA-03 降级语义（TXT-12）
   const fluxKind = currentFluxKind();
   const directDis = computing || ['uncalibrated', 'contradictory', 'unknown'].includes(fluxKind);
-  const directTip = 'CA-03/TXT-12：该谱无可用绝对流量口径，direct 会按 anchored/model 降级，故置灰';
+  const directTip = '该谱无可用绝对流量口径，direct 会按 anchored/model 降级，故置灰';
   const anchorsN = (S.spectrumInfo ? (S.spectrumInfo.n_catalog_anchors || 0) : 0) + S.manualRows.length;
   // W-15②：窄屏（≤576px）参数抽屉；首次渲染按视口决定默认态（窄=收起），桌面恒展开
   if (S.paramOpen === undefined) S.paramOpen = window.innerWidth > 576;
@@ -436,7 +436,7 @@ function renderRightPanel() {
         ③ 参数
         <button type="button" class="btn btn-sm btn-outline-secondary ms-auto d-sm-none sp-param-toggle"
           aria-expanded="${S.paramOpen ? 'true' : 'false'}" aria-controls="spParamBody"
-          title="开合参数抽屉（W-15）">参数</button>
+          title="开合参数抽屉">参数</button>
       </div>
       <div class="card-body py-2" id="spParams">
       <div class="sp-param-body ${S.paramOpen ? '' : 'sp-closed'}" id="spParamBody">
@@ -449,12 +449,12 @@ function renderRightPanel() {
           <div>定标模式</div>
           ${['auto', 'anchored'].map(v => radio('sp-mode', 'spMode', v, p.mode, computing, v)).join('')}
           ${radio('sp-mode', 'spMode', 'direct', p.mode, directDis, 'direct', directDis ? directTip : '')}
-          ${radio('sp-mode', 'spMode', 'model', p.mode, computing, 'model', 'model 定标：用 S2 连续谱模型曲线代替观测谱（§3.3 model 行，U-22）；需先在 S2 页签完成可比拟合')}
+          ${radio('sp-mode', 'spMode', 'model', p.mode, computing, 'model', '用 S2 连续谱模型曲线代替观测谱定标；需先在 S2 页签完成一次可比拟合')}
         </div>
         <div class="col-4">
           <div>星等制</div>
           ${radio('sp-ms', 'spMs', 'AB', p.mag_system, computing, 'AB')}
-          ${radio('', '', 'ST', '', true, 'ST', 'ST 需库内没有的 Vega 参考谱（P1 禁用，F-48/E-08）')}
+          ${radio('', '', 'ST', '', true, 'ST', '暂不可用：库内无 Vega 参考谱')}
           ${radio('sp-ms', 'spMs', 'Vega', p.mag_system, computing, 'Vega')}
         </div>
         <div class="col-4">
@@ -473,8 +473,8 @@ function renderRightPanel() {
         ${DIAG_META.map(([k, phase, tip]) => {
           const locked = phase !== 'P2c';
           const badge = phase === 'P2c' ? '' : phase === 'M6'
-            ? ' <span class="badge bg-secondary">M-6</span>'
-            : ' <span class="badge bg-secondary">U-31</span>';
+            ? ' <span class="badge bg-secondary">待复核</span>'
+            : ' <span class="badge bg-secondary">见 S3</span>';
           const on = !!(S.diagFlags || {})[k];
           return `<div class="col-6 col-md-4">
             <label class="form-check${locked ? ' text-secondary' : ''}" title="${escAttr(tip)}">
@@ -490,18 +490,18 @@ function renderRightPanel() {
           <div class="col-4">
             <div>合束因子</div>
             <select class="form-select form-select-sm sp-factor" ${computing ? 'disabled' : ''}
-              title="合束（F-108）：只加粗不减细的块内平均，面积守恒；改动即需重算。取值闭集 [1,2,3,4,6,8]。当前全库无仪器分辨率（r_source='none'）⇒ 欠分辨闸门无从判定（CA-47③）">
+              title="合束：只加粗不减细的块内平均，面积守恒；改动即需重算。取值 [1,2,3,4,6,8]。当前全库无仪器分辨率 ⇒ 欠分辨检查无从判定">
               ${[1, 2, 3, 4, 6, 8].map(k => `<option value="${k}" ${Number(S.params.factor) === k ? 'selected' : ''}>${k}</option>`).join('')}
             </select>
           </div>
           <div class="col-3">
             <div>绘图平滑</div>
-            <label class="form-check form-check-inline" title="display_smoothed（F-109）：只改图不改数——开启不转 stale、不进任何哈希、不进导出件（纯前端绘制）；开启时 TXT-26 常驻图注">
+            <label class="form-check form-check-inline" title="只改图不改数：不参与计算、不进导出件；开启时图上注明平滑口径">
               <input type="checkbox" class="form-check-input sp-smooth-on" ${S.params.smooth_on ? 'checked' : ''}> 开启
             </label>
             <input type="number" min="1" max="7" step="1" class="form-control form-control-sm sp-smooth-px"
               value="${escAttr(String(S.params.smooth_px ?? 3))}" aria-label="平滑核长（全宽，像元）"
-              title="核长（全宽）C_SMOOTH_BOX_PX=3 默认，上限 7（越界 E-14）" ${computing ? 'disabled' : ''}>
+              title="核长（全宽）默认 3，上限 7" ${computing ? 'disabled' : ''}>
           </div>
           <div class="col-5">
             <div title="与图上框选同一份掩膜；lo<hi 且须与覆盖重叠，总段数 ≤ 32">掩膜段（Å）</div>
@@ -527,9 +527,9 @@ function renderRightPanel() {
           <button class="btn btn-outline-secondary btn-sm sp-cancel" style="display:${computing ? '' : 'none'}">取消</button>
           <button class="btn btn-outline-secondary btn-sm sp-reset" ${computing ? 'disabled' : ''}>重置为默认</button>
           <button class="btn btn-outline-secondary btn-sm sp-expcsv" ${!r || computing ? 'disabled' : ''}
-            title="U-17/F-44：§4.3 列序 + TXT-11 头注释；无结果时禁用">导出 CSV</button>
+            title="列序冻结，含口径头注释；无结果时禁用">导出 CSV</button>
           <button class="btn btn-outline-secondary btn-sm sp-expjson" ${!r || computing ? 'disabled' : ''}
-            title="U-17/F-44：API-2 响应原文">导出 JSON</button>
+            title="响应原文">导出 JSON</button>
         </div>
         <div class="mt-1 text-warning small" id="spBusyNotice">${busyLeft
           ? `服务忙，${busyLeft}s 后可重试（429）` : esc(S.busyNotice || '')}</div>
@@ -573,7 +573,7 @@ function renderRightPanel() {
     if (smoothPx.value !== '' && isFinite(v) && v >= 1 && v <= 7 && Number.isInteger(v)) {
       S.params.smooth_px = v; S.errorMsg = null;
     } else {
-      S.errorMsg = 'U-51：平滑核长须为 [1, 7] 内整数（Q-33，越界 E-14）';
+      S.errorMsg = '平滑核长须为 [1, 7] 内整数';
     }
     saveSession(); refreshPlot(); renderRightPanel();
   });
@@ -584,7 +584,7 @@ function renderRightPanel() {
     const loS = el.querySelector('.sp-mask-lo').value, hiS = el.querySelector('.sp-mask-hi').value;
     const lo = Number(loS), hi = Number(hiS);
     if (loS === '' || hiS === '' || !isFinite(lo) || !isFinite(hi) || lo >= hi) {
-      S.errorMsg = 'U-50：掩膜段须为数字且 lo < hi'; renderRightPanel(); return;
+      S.errorMsg = '掩膜段须为数字且 lo < hi'; renderRightPanel(); return;
     }
     if (S.maskRanges.length >= C_MAX_EXCLUDE) {   // Q-2/F-107⑤（服务端并集后同闸）
       S.errorMsg = `掩膜段数已达上限 ${C_MAX_EXCLUDE}`; renderRightPanel(); return;
@@ -765,7 +765,7 @@ function renderTabs() {
         data-tab="${id}" ${extra}><i class="bi bi-card-list"></i> ${label}</a></li>`;
   el.innerHTML = `<ul class="nav nav-tabs mb-2">
     ${item('s1', 'S1 合成测光')}
-    ${item('cmp', '对照面板', cmpDis ? `title="需 ≥1 个锚点才能对照（U-18）" data-disabled="1" style="pointer-events:auto;opacity:.5"` : '')}
+    ${item('cmp', '对照面板', cmpDis ? `title="需 ≥1 个锚点才能对照" data-disabled="1" style="pointer-events:auto;opacity:.5"` : '')}
     ${item('s2', 'S2 连续谱拟合')}
     ${item('s3', 'S3 谱线测量')}
   </ul>`;
@@ -798,7 +798,7 @@ function layoutPanes() {
 function renderHeader() {
   const el = _els.header;
   const back = (S.sourceKind === 'catalog' && S.tid)
-    ? `<a class="btn btn-sm btn-outline-secondary" href="#/transient/${escAttr(S.tid)}" title="回到该源详情（不承诺停留在某个 tab，F-0i4）"><i class="bi bi-box-arrow-up-left"></i> 回到 #${escAttr(S.tid)} 详情</a>` : '';
+    ? `<a class="btn btn-sm btn-outline-secondary" href="#/transient/${escAttr(S.tid)}"><i class="bi bi-box-arrow-up-left"></i> 回到 #${escAttr(S.tid)} 详情</a>` : '';
   el.innerHTML = `
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
       <h5 class="mb-0"><i class="bi bi-rulers"></i> 光谱 × 滤光片
