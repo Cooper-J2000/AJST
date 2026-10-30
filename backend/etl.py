@@ -31,7 +31,34 @@ INFO_DIR = os.path.join(DATA_DIR, 'info')
 FILTERS_FILE = os.path.join(DATA_DIR, 'filters.json')
 TAGS_FILE = os.path.join(DATA_DIR, 'tags.json')
 SPECTRA_DIR = os.path.join(DATA_DIR, 'spectra')
+DENIED_TSV = os.path.join(DATA_DIR, 'audit', 'denied.tsv')
 MJD_EPOCH = datetime(1858, 11, 17)
+
+# ─── 已否证源保护（2026-10-30）───────────────────────────────────────────
+# 背景：源被维护者裁定删除后，`info/`、`lc/` 文件已 git rm，库里也删了记录，
+# 但 etl 的触发条件是「文件存在」——万一文件被误恢复（重新导入、误 checkout、
+# 从旧备份捞回，见 Issue #183），全量重建与 --sync 都会把它当新源灌回库，
+# 网页端又冒出来，而且没人知道它此前已被否证。
+# 这里把 `audit/denied.tsv` 作为硬闸：名单里的源一律不入库，无论文件在不在。
+_DENIED_CACHE = None
+
+
+def denied_ids(refresh=False):
+    """读取 audit/denied.tsv 的 source_id 集合（模块级缓存）。"""
+    global _DENIED_CACHE
+    if _DENIED_CACHE is not None and not refresh:
+        return _DENIED_CACHE
+    out = set()
+    if os.path.exists(DENIED_TSV):
+        with open(DENIED_TSV, encoding='utf-8') as fh:
+            for ln in fh:
+                if not ln.strip() or ln.lstrip().startswith('#'):
+                    continue
+                sid = ln.split('\t')[0].strip()
+                if sid and sid != 'source_id':
+                    out.add(sid)
+    _DENIED_CACHE = out
+    return out
 
 # CSV 列名到模型字段的映射
 CSV_FIELD_MAP = {
@@ -231,6 +258,9 @@ def import_filters(sess, force=False):
 
 def import_one_transient(sess, tid):
     """导入单个暂现源的 info JSON"""
+    if tid in denied_ids():
+        print(f'  [SKIP] {tid}: 在 audit/denied.tsv（已否证的源不得重建入库）')
+        return False
     info_file = os.path.join(INFO_DIR, f'{tid}.json')
     if not os.path.exists(info_file):
         return False
@@ -345,6 +375,9 @@ def import_one_transient(sess, tid):
 
 def import_one_lightcurve(sess, tid):
     """导入单个暂现源的光变 CSV"""
+    if tid in denied_ids():
+        print(f'  [SKIP] {tid}: 在 audit/denied.tsv（已否证的源不得重建入库）')
+        return 0, 0
     lc_file = os.path.join(LC_DIR, f'{tid}.csv')
     if not os.path.exists(lc_file):
         return 0, 0
@@ -805,7 +838,14 @@ def main():
         mode = '指定源'
     elif args.sync:
         all_tids = list_available_tids()
-        tids = [tid for tid in all_tids if needs_update(tid)]
+        denied = denied_ids()
+        restored = sorted(set(all_tids) & denied)
+        if restored:
+            more = '' if len(restored) <= 5 else f' 等 {len(restored)} 个'
+            print(f'[!!] 在 audit/denied.tsv 里却仍存在 info/lc 文件（误恢复？）：'
+                  f'{restored[:5]}{more}')
+            print('     它们不会入库。请核对该源应否删除文件，或从 denied.tsv 撤销记录（Issue #183 流程）。')
+        tids = [tid for tid in all_tids if tid not in denied and needs_update(tid)]
         mode = '增量同步'
         print(f'[INFO] 扫描 {len(all_tids)} 个可用源，需要更新: {len(tids)} 个')
     else:
