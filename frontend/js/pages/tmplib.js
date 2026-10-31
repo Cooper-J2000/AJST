@@ -18,7 +18,7 @@ const TXT = {
   errKind: '引擎要求红移误差必须说明它测的是什么，三者互不等价：① line-precision 单条谱线质心的 1σ；② line-scatter 多条谱线相对系统速度的弥散 1σ；③ unestablished 论文印了 ± 却没说是什么。只有 ①② 会进入误差预算，③ 不传播。',
   inDomain: (ok, n, pct) => `本模板能回答自身表中 ${ok}/${n} = ${pct}% 个实测点（口径：一个点 = 一对 (波段, 静止系 epoch)，predict 返回有限星等即算答上）。这不是覆盖率也不是精度，是"论文发表了而这个面答不上"的条数：${n - ok} 条。`,
   position: '把库内 RA/Dec 写进 manifest 可让引擎按位置改正红移（实测后果 Δμ≈0.0026 mag）。默认勾选；不勾则只用 z 标量。',
-  nullPolicy: '测光系统零猜测（F-10）：drop 逐行剔除缺系统的行（默认，全库 1030 个源受影响）；declare 由你按波段声明系统并记进 declarations；drop-band 整波段剔除；drop-source 有任何缺系统行即整源作废（全库 145 个源会作废）。',
+  nullPolicy: '测光系统零猜测：drop 逐行剔除缺系统的行（默认，全库 1030 个源受影响）；declare 由你按波段声明系统并记进 declarations；drop-band 整波段剔除；drop-source 有任何缺系统行即整源作废（全库 145 个源会作废）。',
 };
 
 const STATE_BADGE = {
@@ -68,16 +68,17 @@ export async function render() {
   _wizReset(); _detailId = null;
   const app = document.getElementById('app');
   app.innerHTML = `
-    <h4 class="mb-3"><i class="bi bi-grid-3x3-gap"></i> 创建光变模板 / 模板库</h4>
-    <div id="tlGuards" class="mb-3"><span class="text-secondary small">守卫状态加载中…</span></div>
+    <div class="tmplib-root soft-root">
+    <div class="sp-page-title mb-3">创建光变模板</div>
+    <div id="tlGuards" class="mb-3"><span class="sp-muted">守卫状态加载中…</span></div>
     <div id="tlMain" style="display:none">
       <div class="card mb-3">
-        <div class="card-header py-1 d-flex justify-content-between align-items-center">
-          <span>模板库清单（U-11）</span>
-          <span class="d-flex gap-1 align-items-center">
-            <span class="small text-secondary" id="tlBatchMsg"></span>
-            <button class="btn btn-sm btn-outline-warning py-0" id="tlBatchRebuild" style="display:none"
-                    title="勾选的 stale 模板逐条走 API-7 重建（前端串行，不是新端点）">批量重建</button>
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>模板库</span>
+          <span class="d-flex gap-2 align-items-center">
+            <span class="sp-muted" id="tlBatchMsg"></span>
+            <button class="sp-btn-ghost py-0" id="tlBatchRebuild" style="display:none"
+                    title="勾选的 stale 模板逐条重建（前端串行）">批量重建</button>
           </span>
         </div>
         <div class="card-body p-0"><div class="table-responsive">
@@ -91,15 +92,16 @@ export async function render() {
         </div></div>
       </div>
       <div class="card mb-3" id="tlDetailCard" style="display:none">
-        <div class="card-header py-1">模板详情 / QC（④）<span id="tlDetailTitle"></span></div>
-        <div class="card-body py-2 small" id="tlDetailBody"></div>
+        <div class="card-header">模板详情 / QC<span id="tlDetailTitle"></span></div>
+        <div class="card-body small" id="tlDetailBody"></div>
       </div>
       <div class="card mb-3" id="tlWizardCard">
-        <div class="card-header py-1">创建光变模板向导（S2；4 步，任一跳过都会被拦）</div>
-        <div class="card-body py-2" id="tlWizardBody"></div>
+        <div class="card-header">创建光变模板向导</div>
+        <div class="card-body" id="tlWizardBody"></div>
       </div>
     </div>
-    <div id="tlDown" class="alert alert-warning" style="display:none"></div>`;
+    <div id="tlDown" class="sp-warnbox" style="display:none"></div>
+    </div>`;
 
   try {
     _cfg = await getTmplibConfig();
@@ -149,15 +151,15 @@ function _renderGuards() {
   const crBadge = cr.ok === false
     ? `<span class="badge text-bg-danger" title="${esc(drifted.map(([t]) => t).join('、'))}">库行指纹: 漂移×${drifted.length}</span>`
     : probes.length
-      ? `<span class="badge text-bg-warning" title="${esc(probes.map(([t]) => t).join('、'))}（与本库同源，差异待核 —— F-19）">库行指纹: 探针×${probes.length}</span>`
+      ? `<span class="badge text-bg-warning" title="${esc(probes.map(([t]) => t).join('、'))}（与本库同源，差异待核）">库行指纹: 探针×${probes.length}</span>`
       : _axisBadge('库行指纹', cr);
-  el.innerHTML = [
+  el.innerHTML = `<div class="sp-statusbar">${[
     eng,
     _axisBadge('引擎输入', axes.engine_inputs),
     crBadge,
     _axisBadge('滤光片 vendor', axes.filter_vendor),
     (_cfg.library ? `<span class="badge text-bg-light border">已登记 ${_cfg.library.templates_registered} 模板</span>` : ''),
-  ].join(' ');
+  ].join(' ')}</div>`;
 }
 
 // ─── ② 库清单（U-11） ───
@@ -226,8 +228,8 @@ function _renderLibrary() {
       <td>${tv}</td><td>${idomTxt}</td>
       <td><span class="badge ${cls}" title="${esc(_staleTitle(t.stale_because))}">${label}</span></td>
       <td class="text-nowrap">
-        ${canRebuild ? `<button class="btn btn-sm btn-outline-warning py-0 tl-rebuild" data-id="${esc(t.id)}" title="按当前 manifest+CSV 重建面（API-7）：重算指纹、域内率与 Δμ。stale 模板必须重建才恢复预测">重建</button>` : ''}
-        ${canDelete ? `<button class="btn btn-sm btn-outline-danger py-0 tl-delete" data-id="${esc(t.id)}" title="删除（API-11）">删除</button>` : ''}
+        ${canRebuild ? `<button class="sp-btn-ghost py-0 tl-rebuild" data-id="${esc(t.id)}" title="按当前 manifest+CSV 重建面：重算指纹、域内率与 Δμ。stale 模板必须重建才恢复预测">重建</button>` : ''}
+        ${canDelete ? `<button class="sp-btn-ghost sp-danger py-0 tl-delete" data-id="${esc(t.id)}" title="删除模板">删除</button>` : ''}
       </td></tr>`;
   }).join('');
   _refreshBatchButton();
@@ -289,7 +291,7 @@ async function _loadDetail(id) {
 // ─── ④b 误差预算面板（API-10；F-34/35/36/37/39） ───
 const BUDGET_INTRO = '这是什么：对「该模板搬到红移 z 后、波段 X 的预测光变」，在其峰值处把星等的不确定度（1σ）拆成几个互相独立的来源，逐项给出（单位 mag），平方和合成 total。回答的问题是「这条模板曲线的星等可信到多少、最大的误差来自哪里」——它不是对某个实测源的拟合优度。';
 const BUDGET_TERM_NOTE = {
-  photometric: '测光误差传播：把每个实测点的星等误差当噪声做 Monte-Carlo 重建面，看预测星等晃多少。n_draws=0 时本项缺席（不可测，不是 0，F-34）',
+  photometric: '测光误差传播：把每个实测点的星等误差当噪声做 Monte-Carlo 重建面，看预测星等晃多少。n_draws=0 时本项缺席（不可测，不是 0）',
   sed_residual: 'SED 残差：建面后模型面与实测点之间没追平的部分，逐带列出；折算到非节点带靠下面的增益表',
   colour_term: '模式选择：波段积分（band）与单色近似（mono）两种算法之差带来的不确定度',
   distance: '距离：μ/d_L 或红移（经 Planck18 + 本征速度项）的不确定度折算成星等；很多模板里这是最大项',
@@ -299,8 +301,8 @@ function _budgetCtlHTML(d) {
   const bands = sortBandsByFreq((d.surface && d.surface.bands) || Object.keys(d.per_band || {}));
   const z = (d.manifest || {}).z;
   return `
-    <div class="fw-bold mt-2">误差预算（API-10）</div>
-    <div class="small text-secondary mb-1" style="max-width:860px">${esc(BUDGET_INTRO)}</div>
+    <div class="fw-bold mt-2">误差预算</div>
+    <div class="sp-muted mb-1" style="max-width:860px">${esc(BUDGET_INTRO)}</div>
     <div class="d-flex flex-wrap gap-1 align-items-center mb-1">
       <select class="form-select form-select-sm" id="tlBudgetBand" style="width:auto" title="预算针对的观测波段">
         ${bands.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('')}
@@ -309,7 +311,7 @@ function _budgetCtlHTML(d) {
              value="${z != null ? z : ''}" placeholder="z" title="红移（默认模板自身 z）">
       <input class="form-control form-control-sm" id="tlBudgetDraws" style="width:150px"
              placeholder="n_draws 默认 32" title="Monte-Carlo 次数：0=只算系统项（此时测光项缺席而非 0）；3–200；默认 32（实测 2.4–3.1 s；200 实测 13.7–18.1 s）">
-      <button class="btn btn-sm btn-outline-primary py-0" id="tlBudgetRun">计算预算</button>
+      <button class="sp-btn-ghost py-0" id="tlBudgetRun">计算预算</button>
     </div>
     <div id="tlBudgetOut"></div>`;
 }
@@ -334,9 +336,9 @@ function _budgetHTML(d) {
       <td class="text-nowrap">${terms[k]} mag</td></tr>`;
   }).join('');
   const gainRows = Object.entries(perBand).map(([band, g]) => {
-    // F-36：gain_source 不是 unfold fit 的标灰 —— 那个 −2.5 是定义不是测量
+    // gain_source 不是 unfold fit 的标灰 —— 那个 −2.5 是定义不是测量
     const grey = !g.gain_from_unfold;
-    return `<tr class="${grey ? 'text-secondary' : ''}" ${grey ? 'style="opacity:0.65" title="delta-band 极限：-2.5 是定义不是测量（F-36）"' : ''}>
+    return `<tr class="${grey ? 'text-secondary' : ''}" ${grey ? 'style="opacity:0.65" title="delta-band 极限：-2.5 是定义不是测量"' : ''}>
       <td><code>${esc(band)}</code></td><td>${g.gain_mag_per_dex != null ? g.gain_mag_per_dex : '—'}</td>
       <td>${esc(g.gain_source || '')}</td></tr>`;
   }).join('');
@@ -347,14 +349,14 @@ function _budgetHTML(d) {
     <div class="small text-secondary mb-1">${esc((d.notes || []).join('；'))}</div>
     <div class="form-check form-check-inline mb-1">
       <input class="form-check-input" type="checkbox" id="tlBudgetDistOnly">
-      <label class="form-check-label small" for="tlBudgetDistOnly">只看 distance 项（F-35）</label>
+      <label class="form-check-label small" for="tlBudgetDistOnly">只看 distance 项</label>
     </div>
     <table class="table table-sm small mb-1" style="max-width:560px" id="tlBudgetTerms">
       <thead><tr><th>误差项（max mag，平方和合成 total=${b.total_max_mag}）</th><th></th></tr></thead>
       <tbody>${termRows}</tbody>
     </table>
-    <div class="${dist.is_dominant ? 'alert alert-danger' : 'alert alert-light border'} py-1 small" style="max-width:720px">
-      distance 项：<b>${dist.mag != null ? dist.mag : '—'} mag</b>${dist.is_dominant ? ' ⚠ dominant —— 比其它项都大（F-35）' : ''}
+    <div class="${dist.is_dominant ? 'sp-errbox' : 'sp-warnbox'} mb-1" style="max-width:720px">
+      distance 项：<b>${dist.mag != null ? dist.mag : '—'} mag</b>${dist.is_dominant ? ' ⚠ dominant —— 比其它项都大' : ''}
       <br><span class="text-secondary">kind=${esc(desc.kind || '?')}，z=${desc.z != null ? desc.z : '—'}，z_err=${desc.z_err != null ? desc.z_err : '不传播'}，
       d_L=${desc.d_L_Mpc != null ? Number(desc.d_L_Mpc).toFixed(1) : '—'} Mpc${desc.cosmology ? `（${esc(desc.cosmology)}）` : ''}</span>
     </div>
@@ -364,7 +366,7 @@ function _budgetHTML(d) {
     ${sedRows ? `<details open class="mb-1"><summary class="small fw-bold">SED 残差逐带表（建面后面与实测点没追平的部分，逐带列出；本带 ${sed.band_value_mag ?? '—'}，${esc(sed.source || '')}）</summary>
       <table class="table table-sm small" style="max-width:400px">
         <thead><tr><th>波段</th><th>residual (mag)</th></tr></thead><tbody>${sedRows}</tbody></table></details>` : ''}
-    ${(b.warnings || []).length ? `<div class="fw-bold small">引擎 warnings（F-39 原样透传）</div>
+    ${(b.warnings || []).length ? `<div class="fw-bold small">引擎 warnings（原样透传）</div>
       <ul class="small text-warning-emphasis mb-1">${b.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     <div class="small text-secondary">n_draws=${b.n_draws}（Monte-Carlo 重建次数），seed=${b.seed}（随机种子固定，同参数结果可复现）；峰值处 ${b.at_peak ? `${b.at_peak.mag_AB} ± ${b.at_peak.mag_AB_err} AB` : '—'}</div>`;
 }
@@ -383,7 +385,7 @@ async function _doBudget() {
     const res = await budgetTmplib(payload);
     out.innerHTML = _budgetHTML(res);
   } catch (e) {
-    out.innerHTML = `<div class="alert alert-danger py-1 small">${esc(e.code ? `[${e.code}] ` : '')}${esc(e.message)}</div>`;
+    out.innerHTML = `<div class="sp-errbox">${esc(e.code ? `[${e.code}] ` : '')}${esc(e.message)}</div>`;
   }
 }
 
@@ -452,8 +454,8 @@ function _detailHTML(d) {
     <div class="d-flex justify-content-between align-items-center">
       <div><span class="badge ${(STATE_BADGE[d.state] || ['text-bg-secondary'])[0]}">${esc(d.state)}</span>
         <span class="text-secondary">${esc(ORIGIN_LABEL[d.origin] || d.origin || '')}</span></div>
-      ${isAdmin() ? `<button class="btn btn-sm btn-outline-primary py-0 tl-edit" data-id="${esc(d.id)}"
-        title="编辑模板元数据（API-14，管理员）：显示名/类别/红移/距离/T0 零点声明/require_min_bands/引用。行集口径不可编辑，须删除后重新建面">编辑元数据</button>` : ''}
+      ${isAdmin() ? `<button class="sp-btn-ghost py-0 tl-edit" data-id="${esc(d.id)}"
+        title="编辑模板元数据（管理员）：显示名/类别/红移/距离/T0 零点声明/require_min_bands/引用。行集口径不可编辑，须删除后重新建面">编辑元数据</button>` : ''}
     </div>
     <div class="row">
       <div class="col-md-6">
@@ -468,7 +470,7 @@ function _detailHTML(d) {
             <tr><td>消光</td><td>mw_removed=${(m.reddening || {}).mw_removed}，host=${esc((m.reddening || {}).host_removed || '')}</td></tr>
             ${muTxt ? `<tr><td>Δμ</td><td>${muTxt}</td></tr>` : ''}
           </tbody></table>
-        <div class="fw-bold">域内率（F-45 实测）</div>${_inDomainHTML(d.in_domain)}
+        <div class="fw-bold">域内率（实测）</div>${_inDomainHTML(d.in_domain)}
         ${d.state !== 'never-built' ? _budgetCtlHTML(d) : ''}
       </div>
       <div class="col-md-6">${_qcHTML(d.qc)}</div>
@@ -501,11 +503,11 @@ function _editFormHTML(d) {
     ['cosmological', 'measured', 'measured-secondary', 'redshift-velocity-field'];
   const ezKind = ez.kind === 'first_point' ? 'first_point' : 'fixed';
   return `
-    <div class="alert alert-light border py-1 small mb-2">
+    <div class="sp-warnbox mb-2">
       保存即直接改写 <code>templates/${esc(d.id)}.yaml</code>：写入前先做合法性校验，失败则原文件不动。
       历史版本由 AJST-Data 仓库的 git 历史承担，不再单独备份。manifest 一变指纹即变、面过期，
       默认「保存后立即重建」（1–3 s）恢复可读。
-      行集口径（rowset / 缺系统处置 / 波段选择 / CSV）是冻结数据，不在此编辑——要改须删除后走「创建光变模板」向导重建。
+      行集口径（rowset / 缺系统处置 / 波段选择 / CSV）是冻结数据，不在此编辑——要改须删除后走向导重建。
     </div>
     <div class="row small">
       <div class="col-lg-6">
@@ -571,8 +573,8 @@ function _editFormHTML(d) {
       </div>
     </div>
     <div class="mt-2 d-flex gap-2 align-items-center">
-      <button class="btn btn-sm btn-primary" id="tlEdSave" data-id="${esc(d.id)}">保存（API-14）</button>
-      <button class="btn btn-sm btn-outline-secondary" id="tlEdCancel">取消</button>
+      <button class="btn btn-sm btn-primary" id="tlEdSave" data-id="${esc(d.id)}">保存</button>
+      <button class="sp-btn-ghost" id="tlEdCancel">取消</button>
       <span class="small text-danger" id="tlEdMsg"></span>
     </div>`;
 }
@@ -622,11 +624,11 @@ async function _doEdit(id) {
   }
   if (!payload.redshift.source) { msg.textContent = 'redshift.source 必填'; return; }
   if (payload.redshift.error != null && !payload.redshift.error_kind) {
-    msg.textContent = '填了 redshift.error 必须选 error_kind（Q-12）'; return;
+    msg.textContent = '填了 redshift.error 必须选 error_kind'; return;
   }
   if (payload.distance.kind !== 'cosmological'
       && payload.distance.mu == null && payload.distance.d_L_Mpc == null) {
-    msg.textContent = '非 cosmological 距离必须填 μ 或 d_L（U-22）'; return;
+    msg.textContent = '非 cosmological 距离必须填 μ 或 d_L'; return;
   }
   if (!(payload.validity.require_min_bands >= 2)) {
     msg.textContent = 'require_min_bands 必须是 ≥2 的整数'; return;
@@ -652,13 +654,13 @@ function _renderWizard() {
   const body = document.getElementById('tlWizardBody');
   if (!body) return;
   if (!isAuthed()) {
-    body.innerHTML = '<div class="text-secondary small">创建光变模板需要登录（API-4/5/7 要求登录）；编辑模板元数据与删除需管理员（API-14/11）。</div>';
+    body.innerHTML = '<div class="sp-muted">创建光变模板需要登录；编辑模板元数据与删除需管理员。</div>';
     return;
   }
   const steps = ['选源', '行账与波段', '强制声明', '建面与 QC'];
   body.innerHTML = `
-    <div class="mb-2">${steps.map((s, i) =>
-      `<span class="badge ${i + 1 === _wiz.step ? 'text-bg-primary' : i + 1 < _wiz.step ? 'text-bg-success' : 'text-bg-secondary'}">${i + 1}. ${s}</span>`).join(' ')}
+    <div class="mb-3"><span class="sp-seg">${steps.map((s, i) =>
+      `<span class="sp-seg-item${i + 1 === _wiz.step ? ' active' : ''}" style="cursor:default">${i + 1} ${s}</span>`).join('')}</span>
     </div>
     <div id="tlWizStep"></div>`;
   _renderStep();
@@ -690,26 +692,26 @@ function _step1HTML() {
         <tr><td>gext_distmod</td><td>${tr.gext_distmod != null ? tr.gext_distmod : '—'}</td></tr>
         <tr><td>t0 / 坐标</td><td>${esc(tr.t0 || '—')}；RA ${tr.ra != null ? tr.ra : '—'}，Dec ${tr.dec != null ? tr.dec : '—'}</td></tr>
         <tr><td>总行数</td><td>${p.ledger.total}</td></tr>
-        <tr><td>域内率预估（U-19）</td><td id="tlInDomain">星等行 ${est.magnitude_rows ?? '—'}，落在有曲线波段上的可入行 ${est.on_curve_band_rows ?? '—'}，
+        <tr><td>域内率预估</td><td id="tlInDomain">星等行 ${est.magnitude_rows ?? '—'}，落在有曲线波段上的可入行 ${est.on_curve_band_rows ?? '—'}，
           预估可答约 ${est.estimated_pct != null ? est.estimated_pct + '%' : '—'}
           <span class="text-secondary">（${esc(est.note || '')}）</span></td></tr>
         <tr><td>建议模板 id</td><td><code>${esc(p.suggested_id)}</code></td></tr>
       </tbody></table>
-      ${p.same_event ? `<div class="alert alert-warning py-1 small">${esc(p.same_event.message)}</div>` : ''}
+      ${p.same_event ? `<div class="sp-warnbox mt-2">${esc(p.same_event.message)}</div>` : ''}
       ${(p.z_conflicts || []).map(c =>
-        `<div class="alert alert-warning py-1 small">z 冲突（D-6）：既有模板 <code>${esc(c.template_id)}</code> z=${c.template_z}，
+        `<div class="sp-warnbox mt-2">z 冲突：既有模板 <code>${esc(c.template_id)}</code> z=${c.template_z}，
          库 z=${c.catalog_z}，Δμ=${c.delta_mu != null ? c.delta_mu : '—'}。${esc(c.note)}</div>`).join('')}`;
   }
   return `
     <div class="d-flex gap-2 align-items-center" style="max-width:560px">
       <input class="form-control form-control-sm" id="tlWizardSrc" placeholder="源 id（如 EP250108a）"
              value="${esc(_wiz.src)}">
-      <button class="btn btn-sm btn-primary text-nowrap" id="tlPreviewBtn">预检（API-4）</button>
+      <button class="btn btn-sm btn-primary text-nowrap" id="tlPreviewBtn">预检</button>
     </div>
     <div id="tlStep1Err" class="small text-danger mt-1"></div>
     ${info}
-    <div class="mt-2">
-      <button class="btn btn-sm btn-primary" id="tlToStep2" ${p && p.code === 'TL_OK' ? '' : 'disabled'}>下一步：行账与波段 →</button>
+    <div class="mt-3 d-flex gap-2">
+      <button class="btn btn-primary" id="tlToStep2" ${p && p.code === 'TL_OK' ? '' : 'disabled'}>下一步 →</button>
     </div>`;
 }
 
@@ -763,13 +765,13 @@ async function _refetchPreview() {
 function _ledgerHTML(led) {
   if (!led) return '';
   if (led.source_rejected)
-    return `<div class="alert alert-danger py-1 small">null_system_policy=drop-source：本源自称有 ${led.null_system_rows} 行缺测光系统 ⇒ 整源作废（F-10）。请改用其它档。</div>`;
+    return `<div class="sp-errbox">null_system_policy=drop-source：本源自称有 ${led.null_system_rows} 行缺测光系统 ⇒ 整源作废。请改用其它档。</div>`;
   const rj = led.rejected || {};
   const names = {
-    nonmag: '非星等行（F-14）', unmapped_band: '波段不在注册表（F-08 严格同名）',
-    band_deselected: '未勾选', gext_missing: 'mag_gextcor 空值（不回落，F-11）',
-    mag_system_missing: '缺测光系统（F-10）', missing_value: '缺值/缺时刻',
-    upperlimit: '上限（写进 CSV 但不进拟合，F-12）', discard: 'discard（同上）',
+    nonmag: '非星等行', unmapped_band: '波段不在注册表（严格同名）',
+    band_deselected: '未勾选', gext_missing: 'mag_gextcor 空值（不回落）',
+    mag_system_missing: '缺测光系统', missing_value: '缺值/缺时刻',
+    upperlimit: '上限（写进 CSV 但不进拟合）', discard: 'discard（同上）',
   };
   const items = Object.entries(names).filter(([k]) => rj[k]).map(([k, label]) =>
     `<tr><td>${label}</td><td>${rj[k]}</td></tr>`).join('');
@@ -806,14 +808,14 @@ function _step2HTML() {
       <div class="col-lg-6">
         <div class="fw-bold small">行账（当前口径：rowset=${esc(p.query.rowset)}，policy=${esc(p.query.null_system_policy)}；改勾/改档即重算）</div>
         ${_ledgerHTML(p.ledger)}
-        <div class="small text-secondary">gext 档对照（U-16）：可进面 ${p.rowsets.gext.kept} 行；
+        <div class="sp-muted">gext 档对照：可进面 ${p.rowsets.gext.kept} 行；
           本源 mag_gextcor 空值行 ${p.rowsets.gext.gext_missing}（gext 档下这些行被剔除、不回落 raw）；
-          ${p.rowsets.gext.kept_missing_err ? `进面但无误差列 ${p.rowsets.gext.kept_missing_err} 行（进误差预算 photometric 项时缺席，TXT-12）；` : ''}
-          ${p.rowsets.gext.gext_system_overrides ? `<span class="text-warning">原始行自称 Vega 的 ${p.rowsets.gext.gext_system_overrides} 行（gext 档按库口径记 AB，依据列注释「银消改正后 AB 星等」——请核对，审核更正披露项）</span>` : ''}
+          ${p.rowsets.gext.kept_missing_err ? `进面但无误差列 ${p.rowsets.gext.kept_missing_err} 行（进误差预算 photometric 项时缺席）；` : ''}
+          ${p.rowsets.gext.gext_system_overrides ? `<span class="text-warning">原始行自称 Vega 的 ${p.rowsets.gext.gext_system_overrides} 行（gext 档按库口径记 AB，依据列注释「银消改正后 AB 星等」——请核对）</span>` : ''}
         </div>
       </div>
       <div class="col-lg-6" id="tlWizardBandMap">
-        <div class="fw-bold small">波段映射（严格同名 F-08：库里叫 <code>R</code> 就不会是 <code>r</code>）</div>
+        <div class="fw-bold small">波段映射（严格同名：库里叫 <code>R</code> 就不会是 <code>r</code>）</div>
         <div class="table-responsive" style="max-height:340px;overflow:auto">
         <table class="table table-sm small mb-0">
           <thead><tr><th>入面</th><th>波段（库标签）</th><th>行数</th><th>系统分布</th><th>上限</th><th>discard</th><th>gext 有/缺</th></tr></thead>
@@ -821,9 +823,9 @@ function _step2HTML() {
         </table></div>
       </div>
     </div>
-    <div class="mt-2 d-flex gap-2">
-      <button class="btn btn-sm btn-outline-secondary" id="tlBack1">← 上一步</button>
-      <button class="btn btn-sm btn-primary" id="tlToStep3" ${p.ledger.kept > 0 ? '' : 'disabled'}>下一步：强制声明 →</button>
+    <div class="mt-3 d-flex gap-2 align-items-center">
+      <button class="sp-btn-ghost" id="tlBack1">← 上一步</button>
+      <button class="btn btn-primary" id="tlToStep3" ${p.ledger.kept > 0 ? '' : 'disabled'}>下一步 →</button>
       ${p.ledger.kept > 0 ? '' : '<span class="small text-danger align-self-center">当前口径没有任何可进面的行</span>'}
     </div>`;
 }
@@ -913,14 +915,14 @@ function _step3HTML() {
           <div class="form-text text-warning">${esc(TXT.lowZ(isFinite(z) ? z : '?'))}</div>
         </div>
         <div class="mb-1" style="max-width:520px" id="tlRedRows">
-          <label class="form-label small mb-0">行集 rowset（与 mw_removed 绑死，F-11）<span class="text-danger">*</span></label>
+          <label class="form-label small mb-0">行集 rowset（与 mw_removed 绑死）<span class="text-danger">*</span></label>
           <select class="form-select form-select-sm" id="tlRowset">
             <option value="raw" ${_wiz.rowset === 'raw' ? 'selected' : ''}>raw — 未扣银消（本源可进面 ${p.ledger.kept} 行）</option>
             <option value="gext" ${_wiz.rowset === 'gext' ? 'selected' : ''}>gext — 已扣银消（可进面 ${rsG.kept} 行；mag_gextcor 空值 ${rsG.gext_missing} 行被剔除不回落${rsG.kept_missing_err ? `；无误差列 ${rsG.kept_missing_err} 行不进误差预算` : ''}）</option>
           </select>
         </div>
         <div class="mb-1" style="max-width:520px" id="tlSysNullPolicy">
-          <label class="form-label small mb-0">缺测光系统行的处置（F-10 零猜测）<span class="text-danger">*</span></label>
+          <label class="form-label small mb-0">缺测光系统行的处置（零猜测）<span class="text-danger">*</span></label>
           <select class="form-select form-select-sm" id="tlPolicy">
             ${['drop', 'declare', 'drop-band', 'drop-source'].map(k =>
               `<option value="${k}" ${_wiz.policy === k ? 'selected' : ''}>${k}</option>`).join('')}
@@ -944,9 +946,9 @@ function _step3HTML() {
         ${_fld('tlCite', 'citations（可空，追加进 provenance）', { key: 'citations', required: false })}
       </div>
     </div>
-    <div class="mt-2 d-flex gap-2 align-items-center">
-      <button class="btn btn-sm btn-outline-secondary" id="tlBack2">← 上一步</button>
-      <button class="btn btn-sm btn-primary" id="tlToStep4" disabled>下一步：建面与 QC →</button>
+    <div class="mt-3 d-flex gap-2 align-items-center">
+      <button class="sp-btn-ghost" id="tlBack2">← 上一步</button>
+      <button class="btn btn-primary" id="tlToStep4" disabled>下一步 →</button>
       <span class="small text-danger" id="tlStep3Msg"></span>
     </div>`;
 }
@@ -980,16 +982,16 @@ function _validateStep3() {
   if (f.z_err) {
     const ze = parseFloat(f.z_err);
     if (!isFinite(ze) || ze <= 0) errs.tlZErr = 'error 必须 > 0';
-    else if (!f.z_kind) errs.tlZErr = '填了 error 必须选 error_kind（Q-12）';
+    else if (!f.z_kind) errs.tlZErr = '填了 error 必须选 error_kind';
   }
   if (f.dist_kind !== 'cosmological' && !f.mu && !f.d_L) {
-    errs.tlMu = '非 cosmological 必须填 μ 或 d_L（U-22）';
+    errs.tlMu = '非 cosmological 必须填 μ 或 d_L';
   }
   if (f.dist_kind === 'cosmological' && isFinite(z) && z < 0.02 && !f.allow_low_z) {
-    errs.tlZ = 'z<0.02 选 cosmological 必须显式勾选 allow_low_z（TXT-13）';
+    errs.tlZ = 'z<0.02 选 cosmological 必须显式勾选「我知道这是近似」';
   }
-  if (!(f.require_min_bands >= 2)) errs.tlRmb = 'require_min_bands 必须显式给出且 ≥2（F-47）';
-  if (f.require_min_bands > 2 && !f.validity_notes) errs.tlNotes = 'require_min_bands>2 必须写理由（F-47）';
+  if (!(f.require_min_bands >= 2)) errs.tlRmb = 'require_min_bands 必须显式给出且 ≥2';
+  if (f.require_min_bands > 2 && !f.validity_notes) errs.tlNotes = 'require_min_bands>2 必须写理由';
   _wiz.errs = errs;
   const btn = document.getElementById('tlToStep4');
   const msg = document.getElementById('tlStep3Msg');
@@ -1018,12 +1020,12 @@ function _step4HTML() {
       <tr><td>z / 距离</td><td>${esc(f.z)} / ${esc(f.dist_kind)}${f.mu ? `（μ=${esc(f.mu)}）` : ''}${f.d_L ? `（d_L=${esc(f.d_L)} Mpc）` : ''}</td></tr>
     </tbody></table>`;
   let out = `
-    <div class="small text-warning mb-2">建面是唯一触发点（POS-3）：点下按钮才写盘；引擎忙（429）时原样显示、不自动重试。</div>
+    <div class="sp-warnbox mb-2">建面是唯一触发点：点下按钮才写盘；引擎忙（429）时原样显示、不自动重试。</div>
     ${summary}
     <div class="d-flex gap-2 align-items-center">
-      <button class="btn btn-sm btn-outline-secondary" id="tlBack3" ${_wiz.building ? 'disabled' : ''}>← 上一步</button>
-      <button class="btn btn-sm btn-danger" id="tlBuild" ${_wiz.building ? 'disabled' : ''}>
-        ${_wiz.building ? '建面中…（1–3 s）' : '建面（POST API-5）'}</button>
+      <button class="sp-btn-ghost" id="tlBack3" ${_wiz.building ? 'disabled' : ''}>← 上一步</button>
+      <button class="btn btn-danger" id="tlBuild" ${_wiz.building ? 'disabled' : ''}>
+        ${_wiz.building ? '建面中…（1–3 s）' : '建面'}</button>
     </div>
     <div id="tlBuildErr" class="small mt-2"></div>
     <div id="tlQcPanel" class="mt-2"></div>`;
@@ -1072,7 +1074,7 @@ async function _doBuild() {
   const errEl2 = document.getElementById('tlBuildErr');
   if (_wiz.buildError && errEl2) {
     const e = _wiz.buildError;
-    let html = `<div class="alert alert-danger py-1 small">${esc(e.message)}</div>`;
+    let html = `<div class="sp-errbox">${esc(e.message)}</div>`;
     const missing = e.payload && e.payload.missing;
     if (missing && missing.length)
       html += `<div class="small text-danger">缺字段：${esc(missing.join('、'))}</div>`;
@@ -1092,11 +1094,11 @@ function _buildResultHTML(res) {
     : '';
   const s = res.surface || {};
   return `
-    <div class="alert alert-success py-1 small d-flex justify-content-between align-items-center">
+    <div class="alert alert-success py-2 px-3 small d-flex justify-content-between align-items-center" style="border-radius:10px">
       <span>模板 <code>${esc(res.id)}</code> 已入库（state=${esc(res.state)}）。</span>
       <!-- F-04/路径 B 第 6 步：跨页只传 id（window.__cmpPresetSources），URL 不带状态 -->
-      <button class="btn btn-sm btn-outline-primary py-0" id="tlGoCompare"
-              data-src="${esc(_wiz.src || '')}" title="跳到多源对比页并预选该源（F-04：跨页只传 id）">→ 对比图</button>
+      <button class="sp-btn-ghost py-0" id="tlGoCompare"
+              data-src="${esc(_wiz.src || '')}" title="跳到多源对比页并预选该源">→ 对比图</button>
     </div>
     <div class="row small">
       <div class="col-md-6">
@@ -1106,10 +1108,10 @@ function _buildResultHTML(res) {
           <tr><td>时间节点数</td><td>${s.n_time_nodes ?? '—'}</td></tr>
           <tr><td>行账</td><td>kept ${res.row_ledger.kept} / ${res.row_ledger.total}</td></tr>
         </tbody></table>
-        <div class="fw-bold">真实域内率（TXT-20）</div>${idomTxt}${_inDomainHTML(idom)}
+        <div class="fw-bold">真实域内率</div>${idomTxt}${_inDomainHTML(idom)}
       </div>
       <div class="col-md-6">
-        <div class="fw-bold">QC 报告（U-18，原文照排）</div>
+        <div class="fw-bold">QC 报告（原文照排）</div>
         ${_qcHTML(res.qc)}
       </div>
     </div>`;

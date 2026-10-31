@@ -62,13 +62,13 @@ export function tplHasCustomRef() { return _rows.some(r => r.refMJD != null); }
 export function tplPanelHTML() {
   return `
     <div class="d-flex justify-content-between align-items-center px-3 py-1">
-      <span class="small text-secondary" title="${esc(TXT.prediction)}">叠加模板（引擎预测曲线，虚线 ⌁）ⓘ</span>
-      <span class="d-flex gap-1">
-        <button class="btn btn-sm btn-outline-primary py-0" id="tplAdd">＋ 添加模板（≤${MAX_ROWS}）</button>
-        <button class="btn btn-sm btn-outline-secondary py-0" id="tplClear" style="display:none">清空</button>
-        <button class="btn btn-sm btn-outline-secondary py-0" id="tplExpCsv" title="API-9：当前模板曲线 + 已选源的服务端导出（CSV）">下载 CSV</button>
-        <button class="btn btn-sm btn-outline-secondary py-0" id="tplExpJson" title="API-9：与 CSV 同批数据的 JSON 渲染（F-56）">下载 JSON</button>
-        <button class="btn btn-sm btn-outline-secondary py-0" id="tplCopyImg" title="复制当前对比图为 PNG（剪贴板，失败回退下载）">复制图</button>
+      <span class="sp-muted" title="${esc(TXT.prediction)}">叠加模板（引擎预测曲线，虚线 ⌁）</span>
+      <span class="d-flex gap-1 align-items-center">
+        <button class="sp-btn-ghost py-0" id="tplAdd">＋ 添加模板（≤${MAX_ROWS}）</button>
+        <button class="sp-btn-ghost py-0" id="tplClear" style="display:none">清空</button>
+        <button class="sp-btn-ghost py-0" id="tplExpCsv" title="当前模板曲线 + 已选源的服务端导出（CSV）">下载 CSV</button>
+        <button class="sp-btn-ghost py-0" id="tplExpJson" title="与 CSV 同批数据的 JSON">下载 JSON</button>
+        <button class="sp-btn-ghost py-0" id="tplCopyImg" title="复制当前对比图为 PNG（剪贴板，失败回退下载）">复制图</button>
       </span>
     </div>
     <div id="tplRows"></div>`;
@@ -76,9 +76,9 @@ export function tplPanelHTML() {
 
 export function tplMuCardHTML() {
   return `
-    <div class="card-header py-1">模板距离口径对照（Δμ；μ = 距离模数）</div>
-    <div class="card-body py-2 small" id="tplMuBody"></div>
-    <div class="card-footer py-1 small text-secondary" id="tplMuNote" style="display:none">${esc(TXT.muNote)}</div>`;
+    <div class="card-header">模板距离口径对照（Δμ；μ = 距离模数）</div>
+    <div class="card-body small" id="tplMuBody"></div>
+    <div class="card-footer py-1 sp-muted" id="tplMuNote" style="display:none">${esc(TXT.muNote)}</div>`;
 }
 
 // ─── 行渲染 ───
@@ -120,9 +120,9 @@ function _rowHTML(r) {
       <input type="text" class="form-control form-control-sm tpl-ref-epoch cmp-ref-epoch" style="width:96px"
              value="${esc(r.refRaw || '')}" placeholder="留空=T0"
              title="${esc(_refTitle(r))}">
-      <button class="btn btn-sm btn-outline-success py-0 tpl-draw" title="按当前设置计算并绘制该模板曲线">${r.drawn ? '重绘' : '绘制'}</button>
+      <button class="sp-btn-ghost py-0 tpl-draw" title="按当前设置计算并绘制该模板曲线">${r.drawn ? '重绘' : '绘制'}</button>
       <span class="tpl-badges small">${_badgesHTML(r)}</span>
-      <button class="btn btn-sm btn-outline-danger py-0 tpl-del" title="移除该模板曲线">✕</button>
+      <button class="sp-btn-ghost sp-danger py-0 tpl-del" title="移除该模板曲线">✕</button>
     </div>
     <div class="tpl-err small text-danger px-3 ${r.error ? '' : 'd-none'}" data-uid="${r.uid}">${esc(r.error || '')}</div>`;
 }

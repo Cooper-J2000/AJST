@@ -13,7 +13,7 @@ export async function render(spectrumId = '') {
   app.innerHTML = '';
   _root = document.createElement('div');
   _root.id = 'specphotRoot';
-  _root.className = 'specphot-root';
+  _root.className = 'specphot-root soft-root';
   app.appendChild(_root);
   const sid = String(spectrumId || '').replace(/\/+$/, '').trim();
   const asNum = /^\d+$/.test(sid) ? Number(sid) : null;

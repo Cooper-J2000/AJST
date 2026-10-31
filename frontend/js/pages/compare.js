@@ -195,11 +195,12 @@ export async function render() {
     ensureFilterCache(filters);
 
     app.innerHTML = `
-      <div class="page-header"><h4><i class="bi bi-layers"></i> 多源光变对比</h4></div>
+      <div class="compare-root soft-root">
+      <div class="sp-page-title mb-3">多源对比</div>
       <div class="row g-3 mb-3">
         <div class="col-md-4">
           <div class="card">
-            <div class="card-header">选择事件对比</div>
+            <div class="card-header">选择事件</div>
             <div class="card-body p-0">
               <div class="p-2 border-bottom">
                 <input type="text" class="form-control form-control-sm" id="cmpSearch"
@@ -214,7 +215,7 @@ export async function render() {
                 </table>
               </div>
             </div>
-            <div class="card-footer d-flex justify-content-between">
+            <div class="card-footer d-flex justify-content-between align-items-center">
               <small class="text-secondary" id="selectedCount">已选 ${selectedTransients.length} 个</small>
               <button class="btn btn-sm btn-primary" onclick="loadCompareData()">绘制对比图</button>
             </div>
@@ -225,13 +226,13 @@ export async function render() {
             <div class="card-body py-2" id="bandSelectBody" style="max-height:300px;overflow-y:auto"></div>
             <div class="card-footer py-1"><small class="text-secondary">无红移的源不参与静止系改正；绝对星等模式下仅显示有红移的源</small></div>
           </div>
-          <!-- 模板口径卡（Δμ 披露，U-08；有模板曲线时由 compare_template.js 填充） -->
+          <!-- 模板口径卡（Δμ 披露；有模板曲线时由 compare_template.js 填充） -->
           <div class="card mt-3" id="tplMuCard" style="display:none"></div>
         </div>
         <div class="col-md-8">
           <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-              <span><i class="bi bi-graph-up"></i> 对比光变图</span>
+              <span>对比光变图</span>
               <div class="d-flex gap-2 align-items-center flex-wrap">
                 <select class="form-select form-select-sm" style="width:auto" id="cmpXScale" onchange="loadCompareData()">
                   <option value="logarithmic" selected>X: 对数</option>
@@ -253,22 +254,23 @@ export async function render() {
                 </div>
                 <div class="form-check form-check-inline mb-0" title="是否在图上显示上限点（倒三角）；取消勾选只显示探测点">
                   <input class="form-check-input" type="checkbox" id="cmpShowUL" checked onchange="cmpULToggle(this.checked)">
-                  <label class="form-check-label small" for="cmpShowUL">显示上限点</label>
+                  <label class="form-check-label small" for="cmpShowUL">上限点</label>
                 </div>
-                <button class="btn btn-sm btn-outline-secondary" onclick="resetCmpZoom()" title="恢复默认范围"><i class="bi bi-arrows-expand"></i></button>
-                <span class="text-secondary small" title="在图上按住左键拖出矩形框可放大该区域，左上角按钮恢复默认"><i class="bi bi-info-circle"></i> 可框选缩放</span>
+                <button class="sp-btn-ghost" onclick="resetCmpZoom()" title="恢复默认范围"><i class="bi bi-arrows-expand"></i></button>
+                <span class="text-secondary small" title="在图上按住左键拖出矩形框可放大该区域，左上角按钮恢复默认"><i class="bi bi-info-circle"></i></span>
               </div>
             </div>
-            <!-- 模板层（U-02..U-07）与域判定条（IA-10）：compare_template.js 填充；无模板行时零视觉噪音 -->
+            <!-- 模板层与域判定条：compare_template.js 填充；无模板行时零视觉噪音 -->
             <div id="tplPanel"></div>
-            <div id="tplDomainBar" class="alert alert-warning small mx-3 mt-2 mb-0 py-1" style="display:none"></div>
-            <!-- U-09/IA-15：横轴零点披露说明行（compare_template.js 填充） -->
-            <div id="tplAxisNote" class="small mx-3 mt-2 mb-0 py-1" style="display:none"></div>
-            <!-- Y 模式标注行：absmag ⇒ TXT-9；kcorr ⇒ F-06' 剔除计数 + ✕ 列表；flux ⇒ 隐藏 -->
-            <div id="cmpYModeNote" class="small mx-3 mt-2 mb-0 py-1" style="display:none"></div>
+            <div id="tplDomainBar" class="sp-warnbox small mx-3 mt-2 mb-0" style="display:none"></div>
+            <!-- 横轴零点披露说明行（compare_template.js 填充） -->
+            <div id="tplAxisNote" class="sp-muted mx-3 mt-2 mb-0" style="display:none"></div>
+            <!-- Y 模式标注行：absmag ⇒ TXT-9；kcorr ⇒ 剔除计数 + ✕ 列表；flux ⇒ 隐藏 -->
+            <div id="cmpYModeNote" class="small mx-3 mt-2 mb-0" style="display:none"></div>
             <div class="card-body"><div class="chart-container" style="height:auto;aspect-ratio:3/2;min-height:0;overflow:hidden"><canvas id="compareChart"></canvas></div></div>
           </div>
         </div>
+      </div>
       </div>
     `;
 
@@ -336,8 +338,8 @@ export async function render() {
           <div class="mb-2">
             <div class="small fw-bold d-flex align-items-center gap-1">${esc(id)} <span class="text-secondary fw-normal">z=${z != null ? z : '?'}</span>
               ${bands.length ? `<span class="fw-normal ms-1">
-                <button class="btn btn-sm btn-outline-secondary py-0 px-1 cmp-band-all" data-tid="${esc(id)}" data-on="1" style="font-size:0.72rem">全选</button>
-                <button class="btn btn-sm btn-outline-secondary py-0 px-1 cmp-band-all" data-tid="${esc(id)}" data-on="0" style="font-size:0.72rem">全不选</button>
+                <button class="sp-btn-ghost py-0 px-1 cmp-band-all" data-tid="${esc(id)}" data-on="1" style="font-size:0.72rem">全选</button>
+                <button class="sp-btn-ghost py-0 px-1 cmp-band-all" data-tid="${esc(id)}" data-on="0" style="font-size:0.72rem">全不选</button>
               </span>` : ''}
             </div>
             <div class="d-flex flex-wrap gap-2 ms-2">
@@ -619,11 +621,11 @@ function renderCompareChart() {
   if (noteEl) {
     if (absMag) {
       noteEl.style.display = '';
-      noteEl.className = 'small mx-3 mt-2 mb-0 py-1 alert alert-secondary';
+      noteEl.className = 'small mx-3 mt-2 mb-0 sp-warnbox';
       noteEl.textContent = TXT_ABSMAG;
     } else if (kcorr) {
       noteEl.style.display = '';
-      noteEl.className = 'small mx-3 mt-2 mb-0 py-1 alert alert-secondary';
+      noteEl.className = 'small mx-3 mt-2 mb-0 sp-warnbox';
       noteEl.innerHTML = (lastKcorr && lastKcorr.key === JSON.stringify(selectedTransients.slice().sort()))
         ? (_kcorrNoteHTML() || '<span class="text-secondary">K 改正数据加载中…</span>')
         : '<span class="text-secondary">K 改正数据加载中…</span>';
