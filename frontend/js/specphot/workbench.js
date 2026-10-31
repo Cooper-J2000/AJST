@@ -237,30 +237,28 @@ function refreshComparison() { if (_els.compare) renderComparison(_els.compare, 
 function refreshContinuum() { if (_els.cont) renderContinuumResults(_els.cont, ctx); }
 function refreshLines() { if (_els.lines) renderLinesResults(_els.lines, ctx); }
 
-// ─── 口径徽章条（F-0i10，四字段与结果 JSON 同源） ───
+// ─── 口径状态条（与结果 JSON 同源；TXT-27 预处理行恒在场，不得整行消失） ───
 function renderBadges() {
   const el = _els.badges;
   if (!el) return;
   const r = S.lastResponse;
   const grey = S.state === 'computing';
   const stale = S.state === 'stale' || S.state === 'dirty';
-  const seg = (k, v, warn = '') =>
-    `<span class="badge rounded-pill ${stale ? 'bg-warning text-dark' : 'bg-secondary'}"
-        title="${escAttr(TXT.t1)}" style="${grey ? 'opacity:.5' : ''}">${k}: ${v}${warn}</span>`;
-  const kind = r ? [...new Set(r.results.map(x => x.curve_kind))].join('/') : '—';
-  const kindWarn = kind.includes('transmission') || kind.includes('unknown') ? '⚠' : '';
-  const up = S.upload ? ` <span class="text-secondary small" title="上传件来源标记">up:${esc(String(S.upload.spec_hash || '').slice(0, 8))}</span>` : '';
+  const kind = r ? [...new Set(r.results.map(x => x.curve_kind))].join('/') : '';
+  const kindWarn = kind.includes('transmission') || kind.includes('unknown') ? ' ⚠' : '';
+  const summary = r
+    ? `${esc(r.mode_effective)} · ${esc(r.results[0] && r.results[0].weighting || S.params.weighting)} · ${esc(r.results[0] && r.results[0].mag_system || S.params.mag_system)} · 曲线 ${esc(kind)}${kindWarn}`
+    : '尚未计算';
+  const up = S.upload ? ` <span title="上传件来源标记">up:${esc(String(S.upload.spec_hash || '').slice(0, 8))}</span>` : '';
+  const fresh = r
+    ? (stale ? '<span><span class="sp-dot sp-dot-amber"></span>参数已改动，结果已过期</span>'
+             : '<span><span class="sp-dot sp-dot-green"></span>结果与参数一致</span>')
+    : '';
   el.innerHTML = `
-    <div class="d-flex flex-wrap gap-2 align-items-center py-1 border-bottom">
-      ${seg('模式', r ? esc(r.mode_effective) : '—')}
-      ${seg('加权', r ? esc(r.results[0] && r.results[0].weighting || S.params.weighting) : esc(S.params.weighting))}
-      ${seg('星等系', r ? esc(r.results[0] && r.results[0].mag_system || S.params.mag_system) : esc(S.params.mag_system))}
-      ${seg('曲线', esc(kind), kindWarn)}
-      ${up}
-      <span class="ms-auto small text-secondary" style="${grey ? 'opacity:.5' : ''}">
-        ${S.state === 'stale' || S.state === 'dirty' ? '参数已改动，结果已过期' : ''}</span>
+    <div class="sp-statusbar" title="${escAttr(TXT.t1)}" style="${grey ? 'opacity:.5' : ''}">
+      <span>${summary}${up}</span><span class="ms-auto">${fresh}</span>
     </div>
-    <div class="small text-secondary py-1">${TXT.t27}：<span>${preprocessLine(r)}</span></div>
+    <div class="sp-muted px-1" style="${grey ? 'opacity:.5' : ''}">${TXT.t27}：${preprocessLine(r)}</div>
     ${rebinScreenLine(r)}`;
 }
 function preprocessLine(r) {   // TXT-27：恒在场，空操作写 none，不得整行消失
@@ -287,13 +285,13 @@ function rebinScreenLine(r) {
   const nodes = r.results && r.results[0] && r.results[0].curve_nodes;
   const rhoNote = p.rebin_gain == null
     ? ' <span class="text-warning">无相关估计 ⇒ 收益不可声明</span>' : '';
-  return `<div class="small text-secondary py-1">合束回显：`
+  return `<div class="sp-muted py-1">合束回显：`
     + `rebin_gain=<b>${p.rebin_gain ?? 'null'}</b>${rhoNote} ／ curve_nodes=${nodes ?? 'none'} ／ `
     + `px_per_fwhm_after=${p.px_per_fwhm_after ?? 'null（无仪器分辨率 ⇒ 无从判定）'} ／ `
     + `要并排比较两个因子，需要同一 preprocess_hash</div>`;
 }
 
-// ─── ② 波段选择（U-04 系统筛选 + U-05 chips） ───
+// ─── ② 波段选择（系统筛选 + pill chips） ───
 function bandGroups() {
   const groups = new Map([['', '全部']]);
   for (const b of S.bandsMeta) {
@@ -306,7 +304,7 @@ function renderBandCard() {
   const el = _els.bandCard;
   if (!el) return;
   if (!S.bandsMeta.length) {
-    el.innerHTML = '<div class="card"><div class="card-body py-2 small text-secondary">波段清单加载中…</div></div>';
+    el.innerHTML = '<div class="card"><div class="card-body sp-muted">波段清单加载中…</div></div>';
     return;
   }
   const full = S.selectedBands.length >= C_MAX_BANDS;
@@ -322,25 +320,23 @@ function renderBandCard() {
         ? `λ=${b.wavelength ?? '—'} Å · 曲线口径 ${esc(b.curve_kind || '未登记')}`
         : (monoOk ? '无透过率曲线：按单色近似计算，仅量级参考'
                   : '无透过率曲线：勾选下方「单色回退」后可选');
-      const dot = b.has_curve ? '' : (monoOk
-        ? ' <span class="badge text-bg-warning py-0" title="mono 单色近似">mono</span>'
-        : '<i class="bi bi-slash-circle text-secondary ms-1"></i>');
-      return `<label class="me-2 ${dis ? 'text-secondary' : ''}" title="${escAttr(title)}">
-        <input type="checkbox" class="form-check-input mt-0 me-1 sp-band-chip" value="${escAttr(b.id)}"
-          ${on ? 'checked' : ''} ${dis ? 'disabled' : ''}>${esc(b.id)}${dot}</label>`;
+      const dot = b.has_curve ? '' : (monoOk ? ' ·mono' : '');
+      return `<label class="sp-chip" title="${escAttr(title)}">
+        <input type="checkbox" class="sp-band-chip" value="${escAttr(b.id)}"
+          ${on ? 'checked' : ''} ${dis ? 'disabled' : ''}><span class="sp-chip-label">${esc(b.id)}${dot}</span></label>`;
     }).join('');
   el.innerHTML = `
     <div class="card mb-3">
-      <div class="card-header d-flex align-items-center py-2">
-        ② 波段选择
-        <select class="form-select form-select-sm w-auto ms-auto sp-band-group">${groups}</select>
-        <span class="small text-secondary fw-normal ms-2">${S.selectedBands.length}/${C_MAX_BANDS}</span>
+      <div class="card-header d-flex align-items-center">
+        波段
+        <select class="form-select form-select-sm w-auto ms-auto sp-band-group" aria-label="按系统筛选波段">${groups}</select>
+        <span class="sp-muted ms-2">${S.selectedBands.length}/${C_MAX_BANDS}</span>
       </div>
-      <div class="card-body py-2">
-      <div class="small">${chips || '<span class="text-secondary">该筛选下无波段</span>'}</div>
-      <div class="form-check form-check-inline small mt-1" title="开启后无曲线波段按单色近似计算（仅量级参考）">
-        <input class="form-check-input sp-mono" type="checkbox" id="spAllowMono" ${S.params.allow_mono ? 'checked' : ''}>
-        <label class="form-check-label" for="spAllowMono">单色回退（mono）<span class="text-danger">⚠</span></label>
+      <div class="card-body">
+      <div>${chips || '<span class="sp-muted">该筛选下无波段</span>'}</div>
+      <div class="sp-muted mt-2" title="开启后无曲线波段按单色近似计算（仅量级参考）">
+        <label class="mb-0"><input class="form-check-input sp-mono me-1" type="checkbox" id="spAllowMono" ${S.params.allow_mono ? 'checked' : ''}>
+        单色回退<span class="text-danger"> ⚠</span></label>
       </div>
     </div></div>`;
   el.querySelectorAll('.sp-band-chip').forEach(cb => cb.addEventListener('change', () => {
@@ -365,12 +361,13 @@ function renderBandCard() {
   });
 }
 
-// ─── ③ 参数区 + ⑤ 动作按钮 + IA-16 缺项清单 ───
-function radio(cls, name, val, cur, dis, label, title = '') {
-  return `<div class="form-check form-check-inline" ${title ? `title="${escAttr(title)}"` : ''}>
-    <input class="form-check-input ${cls}" type="radio" name="${name}" value="${val}"
+// ─── ③ 参数区 + 主操作 + 缺项清单 ───
+// 分段控件单选（视觉=选中的 pill；input 保留全部事件钩子与可访问性）
+function seg(cls, name, val, cur, dis, label, title = '') {
+  return `<label${title ? ` title="${escAttr(title)}"` : ''}>
+    <input type="radio" class="${cls}" name="${name}" value="${val}"
       ${cur === val ? 'checked' : ''} ${dis ? 'disabled' : ''}>
-    <label class="form-check-label${dis ? ' text-secondary' : ''}">${label}</label></div>`;
+    <span class="sp-seg-item">${label}</span></label>`;
 }
 
 // ─── W-17：当前谱的流量口径（F-13 双键判定的前端镜像，计算后以响应 flux_kind 为准） ───
@@ -399,14 +396,16 @@ function errcolBlock(computing) {
   const verdict = knownErrcolVerdict();
   if (!verdict) return '';
   if (verdict === 'ok') {
-    return '<div class="text-secondary mt-1">误差列判定 ok，无需确认</div>';
+    return '<div class="sp-muted mt-2">误差列判定 ok，无需确认</div>';
   }
   const cur = S.params.errcol_choice;
-  return `<div class="mt-1 sp-errcol">误差列判定 <b>${esc(verdict)}</b> ≠ ok（二选一后才可计算）：
-    ${radio('sp-ec', 'spEc', 'proxy', cur, computing, '按代理误差重算',
+  return `<div class="mt-2 sp-errcol sp-warnbox">误差列判定 <b>${esc(verdict)}</b> ≠ ok，二选一后才可计算：
+    <div class="sp-seg mt-1">
+      ${seg('sp-ec', 'spEc', 'proxy', cur, computing, '按代理误差重算',
             '回落二阶差分代理误差；该误差列不参与本次结果')}
-    ${radio('sp-ec', 'spEc', 'as_provided', cur, computing, '坚持用该误差列',
+      ${seg('sp-ec', 'spEc', 'as_provided', cur, computing, '坚持用该误差列',
             '结果将一直标注使用该误差列；该列已被判定不可信')}
+    </div>
   </div>`;
 }
 
@@ -432,111 +431,110 @@ function renderRightPanel() {
   const computeDis = !!(missing.length || computing || busyLeft);
   el.innerHTML = `
     <div class="card mb-3">
-      <div class="card-header d-flex align-items-center py-2">
-        ③ 参数
-        <button type="button" class="btn btn-sm btn-outline-secondary ms-auto d-sm-none sp-param-toggle"
-          aria-expanded="${S.paramOpen ? 'true' : 'false'}" aria-controls="spParamBody"
-          title="开合参数抽屉">参数</button>
+      <div class="card-header d-flex align-items-center">
+        参数
+        <button type="button" class="sp-btn-ghost ms-auto d-sm-none sp-param-toggle"
+          aria-expanded="${S.paramOpen ? 'true' : 'false'}" aria-controls="spParamBody">参数</button>
       </div>
-      <div class="card-body py-2" id="spParams">
+      <div class="card-body" id="spParams">
       <div class="sp-param-body ${S.paramOpen ? '' : 'sp-closed'}" id="spParamBody">
-      <div class="row g-2 small mt-1">
-        <div class="col-6">
-          <div>加权</div>
-          ${['photon', 'energy'].map(v => radio('sp-w', 'spW', v, p.weighting, computing, v)).join('')}
+      <div class="d-flex flex-column gap-3">
+        <div>
+          <div class="sp-muted mb-1">加权</div>
+          <div class="sp-seg">${['photon', 'energy'].map(v => seg('sp-w', 'spW', v, p.weighting, computing, v)).join('')}</div>
         </div>
-        <div class="col-6">
-          <div>定标模式</div>
-          ${['auto', 'anchored'].map(v => radio('sp-mode', 'spMode', v, p.mode, computing, v)).join('')}
-          ${radio('sp-mode', 'spMode', 'direct', p.mode, directDis, 'direct', directDis ? directTip : '')}
-          ${radio('sp-mode', 'spMode', 'model', p.mode, computing, 'model', '用 S2 连续谱模型曲线代替观测谱定标；需先在 S2 页签完成一次可比拟合')}
-        </div>
-        <div class="col-4">
-          <div>星等制</div>
-          ${radio('sp-ms', 'spMs', 'AB', p.mag_system, computing, 'AB')}
-          ${radio('', '', 'ST', '', true, 'ST', '暂不可用：库内无 Vega 参考谱')}
-          ${radio('sp-ms', 'spMs', 'Vega', p.mag_system, computing, 'Vega')}
-        </div>
-        <div class="col-4">
-          <div>误差处理</div>
-          ${['auto', 'force_proxy'].map(v => radio('sp-ep', 'spEp', v, p.err_policy, computing, v)).join('')}
-        </div>
-        <div class="col-4">
-          <label title="留空 = 按类别表">时刻容差 dt_tol_d（天）</label>
-          <input type="number" min="0" step="any" class="form-control form-control-sm sp-dt" value="${escAttr(p.dt_tol_d)}" placeholder="自动" ${computing ? 'disabled' : ''}>
-        </div>
-      </div>
-      <hr class="my-2">
-      <div class="small mt-1"><strong>诊断增强</strong>
-        <i class="bi bi-info-circle text-secondary" title="默认全关；改动即需重算；输出只进 diagnostics{}，不进主表列"></i></div>
-      <div class="row g-1 small mt-1">
-        ${DIAG_META.map(([k, phase, tip]) => {
-          const locked = phase !== 'P2c';
-          const badge = phase === 'P2c' ? '' : phase === 'M6'
-            ? ' <span class="badge bg-secondary">待复核</span>'
-            : ' <span class="badge bg-secondary">见 S3</span>';
-          const on = !!(S.diagFlags || {})[k];
-          return `<div class="col-6 col-md-4">
-            <label class="form-check${locked ? ' text-secondary' : ''}" title="${escAttr(tip)}">
-              <input type="checkbox" class="form-check-input sp-diag" data-k="${k}"
-                ${on ? 'checked' : ''} ${locked || computing ? 'disabled' : ''}> ${k}${badge}
-            </label></div>`;
-        }).join('')}
-      </div>
-      <hr class="my-2">
-      <div class="small">
-        <strong>预处理</strong>
-        <div class="row g-2 mt-0">
-          <div class="col-4">
-            <div>合束因子</div>
-            <select class="form-select form-select-sm sp-factor" ${computing ? 'disabled' : ''}
-              title="合束：只加粗不减细的块内平均，面积守恒；改动即需重算。取值 [1,2,3,4,6,8]。当前全库无仪器分辨率 ⇒ 欠分辨检查无从判定">
-              ${[1, 2, 3, 4, 6, 8].map(k => `<option value="${k}" ${Number(S.params.factor) === k ? 'selected' : ''}>${k}</option>`).join('')}
-            </select>
+        <div>
+          <div class="sp-muted mb-1">定标模式</div>
+          <div class="sp-seg">
+            ${['auto', 'anchored'].map(v => seg('sp-mode', 'spMode', v, p.mode, computing, v)).join('')}
+            ${seg('sp-mode', 'spMode', 'direct', p.mode, directDis, 'direct', directDis ? directTip : '')}
+            ${seg('sp-mode', 'spMode', 'model', p.mode, computing, 'model', '用 S2 连续谱模型曲线代替观测谱定标；需先在连续谱页签完成一次可比拟合')}
           </div>
-          <div class="col-3">
-            <div>绘图平滑</div>
-            <label class="form-check form-check-inline" title="只改图不改数：不参与计算、不进导出件；开启时图上注明平滑口径">
+        </div>
+        <div>
+          <div class="sp-muted mb-1">星等制</div>
+          <div class="sp-seg">
+            ${seg('sp-ms', 'spMs', 'AB', p.mag_system, computing, 'AB')}
+            ${seg('', '', 'ST', '', true, 'ST', '暂不可用：库内无 Vega 参考谱')}
+            ${seg('sp-ms', 'spMs', 'Vega', p.mag_system, computing, 'Vega')}
+          </div>
+        </div>
+        <div>
+          <div class="sp-muted mb-1">误差处理</div>
+          <div class="sp-seg">${['auto', 'force_proxy'].map(v => seg('sp-ep', 'spEp', v, p.err_policy, computing, v)).join('')}</div>
+        </div>
+        <div>
+          <div class="sp-muted mb-1">时刻容差 dt_tol_d（天）</div>
+          <input type="number" min="0" step="any" class="form-control form-control-sm sp-dt" value="${escAttr(p.dt_tol_d)}" placeholder="自动（按类别表）" ${computing ? 'disabled' : ''}>
+        </div>
+      </div>
+      <details class="sp-adv mt-3">
+        <summary>高级（诊断 · 预处理）</summary>
+        <div class="mt-3">
+          <div class="sp-muted mb-1">诊断增强
+            <i class="bi bi-info-circle" title="默认全关；改动即需重算；输出只进 diagnostics{}，不进主表列"></i></div>
+          <div class="row g-1 small">
+            ${DIAG_META.map(([k, phase, tip]) => {
+              const locked = phase !== 'P2c';
+              const badge = phase === 'P2c' ? '' : phase === 'M6'
+                ? ' <span class="badge bg-secondary">待复核</span>'
+                : ' <span class="badge bg-secondary">见 S3</span>';
+              const on = !!(S.diagFlags || {})[k];
+              return `<div class="col-12">
+                <label class="form-check${locked ? ' text-secondary' : ''}" title="${escAttr(tip)}">
+                  <input type="checkbox" class="form-check-input sp-diag" data-k="${k}"
+                    ${on ? 'checked' : ''} ${locked || computing ? 'disabled' : ''}> ${k}${badge}
+                </label></div>`;
+            }).join('')}
+          </div>
+        </div>
+        <div class="mt-3">
+          <div class="sp-muted mb-1">合束因子</div>
+          <select class="form-select form-select-sm sp-factor" ${computing ? 'disabled' : ''}
+            title="合束：只加粗不减细的块内平均，面积守恒；改动即需重算。取值 [1,2,3,4,6,8]。当前全库无仪器分辨率 ⇒ 欠分辨检查无从判定">
+            ${[1, 2, 3, 4, 6, 8].map(k => `<option value="${k}" ${Number(S.params.factor) === k ? 'selected' : ''}>${k}</option>`).join('')}
+          </select>
+        </div>
+        <div class="mt-3">
+          <div class="sp-muted mb-1">绘图平滑</div>
+          <div class="d-flex gap-2 align-items-center">
+            <label class="form-check form-check-inline mb-0" title="只改图不改数：不参与计算、不进导出件；开启时图上注明平滑口径">
               <input type="checkbox" class="form-check-input sp-smooth-on" ${S.params.smooth_on ? 'checked' : ''}> 开启
             </label>
-            <input type="number" min="1" max="7" step="1" class="form-control form-control-sm sp-smooth-px"
+            <input type="number" min="1" max="7" step="1" class="form-control form-control-sm sp-smooth-px sp-w90"
               value="${escAttr(String(S.params.smooth_px ?? 3))}" aria-label="平滑核长（全宽，像元）"
               title="核长（全宽）默认 3，上限 7" ${computing ? 'disabled' : ''}>
           </div>
-          <div class="col-5">
-            <div title="与图上框选同一份掩膜；lo<hi 且须与覆盖重叠，总段数 ≤ 32">掩膜段（Å）</div>
-            <div class="d-flex gap-1">
-              <input type="number" step="any" class="form-control form-control-sm sp-mask-lo"
-                placeholder="lo" aria-label="掩膜段起点 Å" ${computing ? 'disabled' : ''}>
-              <input type="number" step="any" class="form-control form-control-sm sp-mask-hi"
-                placeholder="hi" aria-label="掩膜段终点 Å" ${computing ? 'disabled' : ''}>
-              <button type="button" class="btn btn-outline-secondary btn-sm py-0 sp-mask-add"
-                ${computing ? 'disabled' : ''}>加入</button>
-            </div>
+        </div>
+        <div class="mt-3">
+          <div class="sp-muted mb-1" title="与图上框选同一份掩膜；lo<hi 且须与覆盖重叠，总段数 ≤ 32">掩膜段（Å）</div>
+          <div class="d-flex gap-1">
+            <input type="number" step="any" class="form-control form-control-sm sp-mask-lo"
+              placeholder="lo" aria-label="掩膜段起点 Å" ${computing ? 'disabled' : ''}>
+            <input type="number" step="any" class="form-control form-control-sm sp-mask-hi"
+              placeholder="hi" aria-label="掩膜段终点 Å" ${computing ? 'disabled' : ''}>
+            <button type="button" class="sp-btn-ghost sp-mask-add" ${computing ? 'disabled' : ''}>加入</button>
           </div>
         </div>
         ${errcolBlock(computing)}
+      </details>
+      <div class="sp-hairline"></div>
+      <button class="btn btn-primary w-100 sp-compute" ${computeDis ? 'disabled' : ''}
+        aria-describedby="spComputeError" title="${escAttr(TXT.t13)}">
+        <span class="spinner-border spinner-border-sm d-none sp-spin"></span> 计算</button>
+      <div class="d-flex justify-content-center flex-wrap">
+        <button class="sp-btn-ghost sp-cancel" style="display:${computing ? '' : 'none'}">取消</button>
+        <button class="sp-btn-ghost sp-reset" ${computing ? 'disabled' : ''}>重置</button>
+        <button class="sp-btn-ghost sp-expcsv" ${!r || computing ? 'disabled' : ''}
+          title="列序冻结，含口径头注释；无结果时禁用">导出 CSV</button>
+        <button class="sp-btn-ghost sp-expjson" ${!r || computing ? 'disabled' : ''}
+          title="响应原文">导出 JSON</button>
       </div>
-      <hr class="my-2">
-      <div class="small">
-        <strong>⑤ 动作</strong>
-        <div class="d-flex flex-wrap gap-2 align-items-center mt-1">
-          <button class="btn btn-primary btn-sm sp-compute" ${computeDis ? 'disabled' : ''}
-            aria-describedby="spComputeError" title="${escAttr(TXT.t13)}">
-            <span class="spinner-border spinner-border-sm d-none sp-spin"></span> 计算</button>
-          <button class="btn btn-outline-secondary btn-sm sp-cancel" style="display:${computing ? '' : 'none'}">取消</button>
-          <button class="btn btn-outline-secondary btn-sm sp-reset" ${computing ? 'disabled' : ''}>重置为默认</button>
-          <button class="btn btn-outline-secondary btn-sm sp-expcsv" ${!r || computing ? 'disabled' : ''}
-            title="列序冻结，含口径头注释；无结果时禁用">导出 CSV</button>
-          <button class="btn btn-outline-secondary btn-sm sp-expjson" ${!r || computing ? 'disabled' : ''}
-            title="响应原文">导出 JSON</button>
-        </div>
-        <div class="mt-1 text-warning small" id="spBusyNotice">${busyLeft
-          ? `服务忙，${busyLeft}s 后可重试（429）` : esc(S.busyNotice || '')}</div>
-        <div class="mt-1 text-warning small">${esc(S.featureNotice || '')}</div>
-        <div class="mt-1 text-danger small" id="spComputeError" role="alert">${esc(S.errorMsg || '')}</div>
-      </div>
-      <div class="small mt-2 ${missing.length ? 'text-warning' : 'text-success'}">
+      <div class="mt-1 text-warning small" id="spBusyNotice">${busyLeft
+        ? `服务忙，${busyLeft}s 后可重试` : esc(S.busyNotice || '')}</div>
+      <div class="mt-1 text-warning small">${esc(S.featureNotice || '')}</div>
+      <div class="mt-1 text-danger small" id="spComputeError" role="alert">${esc(S.errorMsg || '')}</div>
+      <div class="sp-missing mt-2 ${missing.length ? 'text-warning' : 'text-success'}">
         ${missing.length ? '缺项：<ul class="mb-0">' + missing.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>' : '✓ 可以计算'}
       </div>
       </div><!-- /sp-param-body（W-15② 窄屏抽屉） -->
@@ -754,21 +752,21 @@ function startBusyCountdown() {
   }, 1000);
 }
 
-// ─── 页签（U-03） ───
+// ─── 页签（分段控件：测光 / 对照 / 连续谱 / 谱线） ───
 function renderTabs() {
   const el = _els.tabs;
   if (!el) return;
   const anchN = ((S.lastResponse || {}).anchor_rows || []).length + S.manualRows.length;
   const cmpDis = anchN < 1;
   const item = (id, label, extra = '') =>
-    `<li class="nav-item"><a class="nav-link sp-tab ${S.activeTab === id ? 'active' : ''}" href="javascript:void(0)"
-        data-tab="${id}" ${extra}><i class="bi bi-card-list"></i> ${label}</a></li>`;
-  el.innerHTML = `<ul class="nav nav-tabs mb-2">
-    ${item('s1', 'S1 合成测光')}
-    ${item('cmp', '对照面板', cmpDis ? `title="需 ≥1 个锚点才能对照" data-disabled="1" style="pointer-events:auto;opacity:.5"` : '')}
-    ${item('s2', 'S2 连续谱拟合')}
-    ${item('s3', 'S3 谱线测量')}
-  </ul>`;
+    `<button type="button" class="sp-seg-item sp-tab ${S.activeTab === id ? 'active' : ''}"
+        data-tab="${id}" ${extra}>${label}</button>`;
+  el.innerHTML = `<div class="sp-seg" role="tablist">
+    ${item('s1', '测光')}
+    ${item('cmp', '对照', cmpDis ? `title="需 ≥1 个锚点才能对照" data-disabled="1"` : '')}
+    ${item('s2', '连续谱')}
+    ${item('s3', '谱线')}
+  </div>`;
   el.querySelectorAll('.sp-tab').forEach(a => a.addEventListener('click', () => {
     if (a.dataset.disabled) return;   // 未到期页签禁用（E-15）
     S.activeTab = a.dataset.tab;
@@ -794,15 +792,14 @@ function layoutPanes() {
   if (S.activeTab === 's3') { renderRightPanel(); refreshLines(); }
 }
 
-// ─── 页头（U-43 回到该源详情 + 标题） ───
+// ─── 页头（标题 + 回到该源详情） ───
 function renderHeader() {
   const el = _els.header;
   const back = (S.sourceKind === 'catalog' && S.tid)
-    ? `<a class="btn btn-sm btn-outline-secondary" href="#/transient/${escAttr(S.tid)}"><i class="bi bi-box-arrow-up-left"></i> 回到 #${escAttr(S.tid)} 详情</a>` : '';
+    ? `<a class="sp-btn-ghost text-decoration-none" href="#/transient/${escAttr(S.tid)}"><i class="bi bi-box-arrow-up-left"></i> 回到 #${escAttr(S.tid)} 详情</a>` : '';
   el.innerHTML = `
-    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-      <h5 class="mb-0"><i class="bi bi-rulers"></i> 光谱 × 滤光片
-        <span class="small text-secondary" title="${escAttr(TXT.t13)}">S1 合成测光</span></h5>
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+      <div class="sp-page-title">光谱 × 滤光片</div>
       <div class="d-flex gap-2">${back}</div>
     </div>`;
 }
@@ -849,18 +846,21 @@ function onEsc(e) {
 export function mountWorkbench(root, spectrumId) {
   _root = root;
   if (S.paramOpen === undefined) S.paramOpen = window.innerWidth > 576;   // W-15②：窄屏默认收起
+  if (S.sourceKind == null) S.sourceKind = 'catalog';   // 默认展示库内谱选择器，进页即有明确下一步
   root.innerHTML = `
     <div id="spHeader"></div>
     <div id="spSource"></div>
-    <div id="spBadges"></div>
-    <div id="spTabs"></div>
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-1 mb-2">
+      <div id="spTabs"></div>
+      <div id="spBadges"></div>
+    </div>
     <div class="row g-3" id="spMain">
-      <div class="col-lg-7">
+      <div class="col-lg-8">
         <div id="spPlot"></div>
         <div id="spResults"></div>
         <div id="spAnchors"></div>
       </div>
-      <div class="col-lg-5">
+      <div class="col-lg-4">
         <div id="spBandCard"></div>
         <div id="spRight"></div>
       </div>

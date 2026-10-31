@@ -177,7 +177,7 @@ function renderWarnings(resp) {
         <a href="javascript:void(0)" class="ms-1 sp-locate small">定位到控件</a></div>`).join('')}</div>`;
   }).join('');
   const folded = ws.length > 4;
-  return `<div class="alert alert-secondary py-2 mb-2" aria-live="polite">
+  return `<div class="sp-warnbox mb-2" aria-live="polite">
     <strong class="small">告警（${ws.length} 条）</strong>
     <div class="${folded ? 'd-none sp-warnmore' : ''}">${rows || '<span class="small text-secondary">无</span>'}</div>
     ${folded ? '<a href="javascript:void(0)" class="small sp-warntoggle">展开全部</a>' : ''}
@@ -248,7 +248,7 @@ function renderOutlierConfirm(resp, ctx) {
     && Array.isArray(x.segments) && x.segments.length);
   if (!w) return '';
   const rows = w.segments.map((seg, i) => `<li class="ms-3">${num(seg[0], 1)}–${num(seg[1], 1)} Å
-      <button type="button" class="btn btn-outline-secondary btn-sm py-0 ms-1 sp-outlier-accept"
+      <button type="button" class="sp-btn-ghost py-0 ms-1 sp-outlier-accept"
         data-i="${i}" title="写入掩膜，下次计算生效">剔除并记录</button></li>`).join('');
   return `<div class="small mt-1" title="离群点的正确去处是掩膜而不是损失函数；服务端不自动剔除">
       <span class="badge bg-secondary">离群候选</span> ${esc(w.message)}
@@ -290,15 +290,15 @@ function renderDiagnostics(resp) {
       <div class="text-secondary">m_syn_local 是诊断镜像列，不顶替主列 mag；与 (1−h_i) 收缩量并排显示。</div>
       <div class="text-secondary">${esc(d.anchor_reinsert.note || '')}</div></div>`);
   }
-  return `<div class="card mb-3"><div class="card-body py-2">
-    <strong>诊断增强</strong> <i class="bi bi-info-circle text-secondary" title="仅列出开启的诊断项输出；关闭时不进入任何计算路径"></i>
+  return `<div class="card mb-3"><div class="card-body">
+    <strong>诊断</strong> <i class="bi bi-info-circle text-secondary" title="仅列出开启的诊断项输出；关闭时不进入任何计算路径"></i>
     ${rows.join('')}</div></div>`;
 }
 
 // ─── 结果区总渲染（徽章条在 workbench；这里：TXT-2/12 + 告警 + 表 + 脚注） ───
 
-// 空态文案（维护者 2026-10-31 裁定：界面不出现规格内部编号，编号只留在代码注释与
-// 服务端告警数据里）；容器 #specphot-empty 内恰一个 <a id="specphot-empty-register">，
+// 空态文案按上下文取（维护者 2026-10-31 裁定：界面不出现规格内部编号）；
+// 容器 #specphot-empty 内恰一个 <a id="specphot-empty-register">（包住「滤光片」页短语），
 // href 运行时从宿主 index.html 顶栏「滤光片」导航项 DOM 取（不写路由字面量）⇒ 宿主改路由不陈旧。
 const T28_BEFORE = '本源登记的波段都还没有透过率/响应曲线 ⇒ 没有曲线可卷，本模块不猜。下一步：到宿主';
 const T28_LINK = '「滤光片」页';
@@ -310,21 +310,27 @@ function filtersNavHref() {
   }
   return '#';   // 宿主顶栏缺失时的兜底（正常布局不会走到）
 }
-function renderEmptyState(el) {   // W-18：触发面 = 无来源 / 未计算 / curve_coverage.with_curve = 0
+function renderEmptyState(el, S) {   // 空态 DOM 契约 + 上下文文案（无源 / 未计算 / 无曲线）
+  const noCurve = S && S.curveCoverage && Number(S.curveCoverage.with_curve) === 0;
+  const hasSpec = S && ((S.sourceKind === 'catalog' && S.spectrumId != null) || !!S.upload);
+  const before = noCurve ? T28_BEFORE
+    : hasSpec ? '谱与波段就绪。点右侧「计算」得到合成测光结果。'
+    : '先在上方选择一条库内谱（或上传 / 粘贴），勾选波段，然后点「计算」。';
+  const after = noCurve ? T28_AFTER : '可登记缺失的曲线；急看量级可先切 mono 单色近似（量级参考，不是结果）。';
   const card = document.createElement('div');
   card.className = 'card mb-3';
   const body = document.createElement('div');
-  body.className = 'card-body py-3 text-center';
+  body.className = 'card-body py-4 text-center';
   const box = document.createElement('div');
   box.id = 'specphot-empty';
   box.className = 'text-secondary';
-  box.appendChild(document.createTextNode(T28_BEFORE));
+  box.appendChild(document.createTextNode(before));
   const a = document.createElement('a');
   a.id = 'specphot-empty-register';
   a.href = filtersNavHref();
   a.textContent = T28_LINK;
   box.appendChild(a);
-  box.appendChild(document.createTextNode(T28_AFTER));
+  box.appendChild(document.createTextNode(after));
   body.appendChild(box);
   const note = document.createElement('div');   // 旁注（在 #specphot-empty 之外，保证其 textContent 逐字）
   note.className = 'small text-secondary mt-2';
@@ -339,7 +345,7 @@ export function renderResults(el, ctx) {
   const S = ctx.S;
   const r = S.lastResponse;
   if (!r) {
-    renderEmptyState(el);   // W-18：空态 DOM 契约（替换原「尚未计算」占位）
+    renderEmptyState(el, S);   // 空态 DOM 契约
     return;
   }
   const anyTransmission = r.results.some(x => x.curve_kind !== 'throughput');
@@ -347,11 +353,11 @@ export function renderResults(el, ctx) {
   const sa = r.s_anchor;
   const anchored = r.mode_effective === 'anchored' && sa;
   el.innerHTML = `
-    <div class="card mb-3"><div class="card-body py-2">
+    <div class="card mb-3"><div class="card-body">
       <div class="d-flex align-items-center">
-        <strong>结果表</strong>
+        <strong>结果</strong>
         <i class="bi bi-info-circle text-secondary ms-1" title="误差三列分列，不合成总误差；每列求法/口径见表头与展开卡的 err_source/err_scope；Δm 着色：|Δm|>0.2 红、>0.5 深红"></i>
-        <span class="small text-secondary ms-2">spectrum_source=${esc(r.spectrum_source)}
+        <span class="sp-muted ms-2">spectrum_source=${esc(r.spectrum_source)}
           ${r.spectrum_id != null ? '#' + r.spectrum_id : 'up:' + esc(String(r.spec_hash || '').slice(0, 8))}
           · mode ${esc(r.mode_requested)}→${esc(r.mode_effective)} · flux_kind=${esc(r.flux_kind)}</span>
       </div>
@@ -405,9 +411,9 @@ export function renderComparison(el, ctx) {
   const r = ctx.S.lastResponse;
   const rows = r ? (r.results || []).filter(x => x.m_obs != null) : [];
   el.innerHTML = `
-  <div class="card mb-3"><div class="card-body py-2">
-    <strong>对照面板</strong> <i class="bi bi-info-circle text-secondary" title="${escAttr(TXT.t4)}"></i>
-    ${!r ? '<div class="text-secondary small mt-2">尚无计算结果。</div>' : rows.length ? `
+  <div class="card mb-3"><div class="card-body">
+    <strong>对照</strong> <i class="bi bi-info-circle text-secondary" title="${escAttr(TXT.t4)}"></i>
+    ${!r ? '<div class="sp-muted mt-2">尚无计算结果。</div>' : rows.length ? `
       <div class="table-responsive mt-2" style="max-height:300px;overflow:auto">
         <table class="table table-sm table-striped mb-0 small">
           <thead><tr><th>波段</th><th>mag（合成）</th><th>m_obs</th><th>Δm</th><th>Δm_err</th>

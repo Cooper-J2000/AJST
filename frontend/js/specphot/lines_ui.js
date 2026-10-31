@@ -121,106 +121,128 @@ export function renderLinesPanel(el, ctx) {
   // W-23：步 1 的 line_kind 切换会改变步 2 基线形态与步 3 拟合 ⇒ 已有结果标「需重算」
   const staleBadge = S.lineStale && S.lastLines
     ? ' <span class="badge bg-warning text-dark">参数已改动，需重算</span>' : '';
-  const stepBar = ['选线区', '定基线', '拟合轮廓'].map((t, i) =>
-    `<span class="${i + 1 === step ? 'fw-bold' : 'text-secondary'}">${i + 1}. ${t}</span>`)
-    .join('<span class="text-secondary mx-1">→</span>');
+  const stepBar = `<span class="sp-seg">${['选线区', '定基线', '拟合轮廓'].map((t, i) =>
+    `<span class="sp-seg-item${i + 1 === step ? ' active' : ''}" style="cursor:default">${i + 1} ${t}</span>`).join('')}</span>`;
   let bodyHtml = '';
   if (step === 1) {
     // F-34：线区候选来自宿主 spec_lines.js 线表（位置标记，M-6 未复核）；U-30 线型必选
     bodyHtml = `
-    <div class="mt-1">线区 <i class="bi bi-info-circle text-secondary" title="${escAttr(M6_TIP)}"></i>
-      <select class="form-select form-select-sm w-auto d-inline sp-lng">
-        <option value="">手输 / 选组…</option>
-        ${SPEC_LINE_GROUPS.filter(g => g.lines && g.hasZ).map(g =>
-          `<option value="${escAttr(g.key)}" ${p.id_table === 'spec_lines.js#' + g.key ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}
-      </select>
-      species：<input type="text" class="form-control form-control-sm d-inline-block w-auto sp-lspecies"
-        value="${escAttr(p.species)}" title="${escAttr(M6_TIP)}">
-      λ_rest(Å)：<input type="number" step="any" min="0" class="form-control form-control-sm d-inline-block w-auto sp-llam"
-        value="${escAttr(p.lambda_rest_aa)}">
-      半宽 ±Å：<input type="number" step="any" min="1" class="form-control form-control-sm d-inline-block w-auto sp-lhw"
-        value="${escAttr(p.halfwidth)}"></div>
-    <div class="mt-1" title="${escAttr(TXT15[p.line_kind] || '两类线在连续谱两侧角色相反：发射加性 / 吸收乘性，未确认不得进入下一步')}">
-      线型（必选，无默认）：${['emission', 'absorption'].map(k =>
-        `<label class="me-2"><input type="radio" name="spLk" class="sp-lkind" value="${k}"
-          ${p.line_kind === k ? 'checked' : ''} ${computing ? 'disabled' : ''}>${k === 'emission' ? '发射 emission' : '吸收 absorption'}</label>`).join('')}</div>
-    <div class="mt-1" title="大气吸收带永远只能 mask">天光处理：
-      <label class="me-2"><input type="radio" name="spSky" class="sp-lsky" value="mask"
-        ${p.sky_handling !== 'subtract' ? 'checked' : ''} ${computing ? 'disabled' : ''}>mask（剔除）</label>
-      <label class="me-2" title="线窗内命中的天光发射段（[O I] 气辉线）按线形联合线性扣除；失败自动退回 mask">
-        <input type="radio" name="spSky" class="sp-lsky" value="subtract"
-        ${p.sky_handling === 'subtract' ? 'checked' : ''} ${computing ? 'disabled' : ''}>subtract（按线形扣除）</label></div>`;
+    <div>
+      <div class="sp-muted mb-1">线区 <i class="bi bi-info-circle" title="${escAttr(M6_TIP)}"></i></div>
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        <select class="form-select form-select-sm w-auto sp-lng">
+          <option value="">手输 / 选组…</option>
+          ${SPEC_LINE_GROUPS.filter(g => g.lines && g.hasZ).map(g =>
+            `<option value="${escAttr(g.key)}" ${p.id_table === 'spec_lines.js#' + g.key ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}
+        </select>
+        <input type="text" class="form-control form-control-sm sp-lspecies" style="width:110px" placeholder="species"
+          value="${escAttr(p.species)}" title="${escAttr(M6_TIP)}" aria-label="species">
+        <input type="number" step="any" min="0" class="form-control form-control-sm sp-llam" style="width:110px"
+          value="${escAttr(p.lambda_rest_aa)}" placeholder="λ_rest (Å)" aria-label="λ_rest (Å)">
+        <input type="number" step="any" min="1" class="form-control form-control-sm sp-lhw" style="width:90px"
+          value="${escAttr(p.halfwidth)}" title="线窗半宽 ±Å" aria-label="线窗半宽 ±Å">
+      </div>
+    </div>
+    <div>
+      <div class="sp-muted mb-1" title="${escAttr(TXT15[p.line_kind] || '两类线在连续谱两侧角色相反：发射加性 / 吸收乘性，未确认不得进入下一步')}">线型（必选）</div>
+      <div class="sp-seg">${[['emission', '发射'], ['absorption', '吸收']].map(([k, label]) =>
+        `<label><input type="radio" name="spLk" class="sp-lkind" value="${k}"
+          ${p.line_kind === k ? 'checked' : ''} ${computing ? 'disabled' : ''}><span class="sp-seg-item">${label}</span></label>`).join('')}</div>
+    </div>
+    <div>
+      <div class="sp-muted mb-1">天光处理</div>
+      <div class="sp-seg">
+        <label title="大气吸收带永远只能 mask"><input type="radio" name="spSky" class="sp-lsky" value="mask"
+          ${p.sky_handling !== 'subtract' ? 'checked' : ''} ${computing ? 'disabled' : ''}><span class="sp-seg-item">mask（剔除）</span></label>
+        <label title="线窗内命中的天光发射段（[O I] 气辉线）按线形联合线性扣除；失败自动退回 mask">
+          <input type="radio" name="spSky" class="sp-lsky" value="subtract"
+          ${p.sky_handling === 'subtract' ? 'checked' : ''} ${computing ? 'disabled' : ''}><span class="sp-seg-item">subtract（按线形扣除）</span></label>
+      </div>
+    </div>`;
   } else if (step === 2) {
     const additive = p.line_kind !== 'absorption';
     bodyHtml = `
-    <div class="mt-1">基线形态（随步 1 线型切换）：
-      <i class="bi bi-info-circle text-secondary" title="EW 符号：内部恒算有符号 W_signed，对外 ew_obs_aa=|W| 并回显 ew_signed_aa——${additive ? '发射 > 0' : '吸收 < 0'}。${escAttr(TXT15[p.line_kind] || '')}"></i></div>
-    <div class="border-start border-3 ps-2 mt-1 ${additive ? 'text-success' : 'text-primary'}">
+    <div class="border-start border-3 ps-2 ${additive ? 'text-success' : 'text-primary'}">
       ${additive
         ? '发射线 = <b>加性</b>基线：F(λ) = C(λ) + L(λ)，L ≥ 0；line_flux = ∫(F−C)dλ。'
         : '吸收线 = <b>乘性</b>基线：F(λ) = C(λ)·[1 − r(λ)]，0 ≤ r ≤ 1；depth = 1−F/C（线心）。'}</div>
-    <div class="mt-1" title="Chebyshev·lnλ 基线，每侧 25 点、2 次 σ 裁剪（服务端钉死）">基线阶数
+    <div>
+      <div class="sp-muted mb-1" title="Chebyshev·lnλ 基线，每侧 25 点、2 次 σ 裁剪（服务端钉死）">基线阶数
+        <i class="bi bi-info-circle" title="EW 符号：内部恒算有符号 W_signed，对外 ew_obs_aa=|W| 并回显 ew_signed_aa——${additive ? '发射 > 0' : '吸收 < 0'}。${escAttr(TXT15[p.line_kind] || '')}"></i></div>
       <input type="number" min="0" max="${C_POLY_ORDER_MAX}" step="1"
-        class="form-control form-control-sm d-inline-block w-auto sp-lorder" value="${escAttr(p.baseline_order)}"
-        ${computing ? 'disabled' : ''}></div>`;
+        class="form-control form-control-sm sp-lorder" style="width:90px" value="${escAttr(p.baseline_order)}"
+        ${computing ? 'disabled' : ''}>
+    </div>`;
   } else {
     bodyHtml = `
-    <div class="mt-1">轮廓 ${PROFILES.map(k =>
-      `<label class="me-2"><input type="radio" name="spLp" class="sp-lprof" value="${k}"
-        ${p.profile === k ? 'checked' : ''} ${computing ? 'disabled' : ''}>${k}</label>`).join('')}
-      <label class="me-2 text-secondary" title="全库无仪器分辨率 R ⇒ voigt 禁用；宽度只能按观测宽度报告">
-        <input type="radio" disabled>voigt（禁用：无 R）</label></div>
-    <div class="mt-1" title="留空 = 无仪器分辨率 ⇒ 宽度按观测宽度报告">R
-      <input type="number" step="any" min="0"
-      class="form-control form-control-sm d-inline-block w-auto sp-lR" value="${escAttr(p.R)}"
-      ${computing ? 'disabled' : ''}></div>
-    <div class="mt-1">line_frame
-      <select class="form-select form-select-sm w-auto d-inline sp-lframe" ${computing ? 'disabled' : ''}>
+    <div>
+      <div class="sp-muted mb-1">轮廓</div>
+      <div class="sp-seg">${PROFILES.map(k =>
+        `<label><input type="radio" name="spLp" class="sp-lprof" value="${k}"
+          ${p.profile === k ? 'checked' : ''} ${computing ? 'disabled' : ''}><span class="sp-seg-item">${k}</span></label>`).join('')}
+        <span class="sp-seg-item" style="opacity:.4;cursor:default" title="全库无仪器分辨率 R ⇒ voigt 禁用；宽度只能按观测宽度报告">voigt</span>
+      </div>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      <span title="留空 = 无仪器分辨率 ⇒ 宽度按观测宽度报告">R
+        <input type="number" step="any" min="0" class="form-control form-control-sm d-inline-block sp-lR sp-w90" value="${escAttr(p.R)}"
+        ${computing ? 'disabled' : ''}></span>
+      <span title="留空 = 谱记录 / 默认 0">z 覆写
+        <input type="number" step="any" min="0" class="form-control form-control-sm d-inline-block sp-lz sp-w90" value="${escAttr(p.z)}" ${computing ? 'disabled' : ''}></span>
+      <span>n_boot（≤${C_MAX_BOOT}）
+        <input type="number" min="1" max="${C_MAX_BOOT}" step="1" class="form-control form-control-sm d-inline-block sp-lnb sp-w90" value="${escAttr(p.n_boot)}" ${computing ? 'disabled' : ''}></span>
+      <span title="留空 = spec_hash 派生">err_seed
+        <input type="number" step="1" class="form-control form-control-sm d-inline-block sp-lseed sp-w90" value="${escAttr(p.err_seed)}" ${computing ? 'disabled' : ''}></span>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      <span>line_frame</span>
+      <select class="form-select form-select-sm w-auto sp-lframe" ${computing ? 'disabled' : ''}>
         ${[['', 'null（未核对——vel_* 禁用）'], ['air', 'air（空气）'], ['vacuum', 'vacuum（真空）']]
           .map(([v, t]) => `<option value="${v}" ${(p.line_frame || '') === v ? 'selected' : ''}>${t}</option>`).join('')}
-      </select> <span class="text-secondary small" title="${escAttr(M6_TIP)}">⚠ 线表帧未复核</span></div>
-    <div class="mt-1" title="留空 = 谱记录 / 默认 0">z 覆写 <input type="number" step="any" min="0"
-      class="form-control form-control-sm d-inline-block w-auto sp-lz" value="${escAttr(p.z)}" ${computing ? 'disabled' : ''}></div>
-    <div class="mt-1">n_boot（≤${C_MAX_BOOT}）<input type="number" min="1" max="${C_MAX_BOOT}" step="1"
-      class="form-control form-control-sm d-inline-block w-auto sp-lnb" value="${escAttr(p.n_boot)}" ${computing ? 'disabled' : ''}>
-      err_seed <input type="number" step="1" title="留空 = spec_hash 派生"
-      class="form-control form-control-sm d-inline-block w-auto sp-lseed" value="${escAttr(p.err_seed)}" ${computing ? 'disabled' : ''}></div>
-    <div class="mt-1 text-secondary" title="${escAttr(M6_TIP)}">
-      <label><input type="checkbox" class="form-check-input sp-lvel" disabled> velocity_output</label>
-      禁用：线表帧未复核 ⇒ vel_* 恒为 null</div>
-    <div class="mt-1" title="${escAttr(U48_TIP)}">吸收系统 / 阻尼翼（只随计算提交）
-      <label class="me-2"><input type="checkbox" class="form-check-input sp-u48" data-k="absorber_ident"
-        ${p.absorber_ident ? 'checked' : ''} ${computing ? 'disabled' : ''}>absorber_ident</label>
-      <label class="me-2" title="${p.absorber_ident ? (nOr(p.R) == null ? 'R 不可得 ⇒ 禁用：阻尼翼拟合需要仪器宽度' : '红侧翼的 Voigt 剖面拟合（z/b 钉住）+ 双连续谱族对照') : '需先勾 absorber_ident（不静默连带开启）'}">
-        <input type="checkbox" class="form-check-input sp-u48" data-k="wing_logn"
-        ${p.wing_logn ? 'checked' : ''} ${(!p.absorber_ident || nOr(p.R) == null || computing) ? 'disabled' : ''}>wing_logn${nOr(p.R) == null ? '（禁用：无 R）' : ''}</label>
-      <label class="me-2" title="${p.absorber_ident ? '饱和/未分辨方向判定（sat_flag 由被链接线行 depth 导出）' : '需先勾 absorber_ident'}">
-        <input type="checkbox" class="form-check-input sp-u48" data-k="metal_sat_check"
-        ${p.metal_sat_check ? 'checked' : ''} ${(!p.absorber_ident || computing) ? 'disabled' : ''}>metal_sat_check</label></div>`;
+      </select>
+      <span class="sp-muted" title="${escAttr(M6_TIP)}">⚠ 线表帧未复核 ⇒ vel_* 恒为 null</span>
+    </div>
+    <details class="sp-adv">
+      <summary title="${escAttr(U48_TIP)}">吸收系统 / 阻尼翼（只随计算提交）</summary>
+      <div class="mt-2 d-flex flex-column gap-1">
+        <label><input type="checkbox" class="form-check-input sp-u48" data-k="absorber_ident"
+          ${p.absorber_ident ? 'checked' : ''} ${computing ? 'disabled' : ''}> absorber_ident</label>
+        <label title="${p.absorber_ident ? (nOr(p.R) == null ? 'R 不可得 ⇒ 禁用：阻尼翼拟合需要仪器宽度' : '红侧翼的 Voigt 剖面拟合（z/b 钉住）+ 双连续谱族对照') : '需先勾 absorber_ident（不静默连带开启）'}">
+          <input type="checkbox" class="form-check-input sp-u48" data-k="wing_logn"
+          ${p.wing_logn ? 'checked' : ''} ${(!p.absorber_ident || nOr(p.R) == null || computing) ? 'disabled' : ''}> wing_logn${nOr(p.R) == null ? '（禁用：无 R）' : ''}</label>
+        <label title="${p.absorber_ident ? '饱和/未分辨方向判定（sat_flag 由被链接线行 depth 导出）' : '需先勾 absorber_ident'}">
+          <input type="checkbox" class="form-check-input sp-u48" data-k="metal_sat_check"
+          ${p.metal_sat_check ? 'checked' : ''} ${(!p.absorber_ident || computing) ? 'disabled' : ''}> metal_sat_check</label>
+      </div>
+    </details>`;
   }
   el.innerHTML = `<div class="card mb-3">
-    <div class="card-header d-flex align-items-center py-2">③ 参数（S3）
-      <span class="ms-2 fw-normal">${stepBar}</span>${staleBadge}</div>
-    <div class="card-body py-2 small">
+    <div class="card-header d-flex align-items-center flex-wrap gap-2">参数
+      <span class="ms-auto d-flex align-items-center gap-2">${stepBar}${staleBadge}</span></div>
+    <div class="card-body small">
+    <div class="d-flex flex-column gap-3">
     ${bodyHtml}
-    <hr class="my-2"><strong>⑤ 动作</strong>
-    <div class="d-flex flex-wrap gap-2 align-items-center mt-1">
-      <button class="btn btn-outline-secondary btn-sm sp-lprev" ${step <= 1 || computing ? 'disabled' : ''}>上一步</button>
-      <button class="btn btn-outline-secondary btn-sm sp-lnext" ${step >= 3 || computing ? 'disabled' : ''}
-        ${step === 1 && !canNext1 ? 'title="线型必选、线心必填后才能进入下一步" data-gate="1" disabled' : ''}>下一步</button>
-      <button class="btn btn-primary btn-sm sp-lcompute" ${missing.length || computing || busyLeft ? 'disabled' : ''}
-        title="步 1/2 也可直接计算，缺项照常把门">计算</button>
-      <button class="btn btn-outline-secondary btn-sm sp-lexpcsv" ${!S.lastLines || computing ? 'disabled' : ''}
+    </div>
+    <div class="sp-hairline"></div>
+    <div class="d-flex justify-content-center gap-2">
+      <button class="sp-btn-ghost sp-lprev" ${step <= 1 || computing ? 'disabled' : ''}>← 上一步</button>
+      <button class="sp-btn-ghost sp-lnext" ${step >= 3 || computing ? 'disabled' : ''}
+        ${step === 1 && !canNext1 ? 'title="线型必选、线心必填后才能进入下一步" data-gate="1" disabled' : ''}>下一步 →</button>
+    </div>
+    <button class="btn btn-primary w-100 mt-1 sp-lcompute" ${missing.length || computing || busyLeft ? 'disabled' : ''}
+      title="步 1/2 也可直接计算，缺项照常把门">计算</button>
+    <div class="d-flex justify-content-center flex-wrap">
+      <button class="sp-btn-ghost sp-lexpcsv" ${!S.lastLines || computing ? 'disabled' : ''}
         title="谱线导出（含误差口径与双哈希头）">导出 CSV（线表）</button>
-      <button class="btn btn-outline-secondary btn-sm sp-lexpabs" ${!S.lastLines || computing ? 'disabled' : ''}
+      <button class="sp-btn-ghost sp-lexpabs" ${!S.lastLines || computing ? 'disabled' : ''}
         title="吸收系统表导出；未开启吸收系统诊断时只有表头">导出 CSV（吸收系统）</button>
-      <button class="btn btn-outline-secondary btn-sm sp-lexpjson" ${!S.lastLines || computing ? 'disabled' : ''}
+      <button class="sp-btn-ghost sp-lexpjson" ${!S.lastLines || computing ? 'disabled' : ''}
         title="响应原文">导出 JSON</button>
     </div>
     <div class="mt-1 text-warning small">${esc(S.busyNotice || '')}</div>
     <div class="mt-1 text-warning small">${esc(S.featureNotice || '')}</div>
     <div class="mt-1 text-danger small" role="alert">${esc(S.errorMsg || '')}</div>
-    <div class="mt-1 ${missing.length ? 'text-warning' : 'text-success'}">${missing.length
+    <div class="sp-missing mt-2 ${missing.length ? 'text-warning' : 'text-success'}">${missing.length
       ? '缺项：<ul class="mb-0">' + missing.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>' : '✓ 可以计算'}</div>
   </div></div>`;
   // 事件（改动 ⇒ 标需重算：步 1 的线区/线型决定步 2/3 的口径，U-23）
@@ -300,9 +322,9 @@ export function renderLinesPanel(el, ctx) {
 export function renderLinesResults(el, ctx) {
   const r = ctx.S.lastLines;
   if (!r) {
-    el.innerHTML = '<div class="card mb-3"><div class="card-body py-2">'
-      + '<strong>S3 谱线测量</strong><div class="small text-secondary mt-1">'
-      + '尚未计算：右侧三步向导——选线区 → 定基线 → 拟合轮廓。</div></div></div>';
+    el.innerHTML = '<div class="card mb-3"><div class="card-body">'
+      + '<strong>谱线测量</strong><div class="sp-muted mt-1">'
+      + '尚未计算：右侧三步向导——选线区 → 定基线 → 拟合轮廓。</div></div>';
     return;
   }
   const row = (r.lines || [])[0] || {};
@@ -314,11 +336,10 @@ export function renderLinesResults(el, ctx) {
   const es = Object.entries(row.err_source || {})
     .map(([k, v]) => `${esc(k)}=${esc(v)}`).join('; ');
   const ewPair = (v, e, d = 3) => `${num(v, d)} ± ${num(e, d)}`;
-  el.innerHTML = `<div class="card mb-3"><div class="card-body py-2">
-    <div class="d-flex align-items-center"><strong>S3 谱线测量</strong>
-      <span class="small text-secondary ms-2">${esc(row.species || '')} · line_kind=${esc(row.line_kind)} ·
-      profile=${esc(row.model)} · z_eff=${num(r.z_eff, 4)} · r_source=${esc(row.r_source)} ·
-      λ_center_obs=${num(r.lambda_center_obs_aa, 2)} Å ± ${num(r.half_width_aa, 1)}</span>
+  el.innerHTML = `<div class="card mb-3"><div class="card-body">
+    <div class="d-flex align-items-center"><strong>谱线测量</strong>
+      <span class="sp-muted ms-2">${esc(row.species || '')} · ${esc(row.line_kind)} ·
+      ${esc(row.model)} · z=${num(r.z_eff, 4)} · λ_center=${num(r.lambda_center_obs_aa, 2)} Å ± ${num(r.half_width_aa, 1)}</span>
       <span class="ms-auto badge ${row.detected ? 'bg-success' : 'bg-secondary'}">${row.detected ? '检出' : '未检出'}</span></div>
     <div class="small mt-1">${esc(TXT15[row.line_kind] || '')}
       <span class="text-secondary">${isEm ? '发射线：depth 恒为 null' : '吸收线：line_flux 恒为 null'}</span></div>

@@ -98,21 +98,22 @@ function renderPanel() {
     const v = S.metaUserEdits && S.metaUserEdits[key] ? 'user' : (mp[key] || '');
     if (!v) return '';
     const label = PROV_LABEL[v] || esc(v);
-    return `<span class="badge badge-neutral ms-1" title="meta_provenance=${escAttr(v)}">${label}</span>`;
+    return `<span class="sp-prov" title="meta_provenance=${escAttr(v)}">${label}</span>`;
   };
   const ebvTxt = S.ebv.value != null
     ? `E(B−V)=${S.ebv.value}（R_V=${S.ebv.rv}，${S.ebv.law}）` : '未查询';
 
   _el.innerHTML = `
-  <div class="card mb-2">
-    <div class="card-header d-flex flex-wrap gap-3 align-items-center py-2">
+  <div class="card mb-3">
+    <div class="card-header d-flex flex-wrap gap-3 align-items-center">
       来源
-      ${[['catalog', '库内谱'], ['upload', '上传文件'], ['paste', '粘贴文本']].map(([v, label]) => `
-        <div class="form-check form-check-inline mb-0">
-          <input class="form-check-input sp-src" type="radio" name="spSrc" value="${v}" ${kind === v ? 'checked' : ''}>
-          <label class="form-check-label">${label}</label></div>`).join('')}
+      <span class="ms-auto sp-seg">
+        ${[['catalog', '库内谱'], ['upload', '上传'], ['paste', '粘贴']].map(([v, label]) => `
+          <label><input class="sp-src" type="radio" name="spSrc" value="${v}" ${kind === v ? 'checked' : ''}>
+          <span class="sp-seg-item">${label}</span></label>`).join('')}
+      </span>
     </div>
-    <div class="card-body py-2">
+    <div class="card-body">
     ${kind === 'catalog' ? `
       <div class="row g-2 align-items-center mt-1">
         <div class="col-md-6">
@@ -122,7 +123,7 @@ function renderPanel() {
           <datalist id="spSpecList"></datalist>
           <div class="small text-danger sp-selhint mt-1" hidden></div>
         </div>
-        <div class="col-md-6 small text-secondary">
+        <div class="col-md-6 sp-muted">
           ${prov ? `#${esc(prov.spectrum_id)} · ${prov.n_points} 点 · 可配对锚点 ${prov.n_catalog_anchors} · `
             + `median|F|=${prov.flux_median_cgs != null ? prov.flux_median_cgs.toExponential(3) : '—'} cgs · `
             + `flux_type=${esc(prov.flux_type || '—')}/u_fluxes=${esc(prov.u_fluxes || '—')}` : ''}
@@ -132,27 +133,27 @@ function renderPanel() {
     ${kind === 'upload' ? `
       <div class="mt-1">
         <input type="file" class="form-control form-control-sm sp-file" accept=".txt,.csv,.dat,.fits,.fit,.ecsv">
-        <div class="small text-secondary">文本（λ Å, Fλ[, 误差]）/ .fits / .ecsv
+        <div class="sp-muted mt-1">文本（λ Å, Fλ[, 误差]）/ .fits / .ecsv
           <i class="bi bi-info-circle" title="2/3 列文本，逗号或空白分隔，支持 # 注释与 # key: value 头；.fits 收 BINTABLE 表或一维线性 WCS 谱，.ecsv 收 astropy ECSV；λ 单位按 TUNIT/列单位换算成 Å"></i></div>
       </div>` : ''}
     ${kind === 'paste' ? `
       <div class="mt-1">
         <textarea class="form-control form-control-sm sp-paste" rows="4" placeholder="粘贴谱文本（语法同上传）"
           ${S.parseError ? 'aria-invalid="true" aria-describedby="spParseError"' : ''}></textarea>
-        <button class="btn btn-sm btn-outline-primary mt-1 sp-parsepaste">解析粘贴文本</button>
+        <button class="sp-btn-ghost mt-1 sp-parsepaste">解析粘贴文本</button>
       </div>` : ''}
 
     ${up ? `
-      <div class="small mt-1">
-        解析成功：<strong>${up.n_points}</strong> 点 · 覆盖 ${up.lam_min ?? '—'}–${up.lam_max ?? '—'} Å ·
+      <div class="small mt-2">
+        <span class="sp-dot sp-dot-green"></span>解析成功：<strong>${up.n_points}</strong> 点 · 覆盖 ${up.lam_min ?? '—'}–${up.lam_max ?? '—'} Å ·
         ${up.columns} 列 · 单位 ${esc(up.flux_unit || '—')}${up.flux_unit_assumed ? '（假定）' : ''} ·
         spec_hash <code>${esc(String(up.spec_hash || '').slice(0, 8))}</code>
       </div>
       ${(up.warnings || []).length ? `<div class="mt-1">解析告警：${up.warnings.map(w =>
         `<span class="badge bg-warning text-dark me-1" title="${escAttr(w.message || '')}"
           data-code="${escAttr(w.code || '')}">${esc(w.code || '')}${w.reason ? '·' + esc(w.reason) : ''}</span>`).join('')}</div>` : ''}
-      <div class="small text-warning mt-1">⚠ ${TXT.t18}</div>`
-      : (kind === 'upload' || kind === 'paste') && S.parseError ? `<div class="small text-danger mt-1" id="spParseError" role="alert">${esc(S.parseError)}</div>` : ''}
+      <div class="sp-warnbox mt-2">⚠ ${TXT.t18}</div>`
+      : (kind === 'upload' || kind === 'paste') && S.parseError ? `<div class="small text-danger mt-2" id="spParseError" role="alert">${esc(S.parseError)}</div>` : ''}
 
     <div class="row g-2 mt-1 small">
       <div class="col-md-3">
@@ -199,8 +200,8 @@ function renderPanel() {
           </select>`
         : `<input id="spFrame" class="form-control form-control-sm" value="${esc(frame || 'vacuum')}" readonly title="库内谱框架，只读回显">`}
         ${frameDefaultVacuum
-          ? `<div class="text-secondary sp-txt21 mt-1"><strong>⚠ 波长框架未声明，按真空处理：</strong>${TXT.t21}</div>`
-          : `<div class="text-secondary" title="${escAttr(TXT.t21)}">框架口径 ⚠（悬停看全文）</div>`}
+          ? `<div class="sp-warnbox sp-txt21 mt-2"><strong>⚠ 波长框架未声明，按真空处理：</strong>${TXT.t21}</div>`
+          : `<div class="sp-muted mt-1" title="${escAttr(TXT.t21)}">框架口径 ⚠（悬停看全文）</div>`}
       </div>
       <div class="col-md-8">
         <label for="spMwSwitch">银河消光</label>
@@ -213,11 +214,11 @@ function renderPanel() {
           </div>
           <input type="number" step="any" min="0" class="form-control form-control-sm sp-ebv sp-w110"
             value="${escAttr(S.params.ebv_override)}" placeholder="E(B−V) 手填覆盖" aria-label="E(B−V) 手填覆盖">
-          <button class="btn btn-sm btn-outline-secondary sp-ebvq"
+          <button class="sp-btn-ghost sp-ebvq"
             title="${escAttr(TXT.t19)}">查询 E(B−V)</button>
         </div>
-        <div class="text-secondary">${gext ? '⚠ 该谱已带银消改正，不再二次施加。' : esc(ebvTxt)}</div>
-        ${gext && parentId ? `<div class="sp-parent-link">↩ 这条谱已改过（gext_corr），父谱为
+        <div class="sp-muted mt-1">${gext ? '⚠ 该谱已带银消改正，不再二次施加。' : esc(ebvTxt)}</div>
+        ${gext && parentId ? `<div class="sp-parent-link sp-muted">↩ 这条谱已改过（gext_corr），父谱为
           <a href="#/tools/specphot/${escAttr(parentId)}" title="装载父谱 #${escAttr(parentId)} 到本模块（原始谱未做银消改正）">父谱 #${escAttr(parentId)}</a>
           ——需要自行定消光口径时请改用父谱。</div>` : ''}
       </div>

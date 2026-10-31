@@ -723,8 +723,115 @@ a.swiss-tag-subname:hover { text-decoration: underline; }
 /* ─── 概览页基本信息表：固定布局下长内容在单元格内折行，不挤压标签列 ─── */
 #metaTable td:last-child { overflow-wrap: anywhere; }
 
-/* ─── 光谱 × 滤光片工具（specphot，#/tools/specphot） ─── */
-/* W-15①：结果表首列（波段）冻结，加背景防透叠；表头层级更高（自 workbench.js 注入样式迁入） */
+/* ─── 光谱 × 滤光片工具（specphot，#/tools/specphot）—— 2026-10-31 Apple 风重构 ─── */
+/* 全部引用宿主双主题变量，深浅同构；逻辑类（sp-* 事件钩子）不变。 */
+.specphot-root { max-width: 1280px; margin: 0 auto; }
+.specphot-root .card {
+  border: none; border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05), 0 10px 28px rgba(0,0,0,.06);
+}
+.specphot-root .card:hover { box-shadow: 0 1px 2px rgba(0,0,0,.05), 0 10px 28px rgba(0,0,0,.06); }
+[data-bs-theme="dark"] .specphot-root .card,
+[data-bs-theme="dark"] .specphot-root .card:hover {
+  box-shadow: 0 1px 2px rgba(0,0,0,.35), 0 10px 28px rgba(0,0,0,.3);
+}
+.specphot-root .card-header {
+  background: transparent; border-bottom: none;
+  font-size: 15px; font-weight: 600; letter-spacing: .01em; padding: 16px 20px 0;
+}
+.specphot-root .card-body { padding: 10px 20px 18px; }
+.specphot-root .sp-page-title { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+.specphot-root .sp-muted { color: var(--text-secondary); font-size: 12.5px; }
+.specphot-root .sp-hairline { border-top: 1px solid var(--border-color); margin: 14px 0 12px; }
+
+/* 分段控件（来源三选一 / 页签 / 参数二选一） */
+.specphot-root .sp-seg { display: inline-flex; background: var(--bg-hover); border-radius: 999px; padding: 3px; gap: 2px; }
+.specphot-root .sp-seg > label { margin: 0; position: relative; }
+.specphot-root .sp-seg input { position: absolute; opacity: 0; width: 0; height: 0; }
+.specphot-root .sp-seg-item {
+  display: inline-block; padding: 4px 16px; border-radius: 999px; border: none; background: none;
+  font-size: 13px; line-height: 1.5; color: var(--text-secondary); cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.specphot-root .sp-seg input:checked + .sp-seg-item,
+.specphot-root .sp-seg-item.active { background: var(--bg-card); color: var(--text-primary); box-shadow: var(--card-shadow); }
+.specphot-root .sp-seg input:disabled + .sp-seg-item,
+.specphot-root .sp-seg-item[data-disabled] { opacity: .4; cursor: default; }
+.specphot-root .sp-seg-item.active { font-weight: 500; }
+
+/* 波段 chips */
+.specphot-root .sp-chip { display: inline-block; margin: 2px 5px 2px 0; position: relative; }
+.specphot-root .sp-chip input { position: absolute; opacity: 0; width: 0; height: 0; }
+.specphot-root .sp-chip-label {
+  display: inline-block; padding: 3px 12px; border-radius: 999px;
+  border: 1px solid var(--border-color); font-size: 12.5px; color: var(--text-secondary);
+  cursor: pointer; transition: all .15s ease;
+}
+.specphot-root .sp-chip input:checked + .sp-chip-label {
+  background: var(--accent-blue-soft); border-color: var(--accent-blue);
+  color: var(--accent-blue); font-weight: 500;
+}
+.specphot-root .sp-chip input:disabled + .sp-chip-label { opacity: .35; cursor: default; }
+.specphot-root .sp-seg input:focus-visible + .sp-seg-item,
+.specphot-root .sp-chip input:focus-visible + .sp-chip-label {
+  outline: 2px solid var(--accent-blue); outline-offset: 1px;
+}
+
+/* 主操作：唯一醒目主按钮 + 无边框次要动作 */
+.specphot-root .btn-primary {
+  background: var(--accent-blue); border-color: var(--accent-blue);
+  border-radius: 10px; font-weight: 600; padding: 8px 20px;
+}
+.specphot-root .btn-primary:hover, .specphot-root .btn-primary:focus {
+  background: var(--accent-blue); border-color: var(--accent-blue); filter: brightness(1.08);
+}
+.specphot-root .btn-primary:disabled { background: var(--accent-blue); border-color: var(--accent-blue); opacity: .45; }
+.specphot-root .sp-btn-ghost {
+  background: none; border: none; color: var(--accent-blue);
+  font-size: 13px; padding: 6px 10px; border-radius: 8px;
+}
+.specphot-root .sp-btn-ghost:hover { background: var(--accent-blue-soft); color: var(--accent-blue); }
+.specphot-root .sp-btn-ghost:disabled { color: var(--text-secondary); background: none; }
+.specphot-root .sp-btn-ghost.sp-danger { color: var(--accent-red); }
+.specphot-root .sp-btn-ghost.sp-danger:hover { background: var(--row-new-bg); }
+
+/* 状态条（口径一行 + 新鲜度圆点） */
+.specphot-root .sp-statusbar {
+  display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center;
+  font-size: 12.5px; color: var(--text-secondary);
+}
+.specphot-root .sp-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
+.specphot-root .sp-dot-amber { background: var(--warning-color); }
+.specphot-root .sp-dot-green { background: var(--accent-green); }
+
+/* 告警盒（替代 alert 重边框） */
+.specphot-root .sp-warnbox { background: var(--warning-bg); border-radius: 10px; padding: 10px 14px; font-size: 12.5px; }
+.specphot-root .sp-warnbox .badge { font-weight: 500; }
+
+/* 空态 */
+#specphot-empty { padding: 34px 18px; font-size: 14px; line-height: 1.8; max-width: 580px; margin: 0 auto; }
+
+/* 表单与标签层级 */
+.specphot-root .form-control, .specphot-root .form-select { border-radius: 8px; font-size: 13px; }
+.specphot-root label { font-size: 12.5px; color: var(--text-secondary); }
+.specphot-root .sp-prov { color: var(--text-secondary); font-size: 11px; margin-left: 4px; }
+
+/* 高级区（诊断/预处理默认折叠） */
+.specphot-root details.sp-adv > summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5px; list-style: none; }
+.specphot-root details.sp-adv > summary::-webkit-details-marker { display: none; }
+.specphot-root details.sp-adv > summary::before { content: '▸ '; }
+.specphot-root details.sp-adv[open] > summary::before { content: '▾ '; }
+
+/* 缺项清单 */
+.specphot-root .sp-missing { font-size: 12.5px; }
+.specphot-root .sp-missing ul { margin: 4px 0 0; padding-left: 18px; }
+
+/* 结果表 */
+.specphot-root .sp-result-table thead th {
+  color: var(--text-secondary); font-weight: 500; font-size: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+/* W-15①：结果表首列（波段）冻结，加背景防透叠 */
 .sp-result-table th:first-child, .sp-result-table td:first-child {
   position: sticky; left: 0; background-color: var(--bs-table-bg); z-index: 1;
 }
@@ -736,7 +843,7 @@ a.swiss-tag-subname:hover { text-decoration: underline; }
 @media (max-width: 575.98px) {
   .sp-param-body.sp-closed { display: none; }
 }
-#spCv { height: 240px; cursor: crosshair; touch-action: none; }
+#spCv { height: 300px; cursor: crosshair; touch-action: none; }
 #spCmpPlot { min-height: 120px; }
 .sp-cmp-canvas { width: 100%; height: 220px; display: block; }
 .sp-w90 { width: 90px; }    /* 谱图显示范围输入 */

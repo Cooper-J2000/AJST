@@ -97,28 +97,27 @@ export function renderSpecPlot(el, ctx) {
   const prevR = { '.sp-xmin': grabR('.sp-xmin'), '.sp-xmax': grabR('.sp-xmax'), '.sp-ymin': grabR('.sp-ymin'), '.sp-ymax': grabR('.sp-ymax') };
   el.innerHTML = `
     <div class="card mb-3">
-      <div class="card-header d-flex align-items-center py-2">
-        ① 谱预览
+      <div class="card-header d-flex align-items-center">
+        谱形
         <i class="bi bi-info-circle text-secondary ms-2" title="${escAttr(HINT)}"></i>
-        <button class="btn btn-outline-secondary btn-sm ms-auto sp-zreset" title="恢复全域">恢复全域</button>
+        <button class="sp-btn-ghost ms-auto sp-zreset">恢复全域</button>
       </div>
-      <div class="card-body py-2">
+      <div class="card-body">
       <canvas id="spCv" class="w-100"
         title="${escAttr(HINT)}"></canvas>
       <div class="d-flex align-items-center flex-wrap gap-1 mt-1 small sp-rangebar">
         <span class="text-secondary">显示范围 x[</span>
         <input class="form-control form-control-sm sp-xmin sp-w90" placeholder="自动"
-          title="x 下限（Å）；留空 = 自适应。可键入超出默认全域的值">
+          title="x 下限（Å）；留空 = 自适应。可键入超出默认全域的值" aria-label="x 下限（Å）">
         <span class="text-secondary">–</span>
-        <input class="form-control form-control-sm sp-xmax sp-w90" placeholder="自动" title="x 上限（Å）">
+        <input class="form-control form-control-sm sp-xmax sp-w90" placeholder="自动" title="x 上限（Å）" aria-label="x 上限（Å）">
         <span class="text-secondary">]　y[</span>
         <input class="form-control form-control-sm sp-ymin sp-w90" placeholder="自适应"
-          title="y 下限（Fλ 线性值）；留空 = 视图内 2–98 分位自适应">
+          title="y 下限（Fλ 线性值）；留空 = 视图内 2–98 分位自适应" aria-label="y 下限">
         <span class="text-secondary">–</span>
-        <input class="form-control form-control-sm sp-ymax sp-w90" placeholder="自适应" title="y 上限">
+        <input class="form-control form-control-sm sp-ymax sp-w90" placeholder="自适应" title="y 上限" aria-label="y 上限">
         <span class="text-secondary">]</span>
-        <button class="btn btn-outline-secondary btn-sm sp-zapply"
-          title="应用键入的显示范围；单边留空取当前值；全空 = 恢复自适应">应用</button>
+        <button class="sp-btn-ghost sp-zapply">应用</button>
       </div>
       <div class="small" id="spOverlayCaption"></div>
       <div class="small" id="spSmoothCaption"></div>

@@ -77,26 +77,26 @@ export function renderAnchors(el, ctx) {
         ? '<span class="badge bg-secondary">源表</span>'
         : '<span class="badge bg-info text-dark">手加</span>'}</td>
       <td class="small text-secondary">${esc(r.note || '')}</td>
-      <td>${r._readonly ? '' : `<button class="btn btn-sm btn-outline-danger py-0 px-1 sp-adel" data-mi="${r._mi}">删</button>`}</td>
+      <td>${r._readonly ? '' : `<button class="sp-btn-ghost sp-danger py-0 px-1 sp-adel" data-mi="${r._mi}">删除</button>`}</td>
     </tr>`;
   }).join('');
 
   el.innerHTML = `
   <div class="card mb-3">
-    <div class="card-header d-flex align-items-center py-2">
-      ④ 定标锚点表
-      <span class="small text-secondary fw-normal ms-2">手加 ${S.manualRows.length}/${C_MAX_ANCHORS}
+    <div class="card-header d-flex align-items-center">
+      锚点
+      <span class="sp-muted ms-2">手加 ${S.manualRows.length}/${C_MAX_ANCHORS}
         ${conflicts.size ? `<span class="text-danger ms-2">波段 ${[...conflicts].join('、')} 冲突，计算已禁用——请选一条</span>` : ''}</span>
     </div>
-    <div class="card-body py-2">
-    <div class="table-responsive mt-1" style="max-height:280px;overflow:auto">
+    <div class="card-body">
+    <div class="table-responsive" style="max-height:280px;overflow:auto">
       <table class="table table-sm table-striped mb-0 small">
         <thead><tr><th>锚定</th><th>波段</th><th>星等</th><th>系统</th><th>时刻 MJD</th>
           <th>mag_err</th><th>来源</th><th>备注</th><th></th></tr></thead>
         <tbody>${trs || `<tr><td colspan="9" class="text-secondary">暂无锚点行：首次计算后回显库内实测点，也可手加。</td></tr>`}</tbody>
       </table>
     </div>
-    <details class="mt-1 small">
+    <details class="sp-adv mt-2">
       <summary title="${escAttr(TXT.t20)}">＋ 手加一行</summary>
       <div class="row g-2 mt-1 align-items-end" title="${escAttr(TXT.t20)}">
         <div class="col-auto"><label class="form-label mb-0">波段</label>
@@ -113,7 +113,7 @@ export function renderAnchors(el, ctx) {
           <input type="number" step="any" class="form-control form-control-sm sp-amjd sp-w130"></div>
         <div class="col-auto"><label class="form-label mb-0">备注</label>
           <input type="text" class="form-control form-control-sm sp-anote sp-w160"></div>
-        <div class="col-auto"><button class="btn btn-sm btn-outline-primary sp-aadd">加入</button></div>
+        <div class="col-auto"><button class="sp-btn-ghost sp-aadd">加入</button></div>
       </div>
     </details>
   </div></div>`;

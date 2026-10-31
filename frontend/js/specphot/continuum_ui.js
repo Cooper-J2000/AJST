@@ -67,9 +67,9 @@ export function buildContinuumRequest(ctx) {
 export function renderContinuumResults(el, ctx) {
   const r = ctx.S.lastContinuum;
   if (!r) {
-    el.innerHTML = '<div class="card mb-3"><div class="card-body py-2">'
-      + '<strong>S2 连续谱拟合</strong><div class="small text-secondary mt-1">'
-      + '尚未计算：在右侧选模型与宿主消光三态后点「计算」。</div></div></div>';
+    el.innerHTML = '<div class="card mb-3"><div class="card-body">'
+      + '<strong>连续谱拟合</strong><div class="sp-muted mt-1">'
+      + '尚未计算：在右侧选模型与宿主消光后点「计算」。</div></div>';
     return;
   }
   const rows = (r.fits || []).map(f => {
@@ -120,9 +120,9 @@ export function renderContinuumResults(el, ctx) {
         : '')
       + `</div>`
     : '';
-  el.innerHTML = `<div class="card mb-3"><div class="card-body py-2">
-    <div class="d-flex align-items-center"><strong>S2 连续谱拟合</strong>
-      <span class="small text-secondary ms-2">host_ext_mode=${esc(r.host_ext_mode)} · law=${esc(r.law)} ·
+  el.innerHTML = `<div class="card mb-3"><div class="card-body">
+    <div class="d-flex align-items-center"><strong>连续谱拟合</strong>
+      <span class="sp-muted ms-2">host_ext=${esc(r.host_ext_mode)} · law=${esc(r.law)} ·
       rv=${num(r.rv, 3)}(${esc(r.rv_source)}) · z_eff=${num(r.z_eff, 4)} ·
       拟合区 ${r.fit_region ? r.fit_region.n_pixels : '—'} px</span></div>
     ${r.host_ext_mode !== 'off' ? `<div class="small text-secondary mt-1 border-start border-3 ps-2">${esc(txt22Text(r))}</div>` : ''}
@@ -175,42 +175,54 @@ export function renderS2Panel(el, ctx) {
       : deredReady ? '导出 de-reddened 曲线 CSV'
         : '响应无 de_reddened 逐点数据，导出禁用';
   el.innerHTML = `<div class="card mb-3">
-    <div class="card-header py-2">③ 参数（S2）</div>
-    <div class="card-body py-2 small">
-    <div class="mt-1">模型 ${MODELS.map(m =>
-      `<label class="me-2"><input type="checkbox" class="form-check-input sp-cm" value="${m}"
-        ${p.models.includes(m) ? 'checked' : ''} ${computing ? 'disabled' : ''}>${m}</label>`).join('')}</div>
-    <div class="mt-1" title="off 不改正 / fit 拟合 / prescribe 指定 E(B−V)">宿主消光 host_ext_mode：${['off', 'fit', 'prescribe'].map(v =>
-      `<label class="me-2"><input type="radio" name="spHem" class="sp-hem" value="${v}"
-        ${p.host_ext_mode === v ? 'checked' : ''} ${computing ? 'disabled' : ''}>${v}</label>`).join('')}</div>
-    <div class="mt-1" title="host_ext≠off 时图上叠加曲线 A=改正前、B=改正后（派生件、未入库）；纯显示开关，不触发计算">双谱叠加
-      <input type="checkbox" class="form-check-input sp-ovd" ${p.overDered !== false ? 'checked' : ''}
-        ${computing ? 'disabled' : ''}></div>
-    <div class="mt-1" title="仅 prescribe 必填，≤2.0">E(B−V)
-      <input type="number" min="0" max="${C_HOST_EBV_MAX}" step="any" class="form-control form-control-sm d-inline-block w-auto sp-ebv"
-        value="${escAttr(ebvBoxVal)}" ${ebvDis ? 'disabled' : ''}>
-      <span class="text-secondary">${ebvNote}</span></div>
-    <div class="mt-1">law <select class="form-select form-select-sm w-auto d-inline sp-law" ${computing ? 'disabled' : ''}>
+    <div class="card-header">参数</div>
+    <div class="card-body small">
+    <div class="d-flex flex-column gap-3">
+    <div>
+      <div class="sp-muted mb-1">模型</div>
+      <div>${MODELS.map(m =>
+      `<label class="sp-chip"><input type="checkbox" class="sp-cm" value="${m}"
+        ${p.models.includes(m) ? 'checked' : ''} ${computing ? 'disabled' : ''}><span class="sp-chip-label">${m}</span></label>`).join('')}</div>
+    </div>
+    <div>
+      <div class="sp-muted mb-1">宿主消光</div>
+      <div class="sp-seg" title="off 不改正 / fit 拟合 / prescribe 指定 E(B−V)">${['off', 'fit', 'prescribe'].map(v =>
+      `<label><input type="radio" name="spHem" class="sp-hem" value="${v}"
+        ${p.host_ext_mode === v ? 'checked' : ''} ${computing ? 'disabled' : ''}><span class="sp-seg-item">${v}</span></label>`).join('')}</div>
+    </div>
+    <div class="d-flex flex-wrap gap-3 align-items-center">
+      <label class="mb-0" title="host_ext≠off 时图上叠加曲线 A=改正前、B=改正后（派生件、未入库）；纯显示开关，不触发计算">
+        <input type="checkbox" class="form-check-input sp-ovd" ${p.overDered !== false ? 'checked' : ''}
+          ${computing ? 'disabled' : ''}> 双谱叠加</label>
+      <span title="仅 prescribe 必填，≤2.0">E(B−V)
+        <input type="number" min="0" max="${C_HOST_EBV_MAX}" step="any" class="form-control form-control-sm d-inline-block sp-ebv sp-w110"
+          value="${escAttr(ebvBoxVal)}" ${ebvDis ? 'disabled' : ''}></span>
+      <span class="sp-muted">${ebvNote}</span>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      law <select class="form-select form-select-sm w-auto sp-law" ${computing ? 'disabled' : ''}>
       ${LAWS.map(l => `<option ${p.law === l ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      R_V <input type="number" step="any" class="form-control form-control-sm d-inline-block w-auto sp-rv" value="${escAttr(p.rv)}"
+      R_V <input type="number" step="any" class="form-control form-control-sm sp-rv sp-w90" value="${escAttr(p.rv)}"
         title="留空 = rv_source 基准值" ${computing ? 'disabled' : ''}>
-      <select class="form-select form-select-sm w-auto d-inline sp-rvs" title="R_V 取值基准" ${computing ? 'disabled' : ''}>
-        ${['', 'nominal', 'intrinsic'].map(v => `<option value="${v}" ${p.rv_source === v ? 'selected' : ''}>${v || '缺省'}</option>`).join('')}</select></div>
-    <div class="mt-1" title="仅 poly 模型使用">poly_order <input type="number" min="1" max="6" step="1" class="form-control form-control-sm d-inline-block w-auto sp-po" value="${escAttr(p.poly_order)}" ${computing || !p.models.includes('poly') ? 'disabled' : ''}></div>
-    <hr class="my-2"><strong>⑤ 动作</strong>
-    <div class="d-flex gap-2 align-items-center mt-1">
-      <button class="btn btn-primary btn-sm sp-ccompute" ${missing.length || computing || busyLeft ? 'disabled' : ''}
-        title="S2 连续谱拟合；掩膜与预处理通道与 S1 同源">计算</button>
-      <button class="btn btn-outline-secondary btn-sm sp-cexpjson" ${!S.lastContinuum || computing ? 'disabled' : ''}>导出 JSON</button>
-      <button class="btn btn-outline-secondary btn-sm sp-cexpcsv" ${!deredReady || computing ? 'disabled' : ''}
+      <select class="form-select form-select-sm w-auto sp-rvs" title="R_V 取值基准" ${computing ? 'disabled' : ''}>
+        ${['', 'nominal', 'intrinsic'].map(v => `<option value="${v}" ${p.rv_source === v ? 'selected' : ''}>${v || '缺省'}</option>`).join('')}</select>
+      <span title="仅 poly 模型使用">poly_order <input type="number" min="1" max="6" step="1" class="form-control form-control-sm d-inline-block sp-po" style="width:70px" value="${escAttr(p.poly_order)}" ${computing || !p.models.includes('poly') ? 'disabled' : ''}></span>
+    </div>
+    </div>
+    <div class="sp-hairline"></div>
+    <button class="btn btn-primary w-100 sp-ccompute" ${missing.length || computing || busyLeft ? 'disabled' : ''}
+      title="连续谱拟合；掩膜与预处理通道与测光同源">计算</button>
+    <div class="d-flex justify-content-center flex-wrap">
+      <button class="sp-btn-ghost sp-cexpjson" ${!S.lastContinuum || computing ? 'disabled' : ''}>导出 JSON</button>
+      <button class="sp-btn-ghost sp-cexpcsv" ${!deredReady || computing ? 'disabled' : ''}
         title="${escAttr(csvTitle)}">导出 CSV（曲线 B）</button>
-      <button class="btn btn-outline-secondary btn-sm sp-cexppng" ${!deredReady || computing ? 'disabled' : ''}
-        title="${escAttr(csvTitle.replace('CSV', 'PNG'))}">导出 PNG（双谱图）</button>
+      <button class="sp-btn-ghost sp-cexppng" ${!deredReady || computing ? 'disabled' : ''}
+        title="${escAttr(csvTitle.replace('CSV', 'PNG'))}">导出 PNG</button>
     </div>
     <div class="mt-1 text-warning small">${esc(S.busyNotice || '')}</div>
     <div class="mt-1 text-warning small">${esc(S.featureNotice || '')}</div>
     <div class="mt-1 text-danger small" role="alert">${esc(S.errorMsg || '')}</div>
-    <div class="mt-1 ${missing.length ? 'text-warning' : 'text-success'}">${missing.length
+    <div class="sp-missing mt-2 ${missing.length ? 'text-warning' : 'text-success'}">${missing.length
       ? '缺项：<ul class="mb-0">' + missing.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>' : '✓ 可以计算'}</div>
   </div></div>`;
   el.querySelectorAll('.sp-cm').forEach(cb => cb.addEventListener('change', () => {
