@@ -204,17 +204,16 @@ function renderPanel() {
           : `<div class="sp-muted mt-1" title="${escAttr(TXT.t21)}">框架口径 ⚠（悬停看全文）</div>`}
       </div>
       <div class="col-md-8">
-        <label for="spMwSwitch">银河消光</label>
-        <div class="d-flex gap-2 align-items-center">
+        <div class="d-flex gap-2 align-items-center flex-wrap">
           <div class="form-check form-switch mb-0">
             <input class="form-check-input sp-mw" type="checkbox" role="switch" id="spMwSwitch"
               ${S.params.mw_correct ? 'checked' : ''} ${gext ? 'disabled' : ''}
               title="${gext ? '该谱已带银河消光改正，不再二次施加' : '关闭 ⇒ 结果按未改正的观测谱给出'}">
-            <label class="form-check-label" for="spMwSwitch">改正</label>
+            <label class="form-check-label text-nowrap" for="spMwSwitch">银河消光改正</label>
           </div>
-          <input type="number" step="any" min="0" class="form-control form-control-sm sp-ebv sp-w110"
+          <input type="number" step="any" min="0" class="form-control form-control-sm sp-ebv sp-w130"
             value="${escAttr(S.params.ebv_override)}" placeholder="E(B−V) 手填覆盖" aria-label="E(B−V) 手填覆盖">
-          <button class="sp-btn-ghost sp-ebvq"
+          <button class="sp-btn-ghost text-nowrap sp-ebvq"
             title="${escAttr(TXT.t19)}">查询 E(B−V)</button>
         </div>
         <div class="sp-muted mt-1">${gext ? '⚠ 该谱已带银消改正，不再二次施加。' : esc(ebvTxt)}</div>
