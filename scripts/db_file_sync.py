@@ -325,7 +325,7 @@ def main():
 
         # ── 备份 ──
         stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        bdir = os.path.join(PROJECT_ROOT, 'backups', f'sync_{stamp}')
+        bdir = os.path.join(data_dir, 'backups', f'sync_{stamp}')
         os.makedirs(bdir, exist_ok=True)
         touched = sorted({t for t in db_only if t in denied} |
                          {t for t, _ in drift} |

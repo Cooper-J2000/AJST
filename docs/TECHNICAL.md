@@ -1613,6 +1613,28 @@ t0 补全、GRB 编号关联；终态 `transients_cleaned.csv` 2794 行；审查
   特殊标记源星形高亮；坐标范围记忆（log/线性按轴提示）；误差棒；hover 显示源名/数值/红移/来源；
   导出当前数据点 CSV（`id,x,xerr,y,yerr,group,z,src`）
 
+**如何扩充 params / 点亮 pending 关系**（2026-11-04 起）：
+
+- **新增一个物理量三步走**：① `backend/params_registry.json` 登记键（先 `status:"reserved"`，
+  声明 label/unit/log/domains）；② 写计算或迁移脚本（风格对齐 `derive_lc_params.py`：
+  dry-run 默认、`--apply` 写库、幂等、`src` 记来源、更新 `params_computed`）；③ 写库后
+  `etl.py --dump` 落盘并在注册表把键转 `active`。
+- **新增一条关系**：`backend/relations.json` 加一条（x/y 轴 key 必须是注册表里的键，
+  lit 系数用原文形式并在 form_note 写清样本界定与换算），页面与 API 自动跟随，无需改代码。
+- **pending 关系点亮的判定**：源满足 `applies_to`（tag + sub_tag_any 过滤）且 x、y 两键都有
+  数值，即自动进图（coverage>0 后卡片出图）。
+- **当前 8 条 pending 的缺口清单**：
+  - `phillips`/`tripp`：参数计算器已就位（m_b_peak/dm15_b/color_bv），瓶颈是 **Ia 样本**——
+    库内 SN 子型 sub_tag 长期缺失，2026-11-04 起按 comment 内既有分型依据回填
+    （首批 SN2003L→Ic、ZTF19abqanpy→Ia；无依据者搁置）。Ia 仅 1 个且其 Δm15 无峰后覆盖，
+    实质点亮需新 Ia 源入库（数据贡献车道，见 catadata/CONTRIBUTING.md）
+  - `stretch`：另需 `stretch_s`（模板光变拟合，未实现）
+  - `arnett`/`ic_ni_l`/`tde_peak_decay`：缺 `l_peak_bol`（伪热光度）→ 进而 `m_ni`
+  - `scm_iip`：缺 `v_feii`（光谱 Fe II λ5169 测速）与 `vp_av_corr`（平台期绝对 V 星等）
+  - `tde_fallback_mbh`：`m_bh` 需建模反演，长期保持文献卡片
+- **SN 子型回填纪律**：只从有依据的数据回填（comment 中已核验的 TNS/GCN/文献分型），
+  无依据或不确定的一律搁置；回填时在 comment 追加一行操作记录（日期+依据+改动字段）。
+
 ### 8.14 余辉拟合（VegasAfterglow）（v2.5 新增）
 
 基于 VegasAfterglow 的正向激波余辉拟合子系统，从单源详情页"余辉拟合"标签页使用。
