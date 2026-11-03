@@ -16,19 +16,20 @@ let _urlQuery = {};     // URL 中的筛选/排序/页码初值（render 时解�
 
 export async function render() {
   app.innerHTML = `
-    <div class="page-header d-flex justify-content-between align-items-center">
-      <h4 class="mb-0"><i class="bi bi-list-ul"></i> 暂现源事件列表</h4>
-      <div>
-        <button class="btn btn-sm btn-outline-secondary me-1" onclick="toggleFilter()">
+    <div class="list-root soft-root">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div class="sp-page-title">暂现源事件列表</div>
+      <div class="d-flex gap-1 align-items-center">
+        <button class="sp-btn-ghost" onclick="toggleFilter()">
           <i class="bi bi-funnel"></i> 筛选
         </button>
-        <button class="btn btn-sm btn-outline-secondary me-1" onclick="APIImport.exportTransients('csv')">
+        <button class="sp-btn-ghost" onclick="APIImport.exportTransients('csv')">
           <i class="bi bi-download"></i> 导出CSV
         </button>
-        <button class="btn btn-sm btn-outline-warning me-1" id="gextAllBtn" style="display:none" onclick="runGextAll()">
+        <button class="sp-btn-ghost" id="gextAllBtn" style="display:none" onclick="runGextAll()">
           <i class="bi bi-moon-stars"></i> 全局银消改正
         </button>
-        <a href="#/new" class="btn btn-sm btn-outline-primary">
+        <a href="#/new" class="btn btn-sm btn-primary text-decoration-none">
           <i class="bi bi-plus-circle"></i> 新建
         </a>
       </div>
@@ -126,7 +127,7 @@ export async function render() {
             </div>
           </div>
           <div class="col-auto ms-auto">
-            <button class="btn btn-sm btn-outline-secondary" onclick="clearFilter()">清除筛选</button>
+            <button class="sp-btn-ghost" onclick="clearFilter()">清除筛选</button>
           </div>
         </div>
       </div>
@@ -163,15 +164,16 @@ export async function render() {
     <nav class="mt-3 d-flex align-items-center">
       <small class="text-secondary" id="pageInfo"></small>
       <div class="d-flex justify-content-center align-items-center flex-grow-1" id="pagination">
-        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" id="pgFirst" title="第一页">«</button>
+        <button type="button" class="sp-btn-ghost py-0 px-2" id="pgFirst" title="第一页">«</button>
         <div id="pgViewport" title="滚动滚轮翻页；点击当前页码输入跳转"
              style="max-width:360px;overflow:hidden;margin:0 6px;user-select:none;touch-action:pan-y">
           <!-- position:relative 使 track 恒为页码的 offsetParent（否则无 transform 时 offsetLeft 相对 BODY，居中计算会错乱） -->
           <div id="pgTrack" class="d-flex align-items-center" style="position:relative"></div>
         </div>
-        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" id="pgLast" title="最后一页">»</button>
+        <button type="button" class="sp-btn-ghost py-0 px-2" id="pgLast" title="最后一页">»</button>
       </div>
     </nav>
+    </div>
   `;
 
   // 从 URL 恢复筛选/排序/页码（刷新、分享链接、浏览器后退均可还原）
@@ -447,7 +449,7 @@ function renderTable(data) {
       <td>${t.spectra_count ? `<span class="badge-tag" style="background:rgba(188,140,255,0.15);color:#bc8cff">${t.spectra_count}</span>` : '-'}</td>
       <td>${t.has_host ? `<span class="badge-tag" style="background:rgba(63,185,80,0.15);color:#3fb950">宿主</span>` : ''}</td>
       <td data-delbtn style="display:none">
-        <button class="btn btn-sm btn-outline-danger py-0 px-1" title="删除" data-del="${esc(t.id)}">
+        <button class="sp-btn-ghost sp-danger py-0 px-1" title="删除" data-del="${esc(t.id)}">
           <i class="bi bi-trash"></i>
         </button>
       </td>

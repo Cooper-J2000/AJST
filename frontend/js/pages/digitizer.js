@@ -89,23 +89,23 @@ export async function render() {
           <div class="card-header d-flex justify-content-between align-items-center">① 坐标轴标定
             <span class="sp-muted" id="dgzCalibStatus"></span></div>
           <div class="card-body" style="font-size:0.85rem">
-            <div class="row g-1 align-items-center mb-1">
-              <div class="col-2 small">X①</div><div class="col-4"><input class="form-control form-control-sm" id="dgzX1v" placeholder="值"></div>
-              <div class="col-2 small">X②</div><div class="col-4"><input class="form-control form-control-sm" id="dgzX2v" placeholder="值"></div>
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <span class="small">X①</span><input class="form-control form-control-sm" id="dgzX1v" placeholder="值" style="width:110px">
+              <span class="small ms-3">X②</span><input class="form-control form-control-sm" id="dgzX2v" placeholder="值" style="width:110px">
             </div>
-            <div class="row g-1 align-items-center mb-1">
-              <div class="col-2 small">Y①</div><div class="col-4"><input class="form-control form-control-sm" id="dgzY1v" placeholder="值"></div>
-              <div class="col-2 small">Y②</div><div class="col-4"><input class="form-control form-control-sm" id="dgzY2v" placeholder="值"></div>
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <span class="small">Y①</span><input class="form-control form-control-sm" id="dgzY1v" placeholder="值" style="width:110px">
+              <span class="small ms-3">Y②</span><input class="form-control form-control-sm" id="dgzY2v" placeholder="值" style="width:110px">
             </div>
-            <div class="d-flex gap-3 align-items-center mb-2">
+            <div class="d-flex gap-3 align-items-center mb-1">
               <div class="form-check form-check-inline mb-0 small">
-                <input class="form-check-input" type="checkbox" id="dgzXLog"><label class="form-check-label" for="dgzXLog">X 对数轴</label>
+                <input class="form-check-input" type="checkbox" id="dgzXLog"><label class="form-check-label text-nowrap" for="dgzXLog">X 对数轴</label>
               </div>
               <div class="form-check form-check-inline mb-0 small">
-                <input class="form-check-input" type="checkbox" id="dgzYLog"><label class="form-check-label" for="dgzYLog">Y 对数轴</label>
+                <input class="form-check-input" type="checkbox" id="dgzYLog"><label class="form-check-label text-nowrap" for="dgzYLog">Y 对数轴</label>
               </div>
-              <span class="sp-muted">（星等轴反转：上方点填小值即可）</span>
             </div>
+            <div class="sp-muted mb-1">（星等轴反转：上方点填小值即可）</div>
             <div class="d-flex gap-1">
               <button class="btn btn-sm btn-primary" id="dgzCalibApply">应用标定</button>
               <button class="sp-btn-ghost" id="dgzCalibReset">重新标定</button>
@@ -197,8 +197,8 @@ export async function render() {
             <div class="gcn-form-sec">写入数据库</div>
             <div class="d-flex gap-1 mb-1">
               <input class="form-control form-control-sm" id="dgzSrcQ" placeholder="源 ID / 别名">
-              <button class="sp-btn-ghost" id="dgzSrcSearch">搜索</button>
-              ${isAuthed() ? `<button class="sp-btn-ghost" id="dgzSrcNewBtn" title="源还不存在？在此新建"><i class="bi bi-plus-lg"></i> 新建源</button>` : ''}
+              <button class="sp-btn-ghost text-nowrap" id="dgzSrcSearch">搜索</button>
+              ${isAuthed() ? `<button class="sp-btn-ghost text-nowrap" id="dgzSrcNewBtn" title="源还不存在？在此新建"><i class="bi bi-plus-lg"></i> 新建源</button>` : ''}
             </div>
             ${isAuthed() ? `
             <div id="dgzSrcNewForm" class="border rounded p-2 mb-1" style="display:none">

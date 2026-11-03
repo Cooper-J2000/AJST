@@ -457,7 +457,7 @@ function renderExcludedList(name) {
   el.innerHTML = `<div class="d-flex flex-wrap align-items-center gap-1">
     <span class="text-secondary me-1">已排除:</span>
     ${excl.map(id => `<span class="badge bg-secondary" style="cursor:pointer" data-restore="${esc(id)}" title="点击恢复">${esc(id)} <i class="bi bi-x"></i></span>`).join('')}
-    <button class="btn btn-sm btn-outline-secondary py-0 ms-1" data-clear="${name}">清空排除</button>
+    <button class="sp-btn-ghost py-0 ms-1" data-clear="${name}">清空排除</button>
   </div>`;
   el.querySelectorAll('[data-restore]').forEach(b => {
     b.onclick = () => { getExcluded(name).delete(b.dataset.restore); buildChart(name); };
@@ -654,14 +654,13 @@ export async function render() {
   if (!allSources.includes(state.source)) state.source = 'best';
 
   app.innerHTML = `
-    <div class="page-header d-flex justify-content-between align-items-center">
-      <h4 class="mb-0"><i class="bi bi-bar-chart-line"></i> 全局统计</h4>
-    </div>
+    <div class="relations-root soft-root">
+    <div class="sp-page-title mb-3">全局统计</div>
     ${statsTabs('relations')}
 
     <!-- 控制栏 -->
     <div class="card mb-3">
-      <div class="card-body py-2 d-flex flex-wrap align-items-center gap-3">
+      <div class="card-body d-flex flex-wrap align-items-center gap-3">
         <div class="d-flex align-items-center gap-1">
           <label class="small text-secondary">数据来源:</label>
           <select class="form-select form-select-sm" style="width:auto" id="sourceSelect">
@@ -669,7 +668,7 @@ export async function render() {
           </select>
         </div>
         <div class="dropdown">
-          <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown"
+          <button class="sp-btn-ghost dropdown-toggle" data-bs-toggle="dropdown"
                   data-bs-auto-close="outside" id="tagFilterBtn">标签筛选 (全部)</button>
           <div class="dropdown-menu p-2" id="tagCheckboxList" style="max-height:300px;overflow-y:auto"></div>
         </div>
@@ -692,12 +691,12 @@ export async function render() {
         <div class="col-lg-6">
           <div class="card" id="card-${def.name}">
             <div class="card-header d-flex justify-content-between align-items-center">
-              <span>${esc(def.title)}${def.lit && def.lit.label ? ` · <span class="text-secondary small">${esc(def.lit.label)}${def.lit.bibcode ? ` (${esc(def.lit.bibcode)})` : ''}</span>` : ''}</span>
+              <span>${esc(def.title)}${def.lit && def.lit.label ? ` · <span class="sp-muted">${esc(def.lit.label)}${def.lit.bibcode ? ` (${esc(def.lit.bibcode)})` : ''}</span>` : ''}</span>
               <div class="d-flex gap-1">
-                <button class="btn btn-sm btn-outline-secondary py-0" data-range-toggle="${def.name}" title="坐标范围">
+                <button class="sp-btn-ghost py-0" data-range-toggle="${def.name}" title="坐标范围">
                   <i class="bi bi-gear"></i>
                 </button>
-                <button class="btn btn-sm btn-outline-secondary py-0" data-export="${def.name}">
+                <button class="sp-btn-ghost py-0" data-export="${def.name}">
                   <i class="bi bi-download"></i> 导出 CSV
                 </button>
               </div>
@@ -714,10 +713,10 @@ export async function render() {
                   <input type="number" step="any" class="form-control form-control-sm" style="width:105px" id="rg-ymin-${def.name}" placeholder="ymin">
                   <span class="text-secondary">~</span>
                   <input type="number" step="any" class="form-control form-control-sm" style="width:105px" id="rg-ymax-${def.name}" placeholder="ymax">
-                  <button class="btn btn-sm btn-outline-primary py-0 ms-1" data-range-apply="${def.name}">应用</button>
-                  <button class="btn btn-sm btn-outline-secondary py-0" data-range-reset="${def.name}">恢复默认</button>
+                  <button class="sp-btn-ghost py-0 ms-1" data-range-apply="${def.name}">应用</button>
+                  <button class="sp-btn-ghost py-0" data-range-reset="${def.name}">恢复默认</button>
                 </div>
-                <div class="text-secondary" style="font-size:0.72rem">log 轴填原始线性值（如 1e50），留空的端保持自动</div>
+                <div class="sp-muted" style="font-size:0.72rem">log 轴填原始线性值（如 1e50），留空的端保持自动</div>
               </div>
               <div class="chart-container" style="height:420px" id="chartbox-${def.name}">
                 <canvas id="cv-${def.name}"></canvas>
@@ -726,7 +725,7 @@ export async function render() {
               <div class="small mt-2" id="fitinfo-${def.name}"></div>
               <div class="small mt-1" id="excluded-${def.name}"></div>
               ${Array.isArray(def.refs) && def.refs.length ? `
-              <div class="text-secondary mt-2" style="font-size:0.78rem">参考文献: ${def.refs.map(r =>
+              <div class="sp-muted mt-2" style="font-size:0.78rem">参考文献: ${def.refs.map(r =>
                 r && r.url
                   ? `<a href="${esc(safeUrl(r.url))}" target="_blank" rel="noopener noreferrer" class="link-secondary">${esc(r.label || r.url)}</a>`
                   : esc((r && r.label) || '')
@@ -734,6 +733,7 @@ export async function render() {
             </div>
           </div>
         </div>`).join('')}
+    </div>
     </div>
   `;
 

@@ -329,8 +329,8 @@ function buildAbsBandPanel() {
       <label class="form-check-label" for="hostAbsBandChk_${i}"><span style="color:${c}">●</span> ${escA(b)}</label>
     </span>`;
   }).join('') + `
-    <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hostAbsBandAll">全选</button>
-    <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hostAbsBandNone">全不选</button>`;
+    <button class="sp-btn-ghost py-0 px-1" id="hostAbsBandAll">全选</button>
+    <button class="sp-btn-ghost py-0 px-1" id="hostAbsBandNone">全不选</button>`;
   // 波段勾选变化会改变等星等虚线的最大 z，整图重建
   el.querySelectorAll('.host-abs-band-chk').forEach(chk => {
     chk.addEventListener('change', () => {
@@ -388,9 +388,8 @@ function downloadZScatterCsv(points, valKey, name) {
 export async function render() {
   showLoading();
   app.innerHTML = `
-    <div class="page-header d-flex justify-content-between align-items-center">
-      <h4 class="mb-0"><i class="bi bi-houses"></i> 宿主星系统计</h4>
-    </div>
+    <div class="stats-hosts-root soft-root">
+    <div class="sp-page-title mb-3">宿主星系统计</div>
     ${statsTabs('hosts')}
     <div class="row g-3 mb-4" id="hostStatCards"></div>
     <div class="row g-3">
@@ -416,7 +415,7 @@ export async function render() {
                 <input type="number" class="form-control form-control-sm" id="hostAbsLimitMag"
                   step="0.1" style="width:80px" placeholder="如 24" disabled>
               </div>
-              <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hostAbsMagCsv"
+              <button class="sp-btn-ghost py-0 px-1" id="hostAbsMagCsv"
                 title="下载当前勾选波段的绘图数据（CSV，含银消改正前后星等）">
                 <i class="bi bi-download"></i> 数据
               </button>
@@ -432,7 +431,7 @@ export async function render() {
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
             <span>恒星质量 M* 分布（M☉，对数分箱）</span>
-            <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hostMstarHistCsv"
+            <button class="sp-btn-ghost py-0 px-1" id="hostMstarHistCsv"
               title="下载原始数据（每宿主一行）"><i class="bi bi-download"></i> 数据</button>
           </div>
           <div class="card-body"><div class="chart-container" style="height:320px"><canvas id="hostMstarHist"></canvas></div></div>
@@ -442,7 +441,7 @@ export async function render() {
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
             <span>恒星形成率 SFR 分布（M☉/yr，对数分箱）</span>
-            <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hostSfrHistCsv"
+            <button class="sp-btn-ghost py-0 px-1" id="hostSfrHistCsv"
               title="下载原始数据（每宿主一行）"><i class="bi bi-download"></i> 数据</button>
           </div>
           <div class="card-body"><div class="chart-container" style="height:320px"><canvas id="hostSfrHist"></canvas></div></div>
@@ -452,7 +451,7 @@ export async function render() {
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
             <span>恒星质量 — 红移</span>
-            <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hostMstarZCsv"
+            <button class="sp-btn-ghost py-0 px-1" id="hostMstarZCsv"
               title="下载绘图数据（需宿主红移）"><i class="bi bi-download"></i> 数据</button>
           </div>
           <div class="card-body"><div class="chart-container" style="height:320px"><canvas id="hostMstarZ"></canvas></div></div>
@@ -462,12 +461,13 @@ export async function render() {
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
             <span>恒星形成率 — 红移</span>
-            <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hostSfrZCsv"
+            <button class="sp-btn-ghost py-0 px-1" id="hostSfrZCsv"
               title="下载绘图数据（需宿主红移）"><i class="bi bi-download"></i> 数据</button>
           </div>
           <div class="card-body"><div class="chart-container" style="height:320px"><canvas id="hostSfrZ"></canvas></div></div>
         </div>
       </div>
+    </div>
     </div>
   `;
 

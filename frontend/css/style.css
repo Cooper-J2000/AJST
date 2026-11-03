@@ -818,6 +818,7 @@ a.swiss-tag-subname:hover { text-decoration: underline; }
 
 /* 表单与标签层级 */
 .soft-root .form-control, .soft-root .form-select { border-radius: 8px; font-size: 13px; }
+.soft-root ::placeholder { color: var(--text-secondary); opacity: .55; }
 .soft-root label { font-size: 12.5px; color: var(--text-secondary); }
 .soft-root .sp-prov { color: var(--text-secondary); font-size: 11px; margin-left: 4px; }
 

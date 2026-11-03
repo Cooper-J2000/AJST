@@ -92,33 +92,34 @@ export async function render() {
   _idx = -1; _cid = null; _tid = null; _editLcId = null; _editTid = null;
 
   app.innerHTML = `
-    <div class="page-header"><h4><i class="bi bi-journal-text"></i> GCN 阅读工具</h4></div>
+    <div class="gcn-root soft-root">
+    <div class="sp-page-title mb-3">GCN 阅读工具</div>
     <div class="row g-3">
       <!-- ─── 左栏：GCN 浏览器 + 时间计算器 ─── -->
       <div class="col-lg-5">
         <div class="card mb-3">
           <div class="card-header d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-journal-text"></i> GCN Circular 浏览器</span>
-            <span class="small text-secondary" id="gcnCurLabel">未选择</span>
+            <span>GCN Circular 浏览器</span>
+            <span class="sp-muted" id="gcnCurLabel">未选择</span>
           </div>
           <div class="card-body">
             <div class="d-flex gap-1 mb-2 flex-wrap align-items-center">
               <input type="text" class="form-control form-control-sm" id="gcnJump" placeholder="期号 如 40689" style="width:130px">
-              <button class="btn btn-sm btn-outline-primary" id="gcnJumpBtn">Go</button>
-              <button class="btn btn-sm btn-outline-secondary" id="gcnPrev">&lt;&lt; Prev</button>
-              <button class="btn btn-sm btn-outline-secondary" id="gcnNext">Next &gt;&gt;</button>
-              <button class="btn btn-sm btn-outline-success ms-auto" id="gcnUpdateBtn" title="从 gcn.nasa.gov 下载最新整包并替换本地存档"><i class="bi bi-cloud-download"></i> 下载最新存档</button>
+              <button class="btn btn-sm btn-primary" id="gcnJumpBtn">Go</button>
+              <button class="sp-btn-ghost" id="gcnPrev">&lt;&lt; Prev</button>
+              <button class="sp-btn-ghost" id="gcnNext">Next &gt;&gt;</button>
+              <button class="sp-btn-ghost text-nowrap ms-auto" id="gcnUpdateBtn" title="从 gcn.nasa.gov 下载最新整包并替换本地存档"><i class="bi bi-cloud-download"></i> 下载最新存档</button>
             </div>
-            <div class="small text-secondary mb-2" id="gcnStatusLine">存档加载中...</div>
+            <div class="sp-muted mb-2" id="gcnStatusLine">存档加载中...</div>
             <div id="gcnChips" class="mb-2 d-flex flex-wrap gap-1 align-items-center"></div>
             <div class="gcn-view border rounded p-2" id="gcnViewer" style="max-height:460px;overflow:auto">
-              <span class="text-secondary small">输入期号跳转，或用 Prev/Next 翻页浏览</span>
+              <span class="sp-muted">输入期号跳转，或用 Prev/Next 翻页浏览</span>
             </div>
           </div>
         </div>
         <div class="card">
-          <div class="card-header py-1"><span class="small fw-bold"><i class="bi bi-calculator"></i> 时间计算器</span></div>
-          <div class="card-body py-2">
+          <div class="card-header">时间计算器</div>
+          <div class="card-body">
             <div class="d-flex gap-1 mb-1 align-items-center">
               <span class="small text-secondary" style="width:48px">time 1:</span>
               <input type="text" class="form-control form-control-sm" id="gcnCalcT1" placeholder="2025-06-10T12:34:56 或 MJD">
@@ -130,7 +131,7 @@ export async function render() {
               <select class="form-select form-select-sm" id="gcnCalcF2" style="width:80px"><option value="UTC" selected>UTC</option><option value="MJD">MJD</option></select>
             </div>
             <div class="d-flex gap-1 align-items-center">
-              <button class="btn btn-sm btn-outline-primary" id="gcnCalcBtn">Calculate Δt</button>
+              <button class="sp-btn-ghost" id="gcnCalcBtn">Calculate Δt</button>
               <input type="text" class="form-control form-control-sm" id="gcnCalcResult" readonly value="Δt =">
             </div>
           </div>
@@ -141,7 +142,7 @@ export async function render() {
       <div class="col-lg-7">
         <div class="card mb-3">
           <div class="card-header d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-star"></i> 源信息（AJST 数据库）</span>
+            <span>源信息（AJST 数据库）</span>
             <a href="#" class="small" id="gcnDetailLink" style="display:none">打开详情页 →</a>
           </div>
           <div class="card-body">
@@ -182,10 +183,10 @@ export async function render() {
               </div>
             </div>
             <div class="d-flex gap-1 mt-3 flex-wrap">
-              <button class="btn btn-sm btn-outline-primary" id="gcnSrcLoad"><i class="bi bi-search"></i> 加载所选</button>
+              <button class="sp-btn-ghost" id="gcnSrcLoad"><i class="bi bi-search"></i> 加载所选</button>
               <button class="btn btn-sm btn-primary" id="gcnSrcCreate"><i class="bi bi-plus-circle"></i> 新建源</button>
-              <button class="btn btn-sm btn-success" id="gcnSrcSave"><i class="bi bi-check-lg"></i> 保存修改</button>
-              <button class="btn btn-sm btn-outline-secondary" id="gcnSrcClear">清空表单</button>
+              <button class="btn btn-sm btn-primary" id="gcnSrcSave"><i class="bi bi-check-lg"></i> 保存修改</button>
+              <button class="sp-btn-ghost" id="gcnSrcClear">清空表单</button>
             </div>
             <div class="small text-secondary mt-2" id="gcnSrcStatus"></div>
           </div>
@@ -193,7 +194,7 @@ export async function render() {
 
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-pencil-square"></i> 测光录入（写入光变数据表）</span>
+            <span>测光录入（写入光变数据表）</span>
             <span class="small" id="gcnObsTarget" style="color:var(--accent-green)">未选择源</span>
           </div>
           <div class="card-body" style="font-size:0.9rem">
@@ -299,9 +300,9 @@ export async function render() {
             </div>
             <div class="d-flex gap-1 mt-3 flex-wrap align-items-center">
               <button class="btn btn-sm btn-primary" id="gcnObsSave"><i class="bi bi-check-lg"></i> 保存测光记录</button>
-              <button class="btn btn-sm btn-outline-primary" id="gcnObsSaveNew" style="display:none"><i class="bi bi-plus-lg"></i> 作为新记录保存</button>
-              <button class="btn btn-sm btn-outline-secondary" id="gcnObsCancelEdit" style="display:none">取消编辑</button>
-              <button class="btn btn-sm btn-outline-secondary" id="gcnObsClear">清空字段</button>
+              <button class="sp-btn-ghost" id="gcnObsSaveNew" style="display:none"><i class="bi bi-plus-lg"></i> 作为新记录保存</button>
+              <button class="sp-btn-ghost" id="gcnObsCancelEdit" style="display:none">取消编辑</button>
+              <button class="sp-btn-ghost" id="gcnObsClear">清空字段</button>
               <span class="small ms-1" id="gcnObsEditBadge" style="color:var(--accent-orange);display:none"></span>
             </div>
           </div>
@@ -314,16 +315,16 @@ export async function render() {
       <div class="col-12">
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-link-45deg"></i> 库中关联光变记录</span>
-            <span class="small text-secondary" id="gcnRelatedSummary">加载中...</span>
+            <span>库中关联光变记录</span>
+            <span class="sp-muted" id="gcnRelatedSummary">加载中...</span>
           </div>
-          <div class="card-body py-2">
+          <div class="card-body">
             <div class="d-flex gap-1 mb-2 flex-wrap align-items-center">
               <select class="form-select form-select-sm" id="gcnRelFTid" style="width:auto"></select>
               <select class="form-select form-select-sm" id="gcnRelFBand" style="width:auto"></select>
               <input type="text" class="form-control form-control-sm" id="gcnRelFRef" placeholder="reference 包含…" style="width:150px">
               <input type="text" class="form-control form-control-sm" id="gcnRelFCmt" placeholder="comment 包含…" style="width:150px">
-              <button class="btn btn-sm btn-outline-secondary" id="gcnRelFReset">重置筛选</button>
+              <button class="sp-btn-ghost" id="gcnRelFReset">重置筛选</button>
             </div>
             <div class="table-scroll" style="max-height:320px">
               <table class="table table-sm table-hover mb-0" style="font-size:0.85rem">
@@ -345,6 +346,7 @@ export async function render() {
           </div>
         </div>
       </div>
+    </div>
     </div>
   `;
 
@@ -593,7 +595,7 @@ function applyRelatedView() {
     <td>${esc(r.telescope || '')}</td>
     <td class="small">${esc(r.reference || '')}</td>
     <td class="small text-secondary">${esc(r.comment || '')}</td>
-    <td><button class="btn btn-sm btn-outline-primary py-0 px-1 gcn-rel-load" data-lcid="${r.id}">载入</button></td>
+    <td><button class="sp-btn-ghost py-0 px-1 gcn-rel-load" data-lcid="${r.id}">载入</button></td>
   </tr>`;
   body.innerHTML = rows.map(rowHtml).join('');
   const byId = new Map(all.map(r => [r.id, r]));
@@ -689,7 +691,7 @@ function renderChips(data) {
   const tokens = extractNameTokens(data).slice(0, 12);
   if (!tokens.length) { box.innerHTML = ''; return; }
   box.innerHTML = '<span class="small text-secondary">候选源:</span>' + tokens.map(t =>
-    `<button class="btn btn-sm btn-outline-info py-0 px-1 gcn-chip" data-name="${esc(t)}" title="查库加载 / 预填新建">${esc(t)}</button>`
+    `<button class="sp-btn-ghost py-0 px-1 gcn-chip" data-name="${esc(t)}" title="查库加载 / 预填新建">${esc(t)}</button>`
   ).join('');
   box.querySelectorAll('.gcn-chip').forEach(chip => {
     chip.addEventListener('click', () => onChip(chip.dataset.name));
