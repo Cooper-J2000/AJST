@@ -115,7 +115,8 @@
       "log": false,
       "type": "number",
       "domains": ["sn"],
-      "status": "reserved"
+      "status": "active",
+      "note": "由 backend/tools/derive_lc_params.py 从本库光变计算（P3）"
     },
     "m_b_peak": {
       "label": "B 波段峰值星等",
@@ -123,8 +124,8 @@
       "log": false,
       "type": "number",
       "domains": ["sn"],
-      "status": "reserved",
-      "note": "绝对星等口径 M_B（含距离模数与消光改正）；phillips/tripp/stretch 的文献截距以此口径成立"
+      "status": "active",
+      "note": "绝对星等口径 M_B（含距离模数与消光改正）；phillips/tripp/stretch 的文献截距以此口径成立；由 backend/tools/derive_lc_params.py 从本库光变计算（P3）"
     },
     "color_bv": {
       "label": "B−V 颜色",
@@ -132,7 +133,8 @@
       "log": false,
       "type": "number",
       "domains": ["sn"],
-      "status": "reserved"
+      "status": "active",
+      "note": "由 backend/tools/derive_lc_params.py 从本库光变计算（P3）"
     },
     "stretch_s": {
       "label": "拉伸因子 s",
@@ -181,7 +183,8 @@
       "log": false,
       "type": "number",
       "domains": ["tde"],
-      "status": "reserved"
+      "status": "active",
+      "note": "由 backend/tools/derive_lc_params.py 从本库光变计算（P3）"
     },
     "m_bh": {
       "label": "黑洞质量",

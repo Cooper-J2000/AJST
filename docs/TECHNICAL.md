@@ -1508,7 +1508,8 @@ XRT 10 keV 未吸收流量密度光变（Evans+2007,2009 数据产品）已导�
   历史记录，这些脚本未随仓库发布**。连带修复：`routes/ingest.py` 原
   `from tools.catalog_merge import ang_dist` 已改为文件内联函数（4 行，小角近似），
   否则重启即 ImportError。tools/ 现仅剩
-  check_fitting / check_relations_api / check_relations_fit / migrate_params
+  check_fitting / check_relations_api / check_relations_fit / migrate_params /
+  derive_lc_params
 
 ### 8.12 transients 表系统清洗（2026-08-26）
 
@@ -1556,13 +1557,22 @@ t0 补全、GRB 编号关联；终态 `transients_cleaned.csv` 2794 行；审查
 
 - **键注册表**：`backend/params_registry.json`——每个键声明 unit/log/domains/status；
   12 个 active 迁移键（`ep_rest`/`eiso`/`lp_iso`/`t90_rest`/`t90_obs`/`epeak_obs`/`alpha`/
-  `variability`/`spec_class`/`tlag_rest`/`e_gamma`/`grb_type`）+ 11 个 reserved 待计算键
-  （光变/光谱派生量，等 P3 参数计算器）。迁移覆盖基准：ep_rest 425、eiso 412、lp_iso 389、
+  `variability`/`spec_class`/`tlag_rest`/`e_gamma`/`grb_type`）+ 4 个光变派生键
+  （`m_b_peak`/`dm15_b`/`color_bv`/`delta_l40`，由 `derive_lc_params.py` 计算）+
+  7 个 reserved 待计算键（`stretch_s`/`l_peak_bol`/`m_ni`/`v_feii`/`vp_av_corr`/`m_bh`/`t_fb_min`）。
+  迁移覆盖基准：ep_rest 425、eiso 412、lp_iso 389、
   t90_rest 571、t90_obs 528、epeak_obs 399、alpha 476、variability 216、spec_class 112、
   tlag_rest 55、e_gamma 46、grb_type 585（II 532 / I 53）
 - **迁移脚本**：`backend/tools/migrate_params.py`（dry-run 默认只打印统计；`--apply` 写库；
   `--purge [--apply]` 删除旧 `catalog_data`/`derived` 两键，存在「有 derived 无 params」的
   漏网源时拒绝执行；幂等可重跑）
+- **光变派生脚本**：`backend/tools/derive_lc_params.py`（dry-run 默认 / `--apply`；只处理
+  tags 含 sn/tde 的源，与 GRB 迁移键天然隔离）：静止系 B(~4400 Å)/V(~5500 Å) 由
+  4400/5500×(1+z)±15% 容差选最近 filters 波段；星等统一用银消改正后 AB 口径
+  （`mag_gextcor` 直接用，无改正列的行按 Vega→AB→减 A_λ 现算，A_λ=filters.gext_coeff×gext_ebv）；
+  距离模数用 gext_distmod 缓存（目标源有红移者 100% 覆盖），ΛCDM 回退（H0=70）时 src 记
+  `computed:lc:dm-lcdm` 区分。首批覆盖（2026-11-04）：59 个目标源中 38 源算出
+  m_b_peak、24 源 dm15_b、33 源 color_bv、1 源（EP260324a）delta_l40
 - 旧 derived 的手动修改保护机制（`manual` 标记 / `_manual_deleted` 墓碑）已随旧结构一并废弃，
   params 目前无手动条目
 - ⚠ 注意区分：`host_galaxies.derived`（宿主 SED 拟合参数，§8.20）是另一张表的另一命名空间，
