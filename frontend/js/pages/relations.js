@@ -806,12 +806,12 @@ export async function render() {
                 <span class="ms-1">${badges(def)}</span>
                 <span class="sp-muted ms-1" style="font-size:0.72rem">当前 ${relCoverage[def.name] ?? 0} 点</span>
               </span>
-              <div class="d-flex gap-1">
+              <div class="d-flex gap-1 flex-shrink-0">
                 ${def.status === 'active' ? `
                 <button class="sp-btn-ghost py-0" data-range-toggle="${def.name}" title="坐标范围">
                   <i class="bi bi-gear"></i>
                 </button>
-                <button class="sp-btn-ghost py-0" data-export="${def.name}">
+                <button class="sp-btn-ghost py-0 text-nowrap" data-export="${def.name}">
                   <i class="bi bi-download"></i> 导出 CSV
                 </button>` : ''}
               </div>
