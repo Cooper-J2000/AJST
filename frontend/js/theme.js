@@ -1,8 +1,38 @@
-// === 主题管理（浅色 / 深色双主题） ===
-// 持久化: localStorage('ajst-theme')；未设置时跟随 prefers-color-scheme；默认深色。
-// 图表颜色在建图时通过 chartColors() 读取当前主题；切换主题后 reload 即生效（hash 路由状态保留）。
+// === 主题管理 ===
+// 明暗（浅色/深色，data-bs-theme）：持久化 localStorage('ajst-theme')；未设置时跟随 prefers-color-scheme；默认深色。
+// 背景配色（7 种马卡龙色，data-bg-palette）：持久化 localStorage('ajst-bg-palette')；默认雾蓝 blue。
+// 配色只改页面背景渐变（style.css 的 --page-bg），明暗仍驱动整套界面变量与图表配色。
+// 图表颜色在建图时通过 chartColors() 读取当前明暗；切换明暗后 reload 即生效（hash 路由状态保留）。
 
 const STORAGE_KEY = 'ajst-theme';
+
+// ─── 背景配色清单（color 为悬浮窗色点的浅色代表色；实际渐变色值只在 style.css 的 [data-bg-palette] 规则里，改色两边同步） ───
+const BG_KEY = 'ajst-bg-palette';
+const DEFAULT_BG_PALETTE = 'blue';
+export const BG_PALETTES = [
+  { id: 'pink',   name: '粉', color: '#ecc3d2' },
+  { id: 'peach',  name: '橙', color: '#f0d0b4' },
+  { id: 'yellow', name: '黄', color: '#edd99e' },
+  { id: 'mint',   name: '绿', color: '#bde0c6' },
+  { id: 'teal',   name: '青', color: '#b4dcd9' },
+  { id: 'blue',   name: '蓝', color: '#c2d6ec' },
+  { id: 'purple', name: '紫', color: '#d2c4e9' },
+];
+
+export function getBgPalette() {
+  try {
+    const p = localStorage.getItem(BG_KEY);
+    if (BG_PALETTES.some(x => x.id === p)) return p;
+  } catch {}
+  return DEFAULT_BG_PALETTE;
+}
+
+export function setBgPalette(id) {
+  if (!BG_PALETTES.some(x => x.id === id)) return;
+  try { localStorage.setItem(BG_KEY, id); } catch {}
+  // 纯 CSS 变量切换，无需刷新
+  document.documentElement.setAttribute('data-bg-palette', id);
+}
 
 export function getTheme() {
   try {
@@ -23,10 +53,6 @@ export function setTheme(t) {
   try { localStorage.setItem(STORAGE_KEY, t); } catch {}
   document.documentElement.setAttribute('data-bs-theme', t);
   location.reload();
-}
-
-export function toggleTheme() {
-  setTheme(getTheme() === 'dark' ? 'light' : 'dark');
 }
 
 // ─── 图表配色 ───

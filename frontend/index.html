@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<!-- 主题初始化：CSS 加载前设置 data-bs-theme，避免主题闪烁 -->
+<!-- 主题初始化：CSS 加载前设置 data-bs-theme / data-bg-palette，避免主题闪烁 -->
 <script>
 (function () {
   var t = null;
@@ -12,6 +12,11 @@
     t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
   }
   document.documentElement.setAttribute('data-bs-theme', t);
+  // 背景配色（id 列表与 js/theme.js 的 BG_PALETTES 保持一致；默认雾蓝 blue）
+  var p = null;
+  try { p = localStorage.getItem('ajst-bg-palette'); } catch (e) {}
+  if (!/^(pink|peach|yellow|mint|teal|blue|purple)$/.test(p || '')) p = 'blue';
+  document.documentElement.setAttribute('data-bg-palette', p);
 })();
 </script>
 <title>AJST 暂现源光变目录</title>
@@ -55,8 +60,8 @@
           </li>
         </ul>
         <div class="d-flex align-items-center gap-2" id="authBar">
-          <button class="btn btn-sm btn-outline-secondary" id="themeToggle" title="切换浅色/深色主题">
-            <i class="bi bi-sun"></i>
+          <button class="btn btn-sm btn-outline-secondary" id="themeToggle" title="界面配色（背景主题）">
+            <i class="bi bi-palette2"></i>
           </button>
           <span class="small text-secondary" id="authStatus" style="display:none">已登录</span>
           <a class="btn btn-sm btn-outline-warning" id="adminBtn" style="display:none" href="admin.html" title="管理员后台"><i class="bi bi-person-gear"></i> 管理后台</a>
