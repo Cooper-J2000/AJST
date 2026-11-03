@@ -2,7 +2,7 @@
 import { app, showLoading, showError, statsTabs, navSeq, navStale } from './layout.js';
 import { api, showToast } from '../api.js';
 import { chartColors, academicFonts } from '../theme.js';
-import { esc, safeUrl, sci3, normErr, minOf, maxOf } from '../utils.js';
+import { esc, escAttr, safeUrl, sci3, normErr, minOf, maxOf } from '../utils.js';
 import { xyErrBarPlugin } from '../chart_plugins.js';
 
 // ─── 常量 ───
@@ -802,7 +802,7 @@ export async function render() {
         <div class="col-lg-6">
           <div class="card" id="card-${def.name}">
             <div class="card-header d-flex justify-content-between align-items-center">
-              <span>${esc(def.title)}${def.lit && def.lit.label ? ` · <span class="sp-muted">${esc(def.lit.label)}${def.lit.bibcode ? ` (${esc(def.lit.bibcode)})` : ''}</span>` : ''}
+              <span>${esc(def.title)}${def.lit && def.lit.label ? ` · ${def.lit.bibcode ? `<a href="${escAttr(safeUrl(`https://ui.adsabs.harvard.edu/abs/${encodeURIComponent(def.lit.bibcode)}/abstract`))}" target="_blank" rel="noopener noreferrer" class="text-decoration-none" title="在 ADS 打开 ${escAttr(def.lit.bibcode)}">${esc(def.lit.label)} <i class="bi bi-box-arrow-up-right" style="font-size:0.7em"></i> (${esc(def.lit.bibcode)})</a>` : `<span class="sp-muted">${esc(def.lit.label)}</span>`}` : ''}
                 <span class="ms-1">${badges(def)}</span>
                 <span class="sp-muted ms-1" style="font-size:0.72rem">当前 ${relCoverage[def.name] ?? 0} 点</span>
               </span>
