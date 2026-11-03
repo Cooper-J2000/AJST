@@ -149,14 +149,16 @@ export async function initSedTab(container, tid) {
   _sedResult = null;
   _epochs = null;
   container.innerHTML = `
+    <div class="sed-root soft-root">
     <div class="card mb-3">
-      <div class="card-header"><i class="bi bi-layers"></i> SED 构建器</div>
+      <div class="card-header">SED 构建器</div>
       <div class="card-body">
         <div class="row g-3">
           <div class="col-lg-6">
-            <div class="small text-secondary mb-1">光变参考（log-log；在图上横向框选时间窗口 → 自动填 t_sel/Δt 并重建 SED；阴影 = t_sel±Δt）</div>
+            <div class="sp-muted mb-1">光变参考（log-log）
+              <i class="bi bi-info-circle" title="在图上横向框选时间窗口 ⇒ 自动填 t_sel/Δt 并重建 SED；阴影 = t_sel±Δt"></i></div>
             <div style="position:relative;height:280px"><canvas id="sedLcChart"></canvas></div>
-            <div class="text-secondary mt-1" style="font-size:0.72rem" id="sedLcHint">加载光变数据...</div>
+            <div class="sp-muted mt-1" style="font-size:0.72rem" id="sedLcHint">加载光变数据...</div>
           </div>
           <div class="col-lg-6">
             <div class="row g-2 small">
@@ -175,16 +177,16 @@ export async function initSedTab(container, tid) {
                 </select>
               </div>
             </div>
-            <div class="row g-2 small mt-1 align-items-center">
+            <div class="row g-2 small mt-2 align-items-center">
               <div class="col-auto">
-                <span class="small text-secondary me-1">同时化模式</span>
-                <div class="form-check form-check-inline">
-                  <input class="form-check-input" type="radio" name="sedMode" id="sedModeWindow" value="window" checked>
-                  <label class="form-check-label" for="sedModeWindow" title="t_sel±Δt 窗口内直接取点，不插值（余辉文献惯例）">时段取值</label>
-                </div>
-                <div class="form-check form-check-inline">
-                  <input class="form-check-input" type="radio" name="sedMode" id="sedModeInterp" value="interp">
-                  <label class="form-check-label" for="sedModeInterp" title="每波段 GP 回归在 t_sel 处内插（SN/TDE 波段错峰时常用；不外推）">GP 内插</label>
+                <div class="sp-muted mb-1">同时化模式</div>
+                <div class="sp-seg">
+                  <label title="t_sel±Δt 窗口内直接取点，不插值（余辉文献惯例）">
+                    <input type="radio" name="sedMode" id="sedModeWindow" value="window" checked>
+                    <span class="sp-seg-item">时段取值</span></label>
+                  <label title="每波段 GP 回归在 t_sel 处内插（SN/TDE 波段错峰时常用；不外推）">
+                    <input type="radio" name="sedMode" id="sedModeInterp" value="interp">
+                    <span class="sp-seg-item">GP 内插</span></label>
                 </div>
               </div>
               <div class="col-auto">
@@ -200,7 +202,7 @@ export async function initSedTab(container, tid) {
                 </div>
               </div>
             </div>
-            <div class="row g-2 small mt-1">
+            <div class="row g-2 small mt-2">
               <div class="col-6">
                 <label class="form-label small mb-1">上限点</label>
                 <select class="form-select form-select-sm" id="sedUlMode">
@@ -213,25 +215,23 @@ export async function initSedTab(container, tid) {
                 <input type="number" class="form-control form-control-sm" id="sedZOverride" step="any" min="0" placeholder="缺省用目录值">
               </div>
             </div>
-            <div class="row mt-2">
+            <div class="row mt-3">
               <div class="col-12">
-                <button class="btn btn-sm btn-primary w-100" id="sedBuildBtn">
-                  <i class="bi bi-play-fill"></i> 构建 SED
-                </button>
+                <button class="btn btn-primary w-100" id="sedBuildBtn">构建 SED</button>
               </div>
             </div>
           </div>
         </div>
-        <details open class="mt-3">
-          <summary class="small text-secondary" style="cursor:pointer">波段选择（缺省全部；勾选变化即重建）</summary>
-          <div class="d-flex align-items-center gap-2 mt-1">
-            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1" id="sedBandAllBtn" style="font-size:0.72rem">全选</button>
-            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1" id="sedBandNoneBtn" style="font-size:0.72rem">全不选</button>
-            <span class="small text-secondary" id="sedBandCount"></span>
+        <details open class="sp-adv mt-3">
+          <summary>波段选择（缺省全部；勾选变化即重建）</summary>
+          <div class="d-flex align-items-center gap-2 mt-2">
+            <button type="button" class="sp-btn-ghost py-0 px-1" id="sedBandAllBtn" style="font-size:0.72rem">全选</button>
+            <button type="button" class="sp-btn-ghost py-0 px-1" id="sedBandNoneBtn" style="font-size:0.72rem">全不选</button>
+            <span class="sp-muted" id="sedBandCount"></span>
           </div>
-          <div id="sedBandPanel" class="border rounded p-2 mt-1"
+          <div id="sedBandPanel" class="mt-1"
                style="max-height:180px;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:0.1rem 0.5rem">
-            <span class="text-secondary small">建议历元加载后列出可用波段</span>
+            <span class="sp-muted">建议历元加载后列出可用波段</span>
           </div>
         </details>
         <div id="sedBuildOut" class="mt-3"></div>
@@ -239,21 +239,21 @@ export async function initSedTab(container, tid) {
     </div>
 
     <div class="card mb-3">
-      <div class="card-header"><i class="bi bi-cpu"></i> 模型拟合</div>
+      <div class="card-header">模型拟合</div>
       <div class="card-body" id="sedFitBody">
-        <div class="text-secondary small"><span class="spinner-border spinner-border-sm"></span> 加载模型清单...</div>
+        <div class="sp-muted"><span class="spinner-border spinner-border-sm"></span> 加载模型清单...</div>
       </div>
     </div>
 
     <div class="card mb-3">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-list-task"></i> 拟合任务与结果</span>
-        <button class="btn btn-sm btn-outline-secondary" id="sedRefreshBtn" title="刷新任务列表">
+        <span>拟合任务与结果</span>
+        <button class="sp-btn-ghost" id="sedRefreshBtn" title="刷新任务列表">
           <i class="bi bi-arrow-clockwise"></i>
         </button>
       </div>
       <div class="card-body p-0" id="sedJobsBody">
-        <div class="text-secondary small p-3"><span class="spinner-border spinner-border-sm"></span> 加载任务...</div>
+        <div class="sp-muted p-3"><span class="spinner-border spinner-border-sm"></span> 加载任务...</div>
       </div>
     </div>
     <div id="sedResultArea" class="mb-3"></div>
@@ -261,10 +261,10 @@ export async function initSedTab(container, tid) {
     <div class="row g-3">
       <div class="col-lg-6">
         <div class="card h-100">
-          <div class="card-header"><i class="bi bi-diagram-3"></i> 闭包关系 α–β 诊断</div>
+          <div class="card-header">闭包关系 α–β 诊断</div>
           <div class="card-body">
-            <div class="text-secondary small mb-2">
-              <i class="bi bi-info-circle"></i> α 为光变衰减指数（Fν∝t^(−α)，可先在光变页用幂律拟合得到）；
+            <div class="sp-muted mb-2">
+              α 为光变衰减指数（Fν∝t^(−α)，可先在光变页用幂律拟合得到）；
               β 为谱指数（Fν∝ν^(−β)，可由上方幂律拟合任务一键填入）。
             </div>
             <div class="row g-2 small">
@@ -279,16 +279,14 @@ export async function initSedTab(container, tid) {
               <div class="col-6"><label class="form-label small mb-1" title="L∝t^q 参数化的能量注入指数；填写后注入闭包关系（Racusin+2009 Table 1 列 c）参与排名，图中以虚线区分">q<span class="text-secondary">（能量注入指数，可空，0≤q&lt;1）</span></label>
                 <input type="number" class="form-control form-control-sm" id="sedClosureQ" step="any" min="0" max="1" placeholder="可空"></div>
             </div>
-            <button class="btn btn-sm btn-primary mt-2" id="sedClosureBtn">
-              <i class="bi bi-play-fill"></i> 诊断
-            </button>
+            <button class="btn btn-primary mt-3" id="sedClosureBtn">诊断</button>
             <div id="sedClosureOut" class="mt-3"></div>
           </div>
         </div>
       </div>
       <div class="col-lg-6">
         <div class="card h-100">
-          <div class="card-header"><i class="bi bi-brightness-high"></i> 伪玻尔兹曼光变</div>
+          <div class="card-header">伪玻尔兹曼光变</div>
           <div class="card-body">
             <div class="row g-2 small">
               <div class="col-4">
@@ -309,14 +307,13 @@ export async function initSedTab(container, tid) {
                 <input type="number" class="form-control form-control-sm" id="sedBoloZ" step="any" min="0" placeholder="缺省用目录值">
               </div>
             </div>
-            <button class="btn btn-sm btn-primary mt-2" id="sedBoloBtn">
-              <i class="bi bi-play-fill"></i> 计算
-            </button>
-            <div class="text-secondary small mt-1" style="font-size:0.72rem">历元自动建议（同窗口 ≥3 波段，上限 30 个）；无红移时光度不可算。</div>
+            <button class="btn btn-primary mt-3" id="sedBoloBtn">计算</button>
+            <div class="sp-muted mt-1" style="font-size:0.72rem">历元自动建议（同窗口 ≥3 波段，上限 30 个）；无红移时光度不可算。</div>
             <div id="sedBoloOut" class="mt-3"></div>
           </div>
         </div>
       </div>
+    </div>
     </div>`;
 
   document.getElementById('sedBuildBtn').addEventListener('click', doBuild);
@@ -728,11 +725,11 @@ async function doBuild() {
     renderSedOutput(_sedResult);
   } catch (e) {
     showToast(`SED 构建失败: ${e.message}`, 'danger');
-    if (out) out.innerHTML = `<div class="text-danger small">构建失败: ${esc(e.message)}</div>`;
+    if (out) out.innerHTML = `<div class="sp-errbox">构建失败: ${esc(e.message)}</div>`;
   } finally {
     if (btn.isConnected) {
       btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-play-fill"></i> 构建 SED';
+      btn.innerHTML = '构建 SED';
     }
   }
 }
@@ -758,16 +755,16 @@ function renderSedOutput(res) {
   ].filter(Boolean);
 
   out.innerHTML = pts.length ? `
-    <div class="small text-secondary mb-1">log-log SED 预览（F<sub>ν</sub>，可框选缩放；▼ 为上限点）</div>
+    <div class="sp-muted mb-1">log-log SED 预览（F<sub>ν</sub>，可框选缩放；▼ 为上限点）</div>
     <div style="position:relative;height:340px"><canvas id="sedPreviewChart"></canvas></div>
     <div class="d-flex flex-wrap gap-1 mt-2 mb-2">
       ${badges.map(b => `<span class="badge-tag badge-neutral">${b}</span>`).join('')}
     </div>
-    ${warnings.length ? `<div class="alert alert-warning py-2 small">
+    ${warnings.length ? `<div class="sp-warnbox mb-2">
       <i class="bi bi-exclamation-triangle"></i> ${warnings.map(w => esc(w)).join('<br>')}</div>` : ''}
     <div class="d-flex justify-content-between align-items-center mt-2 mb-1">
-      <span class="small text-secondary">SED 数据表（${pts.length} 点）</span>
-      <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="sedCsvBtn"><i class="bi bi-download"></i> 下载 CSV</button>
+      <span class="sp-muted">SED 数据表（${pts.length} 点）</span>
+      <button class="sp-btn-ghost py-0 px-1" id="sedCsvBtn"><i class="bi bi-download"></i> 下载 CSV</button>
     </div>
     <div class="table-scroll" style="max-height:260px;overflow-y:auto">
       <table class="table table-sm mb-0" style="font-size:0.78rem">
@@ -788,9 +785,9 @@ function renderSedOutput(res) {
     <div class="d-flex flex-wrap gap-1 mb-2">
       ${badges.map(b => `<span class="badge-tag badge-neutral">${b}</span>`).join('')}
     </div>
-    ${warnings.length ? `<div class="alert alert-warning py-2 small">
+    ${warnings.length ? `<div class="sp-warnbox mb-2">
       <i class="bi bi-exclamation-triangle"></i> ${warnings.map(w => esc(w)).join('<br>')}</div>` : ''}
-    <div class="text-secondary small">该历元窗口内无可用数据点，请调整 t_sel / Δt。</div>`;
+    <div class="sp-muted">该历元窗口内无可用数据点，请调整 t_sel / Δt。</div>`;
 
   const csvBtn = document.getElementById('sedCsvBtn');
   if (csvBtn) csvBtn.addEventListener('click', () => {
@@ -893,7 +890,7 @@ function renderFitCard() {
   const models = _modelsData.models || [];
   const series = _modelsData.series || null;
   body.innerHTML = `
-    ${authed ? '' : `<div class="alert alert-warning py-2 small mb-2">
+    ${authed ? '' : `<div class="sp-warnbox mb-2">
       <i class="bi bi-lock"></i> 未登录：可浏览任务与结果，提交拟合需要先登录。</div>`}
     <div class="row g-2 small">
       <div class="col-12 col-md-6">
@@ -905,9 +902,7 @@ function renderFitCard() {
       </div>
     </div>
     <div id="sedModelCfg" class="mt-2"></div>
-    <button class="btn btn-sm btn-primary w-100 mt-2" id="sedSubmitBtn" ${authed ? '' : 'disabled'}>
-      <i class="bi bi-play-fill"></i> 提交拟合任务
-    </button>`;
+    <button class="btn btn-primary w-100 mt-2" id="sedSubmitBtn" ${authed ? '' : 'disabled'}>提交拟合任务</button>`;
   document.getElementById('sedModelSel').addEventListener('change', renderModelConfig);
   document.getElementById('sedSubmitBtn').addEventListener('click', submitJob);
   renderModelConfig();
@@ -1003,8 +998,8 @@ function renderModelConfig() {
           <input type="number" class="form-control form-control-sm" id="sedRvFixed" step="any" placeholder="缺省用标称值">
         </div>` : ''}
       </div>
-      <details class="mt-2">
-        <summary class="small text-secondary" style="cursor:pointer">高级：采样与模型细节</summary>
+      <details class="sp-adv mt-2">
+        <summary>高级：采样与模型细节</summary>
         <div class="row g-2 mt-1" style="max-width:640px">
           <div class="col-6 col-md-3"><label class="small text-secondary mb-0">nsteps</label>
             <input type="number" class="form-control form-control-sm" id="sedNsteps" value="${dft.nsteps ?? 5000}" min="100" step="100"></div>
@@ -1100,7 +1095,7 @@ async function submitJob() {
   } finally {
     if (btn.isConnected) {
       _updateBandButtons();  // 恢复禁用态（含 0 波段禁用）
-      btn.innerHTML = '<i class="bi bi-play-fill"></i> 提交拟合任务';
+      btn.innerHTML = '提交拟合任务';
     }
   }
 }
@@ -1157,11 +1152,11 @@ function renderJobs() {
               <td>${j.chi_squared != null ? sci3(j.chi_squared) : '-'}</td>
               <td class="text-nowrap small">${fmtTime(j.created_at)}</td>
               <td class="text-nowrap">
-                ${j.status === 'done' ? `<button class="btn btn-sm btn-outline-primary py-0 px-1 sed-view" data-jobid="${j.id}">查看结果</button>` : ''}
+                ${j.status === 'done' ? `<button class="sp-btn-ghost py-0 px-1 sed-view" data-jobid="${j.id}">查看结果</button>` : ''}
                 ${isAuthed() && ['pending', 'running'].includes(j.status)
-                  ? `<button class="btn btn-sm btn-outline-warning py-0 px-1 sed-stop" data-jobid="${j.id}">中断</button>` : ''}
+                  ? `<button class="sp-btn-ghost py-0 px-1 sed-stop" data-jobid="${j.id}">中断</button>` : ''}
                 ${isAdmin() && ['done', 'failed', 'interrupted'].includes(j.status)
-                  ? `<button class="btn btn-sm btn-outline-danger py-0 px-1 sed-del" data-jobid="${j.id}" title="删除"><i class="bi bi-trash"></i></button>` : ''}
+                  ? `<button class="sp-btn-ghost sp-danger py-0 px-1 sed-del" data-jobid="${j.id}" title="删除"><i class="bi bi-trash"></i></button>` : ''}
               </td>
             </tr>
             ${['failed', 'interrupted'].includes(j.status) ? `<tr class="sed-err-row" data-jobid="${j.id}" style="display:none"><td colspan="7" class="small text-danger" id="sedErr_${j.id}">加载错误信息...</td></tr>` : ''}
@@ -1289,8 +1284,8 @@ function _metaHtml(meta) {
   if (meta.bandpass_synth != null) rows.push(meta.bandpass_synth ? '通带综合已启用' : '通带综合未启用');
   if (meta.version) rows.push(esc(meta.version));
   return `
-    <details class="mt-2">
-      <summary class="small text-secondary" style="cursor:pointer">可信度元数据（λ 覆盖 / 消光假设 / z 假设 / 取数窗口）</summary>
+    <details class="sp-adv mt-2">
+      <summary>可信度元数据（λ 覆盖 / 消光假设 / z 假设 / 取数窗口）</summary>
       <div class="small mt-1">${rows.map(r => `<span class="badge-tag badge-neutral me-1 mb-1">${r}</span>`).join('')}</div>
     </details>`;
 }
@@ -1299,7 +1294,7 @@ function _metaHtml(meta) {
 function _downloadsHtml(detail, kinds) {
   const files = detail.files || {};
   const links = kinds.filter(k => files[k]).map(k =>
-    `<a class="btn btn-sm btn-outline-secondary" href="${sedJobFileUrl(detail.id, k)}" download>
+    `<a class="sp-btn-ghost text-decoration-none" href="${sedJobFileUrl(detail.id, k)}" download>
       <i class="bi bi-download"></i> ${esc(k)}</a>`);
   return links.length
     ? `<div class="mt-3 d-flex flex-wrap gap-2">${links.join('')}</div>` : '';
@@ -1325,17 +1320,17 @@ function renderSingleResult(detail) {
   area.innerHTML = `
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <span><i class="bi bi-graph-up-arrow"></i> 拟合结果 — 任务 #${detail.id}
-          <span class="text-secondary small">${esc(modelLabel(detail.model_name))}
+        <span>拟合结果 — 任务 #${detail.id}
+          <span class="sp-muted ms-1">${esc(modelLabel(detail.model_name))}
             ${detail.config && detail.config.t_sel != null ? ` · t=${sci3(detail.config.t_sel)} d` : ''}</span></span>
-        ${betaName ? `<button class="btn btn-sm btn-outline-primary" id="sedFillBeta">
+        ${betaName ? `<button class="sp-btn-ghost" id="sedFillBeta">
           <i class="bi bi-box-arrow-down"></i> 填入闭包诊断 β</button>` : ''}
       </div>
       <div class="card-body">
         <div class="d-flex flex-wrap gap-2 mb-2">
           ${stats.map(([k, v]) => `<span class="badge-tag badge-neutral">${k} = ${v}</span>`).join('')}
         </div>
-        ${warnings.length ? `<div class="alert alert-warning py-2 small">
+        ${warnings.length ? `<div class="sp-warnbox mb-2">
           <i class="bi bi-exclamation-triangle"></i> ${warnings.map(w => esc(w)).join('<br>')}</div>` : ''}
         ${_derivedHtml(detail.derived)}
         <div class="row g-3">
@@ -1407,14 +1402,14 @@ function renderSeriesResult(detail) {
   area.innerHTML = `
     <div class="card">
       <div class="card-header">
-        <i class="bi bi-graph-up-arrow"></i> 拟合结果 — 任务 #${detail.id}
-        <span class="text-secondary small">${esc(modelLabel(detail.model_name))}</span>
+        拟合结果 — 任务 #${detail.id}
+        <span class="sp-muted ms-1">${esc(modelLabel(detail.model_name))}</span>
       </div>
       <div class="card-body">
         <div class="d-flex flex-wrap gap-2 mb-2">
           ${stats.map(([k, v]) => `<span class="badge-tag badge-neutral">${k} = ${v}</span>`).join('')}
         </div>
-        ${warnings.length ? `<div class="alert alert-warning py-2 small" style="max-height:160px;overflow-y:auto">
+        ${warnings.length ? `<div class="sp-warnbox mb-2" style="max-height:160px;overflow-y:auto">
           <i class="bi bi-exclamation-triangle"></i> ${warnings.map(w => esc(w)).join('<br>')}</div>` : ''}
         <div class="row g-3">
           ${files.trl_png ? `
@@ -1497,11 +1492,11 @@ async function doClosure() {
     renderClosureResult(res, _closureImgUrl);
   } catch (e) {
     showToast(`闭包诊断失败: ${e.message}`, 'danger');
-    if (out) out.innerHTML = `<div class="text-danger small">诊断失败: ${esc(e.message)}</div>`;
+    if (out) out.innerHTML = `<div class="sp-errbox">诊断失败: ${esc(e.message)}</div>`;
   } finally {
     if (btn.isConnected) {
       btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-play-fill"></i> 诊断';
+      btn.innerHTML = '诊断';
     }
   }
 }
@@ -1523,9 +1518,9 @@ function renderClosureResult(res, imgUrl) {
     ? `偏差 ${sci3(best.sigma_dev)}σ`
     : `点估计偏差 |Δα|=${sci3(best.abs_dev)}`;
   out.innerHTML = `
-    ${note ? `<div class="alert alert-info py-2 small mb-2">
+    ${note ? `<div class="sp-warnbox mb-2">
       <i class="bi bi-info-circle"></i> ${esc(note)}</div>` : ''}
-    ${best.id ? `<div class="alert alert-success py-2 small">
+    ${best.id ? `<div class="alert alert-success py-2 small" style="border-radius:10px">
       <i class="bi bi-check-circle"></i> 最优组合：<b>${esc(best.label)}</b>
       （${bestDev}${best.p != null ? `，p=${sci3(best.p)}` : ''}）</div>` : ''}
     <div class="small mb-2">
@@ -1551,8 +1546,8 @@ function renderClosureResult(res, imgUrl) {
     </div>
     ${imgUrl ? `<div class="small text-secondary mt-2 mb-1">α–β 诊断图（理论线 + 数据点）</div>
       <img src="${imgUrl}" class="img-fluid rounded border" alt="closure plot">` : ''}
-    <details class="mt-2">
-      <summary class="small text-secondary" style="cursor:pointer">闭包关系系数表（审校用）</summary>
+    <details class="sp-adv mt-2">
+      <summary>闭包关系系数表（审校用）</summary>
       <div id="sedClosureTable" class="small mt-1 text-secondary">加载中...</div>
     </details>`;
   _fillClosureTable();
@@ -1607,11 +1602,11 @@ async function doBolometric() {
     renderBoloResult(res);
   } catch (e) {
     showToast(`伪玻尔兹曼光变计算失败: ${e.message}`, 'danger');
-    if (out) out.innerHTML = `<div class="text-danger small">计算失败: ${esc(e.message)}</div>`;
+    if (out) out.innerHTML = `<div class="sp-errbox">计算失败: ${esc(e.message)}</div>`;
   } finally {
     if (btn.isConnected) {
       btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-play-fill"></i> 计算';
+      btn.innerHTML = '计算';
     }
   }
 }
@@ -1629,25 +1624,25 @@ function renderBoloResult(res) {
       <span class="badge-tag badge-neutral">${res.z != null ? `z=${sci3(res.z)}（${esc(res.z_source || '')}）` : '无红移（光度全为 null）'}</span>
       <span class="badge-tag badge-neutral">BC 样本 ${esc(res.bc_sample || '')}</span>
     </div>
-    ${warnings.length ? `<div class="alert alert-warning py-2 small">
+    ${warnings.length ? `<div class="sp-warnbox mb-2">
       <i class="bi bi-exclamation-triangle"></i> ${warnings.map(w => esc(w)).join('<br>')}</div>` : ''}
     ${hasL ? `
-    <div class="small text-secondary mb-1">L(t)：L_obs（观测窗口积分）/ L_bb（黑体外推）/ L_bc（Lyman+2014 颜色 BC）</div>
+    <div class="sp-muted mb-1">L(t)：L_obs（观测窗口积分）/ L_bb（黑体外推）/ L_bc（Lyman+2014 颜色 BC）</div>
     <div style="position:relative;height:280px"><canvas id="sedLbolChart"></canvas></div>` : ''}
     ${hasTR ? `
     <div class="row g-2 mt-2">
       <div class="col-6">
-        <div class="small text-secondary mb-1">T<sub>BB</sub>(t)</div>
+        <div class="sp-muted mb-1">T<sub>BB</sub>(t)</div>
         <div style="position:relative;height:200px"><canvas id="sedTbbChart"></canvas></div>
       </div>
       <div class="col-6">
-        <div class="small text-secondary mb-1">R<sub>BB</sub>(t)</div>
+        <div class="sp-muted mb-1">R<sub>BB</sub>(t)</div>
         <div style="position:relative;height:200px"><canvas id="sedRbbChart"></canvas></div>
       </div>
     </div>` : ''}
     <div class="d-flex justify-content-between align-items-center mt-3 mb-1">
-      <span class="small text-secondary">历元表</span>
-      <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="sedBoloCsvBtn"><i class="bi bi-download"></i> 下载 CSV</button>
+      <span class="sp-muted">历元表</span>
+      <button class="sp-btn-ghost py-0 px-1" id="sedBoloCsvBtn"><i class="bi bi-download"></i> 下载 CSV</button>
     </div>
     <div class="table-scroll" style="max-height:260px;overflow-y:auto">
       <table class="table table-sm mb-0" style="font-size:0.74rem">
