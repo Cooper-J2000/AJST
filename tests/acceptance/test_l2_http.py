@@ -75,7 +75,7 @@ PUBLIC_READS = [
     ('/api/spectra',                list, None),
     ('/api/sed/models',             dict, {'models', 'laws', 'defaults', 'series'}),
     ('/api/sed/closure_relations',  dict, {'_meta', 'relations'}),
-    ('/api/relations',              dict, {'relations', 'sources'}),
+    ('/api/relations',              dict, {'relations', 'coverage'}),
     ('/api/hostfit/config',         dict, {'pcigale', 'prospector'}),
     ('/api/auth/status',            dict, {'authenticated'}),
     ('/api/extinction/status',      dict, {'available', 'dust_map'}),

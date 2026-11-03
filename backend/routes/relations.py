@@ -1,8 +1,13 @@
 """
-统计关系接口（基于 extra_data.derived 派生量）
-GET  /api/relations               — 关系定义列表 + 各关系可用来源目录
-GET  /api/relations/<name>/data   — 取数点（source=best 或目录短名）
-POST /api/relations/<name>/fit    — 带内禀弥散的最大似然拟合（linmix / Kelly 2007 风格；需登录）
+统计关系接口（基于 extra_data.params 平铺参数表）
+
+数据源：extra_data['params'] = {"<参数key>": {"v": 数值或字符串, "err": 单值|[正,负]|null, "src": 来源短名}}
+（旧的 catalog_data / derived 结构已废弃删除；参数 key 注册表见 backend/params_registry.json，
+关系定义与文献系数见 backend/relations.json）
+
+GET  /api/relations               — 关系定义列表 + coverage（每条关系当前库内可画点数）
+GET  /api/relations/<name>/data   — 取数点（applies_to 过滤；log 轴剔除非正值）
+POST /api/relations/<name>/fit    — 带内禀弥散的最大似然拟合（Kelly 2007 风格 NLL；需登录）
 """
 import json, math, os
 from types import SimpleNamespace
@@ -21,86 +26,110 @@ with open(_REL_PATH, encoding='utf-8') as f:
     _RELATIONS = json.load(f)['relations']
 _REL_BY_NAME = {r['name']: r for r in _RELATIONS}
 
+# group_by=sn_subtype 时的已知子型表（sub_tag 与之取交集，首项为组名）
+_SN_SUBTYPES = ["Ia", "Ia-pec", "II", "II-P", "IIb", "Ibn", "Icn",
+                "Ib", "Ic", "Ic-BL", "Ibc", "SLSN"]
 
-def _load_derived():
-    """读出所有源的 derived（顺带一级列），返回 [(meta, derived), ...]。
-    只 SELECT 需要的列（extra_data 只取 derived 子键），
+
+def _load_params():
+    """读出所有源的 params（顺带一级列），返回 [(meta, params), ...]。
+    只 SELECT 需要的列（extra_data 只取 params 子键），
     避免每次请求把全表 comment/extra_data 大字段载入内存。"""
     sess = get_session()
     try:
         rows = sess.execute(
             select(Transient.id, Transient.tags, Transient.sub_tag,
                    Transient.redshift,
-                   Transient.extra_data['derived'].label('derived'))
+                   Transient.extra_data['params'].label('params'))
         ).all()
         return [(SimpleNamespace(id=r.id, tags=r.tags, sub_tag=r.sub_tag,
-                                 redshift=r.redshift), r.derived)
-                for r in rows if isinstance(r.derived, dict) and r.derived]
+                                 redshift=r.redshift), r.params)
+                for r in rows if isinstance(r.params, dict) and r.params]
     finally:
         sess.close()
 
 
+def _passes_applies(rel, t):
+    """applies_to 过滤：tag 必匹配；sub_tag_any 非空时源 sub_tag 须有交集"""
+    ap = rel.get('applies_to') or {}
+    tag = ap.get('tag')
+    if tag and tag not in (t.tags or []):
+        return False
+    subs = ap.get('sub_tag_any')
+    if subs and not (set(subs) & set(t.sub_tag or [])):
+        return False
+    return True
+
+
+def _group_of(rel, t, params):
+    """分组名：grb_type 取 params.grb_type.v（I/II，其余 None）；
+    sn_subtype 取 sub_tag 与已知子型表交集首项（无则 None）"""
+    gb = rel.get('group_by')
+    if gb == 'grb_type':
+        gt = (params.get('grb_type') or {}).get('v')
+        return gt if gt in ('I', 'II') else None
+    if gb == 'sn_subtype':
+        for s in (t.sub_tag or []):
+            if s in _SN_SUBTYPES:
+                return s
+        return None
+    return None
+
+
+def _axis_ok(v, is_log):
+    """轴取值检查：log 轴要求正有限值，线性轴只要求有限"""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) \
+        and math.isfinite(v) and (v > 0 if is_log else True)
+
+
 @relations_bp.route('', methods=['GET'])
 def list_relations():
-    """关系定义 + 每个关系可用的来源目录（扫描库内 derived 统计）"""
-    rows = _load_derived()
-    sources = {}
+    """关系定义 + coverage：每条关系当前库内可画点数
+    （x、y 参数都有数值、满足 log 轴正值要求、且通过 applies_to 过滤的源数）"""
+    rows = _load_params()
+    coverage = {}
     for rel in _RELATIONS:
         xk, yk = rel['x']['key'], rel['y']['key']
-        cats = set()
-        for _, d in rows:
-            if d.get('best', {}).get(xk) and d.get('best', {}).get(yk):
-                cats.add('best')
-            for cat, sd in (d.get('sources') or {}).items():
-                if sd.get(xk) and sd.get(yk):
-                    cats.add(cat)
-        sources[rel['name']] = sorted(cats, key=lambda c: (c != 'best', c))
-    return jsonify({'relations': _RELATIONS, 'sources': sources})
+        x_log = rel['x'].get('log', True)
+        y_log = rel['y'].get('log', True)
+        n = 0
+        for t, params in rows:
+            if not _passes_applies(rel, t):
+                continue
+            px, py = params.get(xk), params.get(yk)
+            if not isinstance(px, dict) or not isinstance(py, dict):
+                continue
+            if _axis_ok(px.get('v'), x_log) and _axis_ok(py.get('v'), y_log):
+                n += 1
+        coverage[rel['name']] = n
+    return jsonify({'relations': _RELATIONS, 'coverage': coverage})
 
 
 @relations_bp.route('/<name>/data', methods=['GET'])
 def relation_data(name):
-    """取数点。source=best（默认）用 derived.best，否则用 derived.sources[source]。
-    只返回 x、y 都有值的点；log 轴要求对应值为正。"""
+    """取数点。只返回 x、y 都有数值且满足轴要求的点（applies_to 过滤后）。"""
     rel = _REL_BY_NAME.get(name)
     if rel is None:
         abort(404, description=f'未知关系: {name}')
-    source = request.args.get('source', 'best')
     xk, yk = rel['x']['key'], rel['y']['key']
-    x_log = rel.get('x_log', True)
-    y_log = rel.get('y_log', True)
+    x_log = rel['x'].get('log', True)
+    y_log = rel['y'].get('log', True)
 
     points = []
-    for t, d in _load_derived():
-        if source == 'best':
-            bx, by = d.get('best', {}).get(xk), d.get('best', {}).get(yk)
-            if not bx or not by:
-                continue
-            x, y = bx.get('v'), by.get('v')
-            xerr, yerr = bx.get('err'), by.get('err')
-            src = {'x': bx.get('src'), 'y': by.get('src')}
-        else:
-            sd = (d.get('sources') or {}).get(source)
-            if not sd:
-                continue
-            qx, qy = sd.get(xk), sd.get(yk)
-            if not isinstance(qx, dict) or not isinstance(qy, dict):
-                continue
-            x, y = qx.get('v'), qy.get('v')
-            xerr, yerr = qx.get('err'), qy.get('err')
-            src = source
-        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+    for t, params in _load_params():
+        if not _passes_applies(rel, t):
             continue
-        # log 轴剔除非正值
-        if x_log and x <= 0:
+        px, py = params.get(xk), params.get(yk)
+        if not isinstance(px, dict) or not isinstance(py, dict):
             continue
-        if y_log and y <= 0:
+        x, y = px.get('v'), py.get('v')
+        if not _axis_ok(x, x_log) or not _axis_ok(y, y_log):
             continue
-        gt = (d.get('grb_type') or {}).get('v')
         points.append({
-            'id': t.id, 'x': x, 'xerr': xerr, 'y': y, 'yerr': yerr,
-            'grb_type': gt, 'tags': t.tags or [], 'sub_tag': t.sub_tag or [],
-            'z': t.redshift, 'src': src,
+            'id': t.id, 'x': x, 'xerr': px.get('err'), 'y': y, 'yerr': py.get('err'),
+            'group': _group_of(rel, t, params),
+            'tags': t.tags or [], 'sub_tag': t.sub_tag or [],
+            'z': t.redshift, 'src': {'x': px.get('src'), 'y': py.get('src')},
         })
     return jsonify({'relation': rel, 'points': points})
 
@@ -148,26 +177,29 @@ def _lin_err(err):
     return e if e and e > 0 else None
 
 
-def _prepare_xy(points, x_log):
-    """把请求点变换到拟合空间：y 一律 log10，x 按 x_log 决定；返回 [(X,Y,sx,sy,grb_type), ...]"""
+def _prepare_xy(points, x_log, y_log):
+    """把请求点变换到拟合空间：x/y 各按轴定义决定是否取 log10（线性轴误差对称化）；
+    返回 [(X,Y,sx,sy,group), ...]"""
     out = []
     for p in points:
         if not isinstance(p, dict):
             continue
         x, y = _as_num(p.get('x')), _as_num(p.get('y'))
-        if x is None or y is None or y <= 0:
+        if x is None or y is None:
             continue
         if x_log and x <= 0:
             continue  # log 轴剔除非正值
-        Y = math.log10(y)
-        sy = _log_err(y, p.get('yerr'))
+        if y_log and y <= 0:
+            continue
         if x_log:
-            X = math.log10(x)
-            sx = _log_err(x, p.get('xerr'))
+            X, sx = math.log10(x), _log_err(x, p.get('xerr'))
         else:
-            X = x
-            sx = _lin_err(p.get('xerr'))
-        gt = p.get('grb_type')
+            X, sx = x, _lin_err(p.get('xerr'))
+        if y_log:
+            Y, sy = math.log10(y), _log_err(y, p.get('yerr'))
+        else:
+            Y, sy = y, _lin_err(p.get('yerr'))
+        gt = p.get('group')
         out.append((X, Y, sx, sy, gt if gt in ('I', 'II') else None))
     return out
 
@@ -239,9 +271,10 @@ def _fit_group(rows, fit_sigma):
 @require_auth
 def relation_fit(name):
     """带内禀弥散的最大似然拟合。请求体:
-    {"points": [{"x":.., "y":.., "xerr":.., "yerr":.., "grb_type":..}, ...],
+    {"points": [{"x":.., "y":.., "xerr":.., "yerr":.., "group":..}, ...],
      "sigma_int": true|false}
-    err 为单值、[正,负] 或 null；点由前端筛选后传入，服务端不读库。"""
+    err 为单值、[正,负] 或 null；点由前端筛选后传入，服务端不读库。
+    拟合空间按轴定义：log 轴取 log10、线性轴原值（返回 x_log/y_log 告知）。"""
     rel = _REL_BY_NAME.get(name)
     if rel is None:
         abort(404, description=f'未知关系: {name}')
@@ -250,13 +283,14 @@ def relation_fit(name):
     if not isinstance(points, list) or len(points) > _FIT_MAX_POINTS:
         return jsonify({'error': f'points 非法或超过上限 {_FIT_MAX_POINTS}'}), 400
     fit_sigma = bool(payload.get('sigma_int', True))
-    x_log = rel.get('x_log', True)
+    x_log = rel['x'].get('log', True)
+    y_log = rel['y'].get('log', True)
 
-    rows = _prepare_xy(points, x_log)
+    rows = _prepare_xy(points, x_log, y_log)
     groups = {}
-    if rel.get('group_by_type'):
+    if rel.get('group_by') == 'grb_type':
         for gt in ('I', 'II'):
             groups[gt] = _fit_group([r for r in rows if r[4] == gt], fit_sigma)
     else:
         groups['all'] = _fit_group(rows, fit_sigma)
-    return jsonify({'groups': groups, 'x_log': x_log})
+    return jsonify({'groups': groups, 'x_log': x_log, 'y_log': y_log})

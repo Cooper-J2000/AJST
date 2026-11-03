@@ -8,7 +8,7 @@ import { buildCalendarData, mountCalendar } from './home_calendar.js';
 const ENTRIES = [
   { no: '01', href: '#/list',            title: '事件列表',   desc: '浏览、筛选与编辑暂现源及其多波段光变数据' },
   { no: '02', href: '#/stats',           title: '全局统计',   desc: '全天分布、红移直方图与波段覆盖情况' },
-  { no: '03', href: '#/stats/relations', title: '统计关系',   desc: 'Amati 等 GRB 瞬时辐射关系与分组拟合' },
+  { no: '03', href: '#/stats/relations', title: '统计关系',   desc: '调研认定的 11 条经典统计关系（GRB/超新星/TDE）与分组拟合' },
   { no: '04', href: '#/compare',         title: '多源对比',   desc: '多事件光变叠绘、静止系时间与波段筛选' },
   { no: '05', href: '#/filters',         title: '光学滤光片', desc: '滤光片波长参数与 Vega → AB 星等换算' },
   { no: '06', href: '#/new',             title: '新建事件',   desc: '录入新的暂现源事件' },
@@ -150,14 +150,14 @@ export async function render() {
 
     <hr class="swiss-rule">
 
-    <!-- 静态事实（外部目录数暂无 API 统计，保持手工维护；统计关系数取自 /api/relations） -->
+    <!-- 静态事实（外部目录数为手工维护值：params.src 来源口径，暂无 API 统计；统计关系数取自 /api/relations） -->
     <section class="row swiss-facts">
       <div class="col-md-3 swiss-fact">
         <div class="swiss-fact-value">14</div>
         <div class="swiss-stat-label">外部文献目录<span class="swiss-stat-en">External Catalogs</span></div>
       </div>
       <div class="col-md-3 swiss-fact">
-        <div class="swiss-fact-value">${relCount != null ? relCount : '6'}</div>
+        <div class="swiss-fact-value">${relCount != null ? relCount : '11'}</div>
         <div class="swiss-stat-label">统计关系<span class="swiss-stat-en">Correlations</span></div>
       </div>
       <div class="col-md-3 swiss-fact">

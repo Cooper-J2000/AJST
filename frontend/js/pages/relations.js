@@ -1,4 +1,4 @@
-// === 统计关系页面（Amati / Yonetoku / Ghirlanda / lag-lum / var-lum / Ep-alpha） ===
+// === 统计关系页面（GRB / 超新星 / TDE 三域；数据源 extra_data.params） ===
 import { app, showLoading, showError, statsTabs, navSeq, navStale } from './layout.js';
 import { api, showToast } from '../api.js';
 import { chartColors, academicFonts } from '../theme.js';
@@ -8,21 +8,25 @@ import { xyErrBarPlugin } from '../chart_plugins.js';
 // ─── 常量 ───
 const LN10 = Math.LN10;
 const TYPE_NAMES = { I: 'I 型', II: 'II 型', unknown: '未知' };
-// 数据点/拟合线颜色按主题取：chartColors().type（I 红 / II 蓝 / 未知灰）、chartColors().typeFit
+// 数据点/拟合线颜色按主题取：chartColors().type（I 红 / II 蓝 / 未知灰）、chartColors().typeFit；
+// sn_subtype 分组用 chartColors().compare 调色板
+const DOMAIN_ORDER = ['grb', 'sn', 'tde'];
+const DOMAIN_NAMES = { grb: 'GRB', sn: '超新星', tde: 'TDE' };
+const RATING_COLORS = { A: '#3fb950', B: '#58a6ff', C: '#d29922', D: '#f85149' };
+const RATING_NAMES = { A: '可直接测距', B: '条件性测距', C: '定性排序/物理量估计', D: '仅教学引用' };
 
 // ─── 页面状态 ───
 let relDefs = [];            // 关系定义（/api/relations）
-let relSources = {};         // {关系名: [来源...]}
-let rawPoints = {};          // 当前来源下 {关系名: [点...]}
+let relCoverage = {};        // {关系名: 可画点数}
+let rawPoints = {};          // {关系名: [点...]}（仅 active 关系拉取）
 let charts = {};             // {关系名: Chart 实例}
 const fitTokens = {};        // 服务端拟合请求并发令牌 {关系名: 序号}
 const state = {
-  source: 'best',
   tags: new Set(),           // 选中的 tag（空 = 不筛选）
-  highlight: new Set(),      // 特殊标记的 GRB 名（大写、去空格）
+  highlight: new Set(),      // 特殊标记的源名（大写、去空格）
   sigmaInt: true,            // 服务端拟合含内禀弥散 σ_int
-  excluded: {},              // 排除记忆：{'关系名:来源': Set(id)}
-  ranges: {},                // 坐标范围记忆：{'关系名:来源': {xmin,xmax,ymin,ymax}（null=自动）}
+  excluded: {},              // 排除记忆：{关系名: Set(id)}
+  ranges: {},                // 坐标范围记忆：{关系名: {xmin,xmax,ymin,ymax}（null=自动）}
 };
 
 // ─── 工具函数 ───
@@ -33,19 +37,25 @@ function logErr(val, err) {
   return ((e[0] + e[1]) / 2) / (val * LN10);
 }
 
-// 排除集合的键：关系 + 来源
-function exclKey(name) { return `${name}:${state.source}`; }
-function getExcluded(name) {
-  const k = exclKey(name);
-  if (!state.excluded[k]) state.excluded[k] = new Set();
-  return state.excluded[k];
+// 线性轴误差对称化（取不对称两侧平均）
+function linErr(err) {
+  const e = normErr(err);
+  return e ? (e[0] + e[1]) / 2 : null;
 }
 
-// 坐标范围的键：与排除记忆一致（关系 + 来源）
-function getRange(name) { return state.ranges[exclKey(name)] || null; }
+// 排除集合与坐标范围的键：关系名
+function getExcluded(name) {
+  if (!state.excluded[name]) state.excluded[name] = new Set();
+  return state.excluded[name];
+}
+function getRange(name) { return state.ranges[name] || null; }
 
-// ─── OLS 线性拟合（log10 空间），可选加权 ───
-// pts: [{lx, ly, slx, sly}]，slx/sly 为 log 空间误差（可为 null）
+function relDef(name) { return relDefs.find(r => r.name === name); }
+function xLogOf(def) { return !def.x || def.x.log !== false; }
+function yLogOf(def) { return !def.y || def.y.log !== false; }
+
+// ─── OLS 线性拟合（拟合空间，log/线性按轴定义），可选加权 ───
+// pts: [{lx, ly, slx, sly}]，slx/sly 为拟合空间误差（可为 null）
 // 返回 {a(斜率), b(截距), N, r, s, xbar, Sxx} 或 null
 function olsFit(pts, weighted) {
   const N = pts.length;
@@ -107,7 +117,7 @@ function median(arr) {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
-// Pearson r（log10 空间，本地计算，配合服务端拟合结果显示）
+// Pearson r（拟合空间，本地计算，配合服务端拟合结果显示）
 function pearsonR(lpts) {
   const N = lpts.length;
   if (N < 2) return null;
@@ -121,8 +131,6 @@ function pearsonR(lpts) {
   }
   return (cxx > 0 && cyy > 0) ? cxy / Math.sqrt(cxx * cyy) : null;
 }
-
-// ─── 误差棒插件：共享实现见 ../chart_plugins.js（xyErrBarPlugin） ───
 
 // ─── 特殊标记：五角星插件（Chart.js 内置 'star' 只是空心星号线，不够醒目） ───
 function drawStarPath(ctx, cx, cy, outerR, innerR) {
@@ -160,10 +168,40 @@ const highlightStarPlugin = {
   },
 };
 
+// ─── 分组着色：grb_type 用主题 I/II/未知；sn_subtype 用 compare 调色板；无分组单组 ───
+function groupStyle(def, pts) {
+  const cc = chartColors();
+  if (def.group_by === 'grb_type') {
+    return {
+      keys: ['I', 'II', 'unknown'],
+      name: g => TYPE_NAMES[g] || '未知',
+      color: g => cc.type[g] || cc.type.unknown,
+      keyOf: p => (p.group === 'I' ? 'I' : (p.group === 'II' ? 'II' : 'unknown')),
+    };
+  }
+  if (def.group_by === 'sn_subtype') {
+    const subs = [...new Set(pts.map(p => p.group).filter(Boolean))].sort();
+    const colorOf = {};
+    subs.forEach((s, i) => { colorOf[s] = cc.compare[i % cc.compare.length]; });
+    return {
+      keys: [...subs, 'unknown'],
+      name: g => g === 'unknown' ? '未知子型' : g,
+      color: g => g === 'unknown' ? cc.type.unknown : colorOf[g],
+      keyOf: p => p.group || 'unknown',
+    };
+  }
+  return {
+    keys: ['all'],
+    name: () => '全部',
+    color: () => cc.typeFit.all,
+    keyOf: () => 'all',
+  };
+}
+
 // ─── 当前卡片可见点（tag 筛选 + 个体排除后） ───
 function visiblePoints(name) {
-  const def = relDefs.find(r => r.name === name);
-  const xLog = def ? def.x_log !== false : true;
+  const def = relDef(name);
+  const xLog = xLogOf(def), yLog = yLogOf(def);
   const pts = rawPoints[name] || [];
   const excl = getExcluded(name);
   return pts.filter(p => {
@@ -171,7 +209,7 @@ function visiblePoints(name) {
     if (state.tags.size > 0 && !(p.tags || []).some(t => state.tags.has(t))) return false;
     if (p.x == null || p.y == null) return false;
     if (xLog && p.x <= 0) return false;   // log 轴要求正值
-    if (p.y <= 0) return false;           // y 一律为 log 轴
+    if (yLog && p.y <= 0) return false;
     return true;
   });
 }
@@ -180,9 +218,21 @@ function isHighlighted(p) {
   return state.highlight.has(p.id.toUpperCase().replace(/\s+/g, ''));
 }
 
+// ─── 文献系数文本（卡片头部/待定卡正文共用） ───
+function litText(def) {
+  const L = def.lit || {};
+  const parts = [];
+  if (L.slope != null) parts.push(`a=${sci3(L.slope)}${L.slope_err != null ? `±${sci3(L.slope_err)}` : ''}`);
+  else parts.push('a=未发表');
+  if (L.intercept != null) parts.push(`b=${sci3(L.intercept)}${L.intercept_err != null ? `±${sci3(L.intercept_err)}` : ''}`);
+  if (L.sigma_int != null) parts.push(`σ_int=${sci3(L.sigma_int)}`);
+  if (L.n_calib != null) parts.push(`N=${L.n_calib}`);
+  return parts.join(', ');
+}
+
 // ─── 图表构建 ───
 async function buildChart(name) {
-  const def = relDefs.find(r => r.name === name);
+  const def = relDef(name);
   const card = document.getElementById(`card-${name}`);
   if (!card || typeof Chart === 'undefined') return;
 
@@ -197,7 +247,7 @@ async function buildChart(name) {
     emptyEl.style.display = 'block';
     emptyEl.textContent = (rawPoints[name] || []).length
       ? '当前筛选条件下无数据点'
-      : `来源 "${state.source}" 对此关系无数据`;
+      : '此关系当前无可画数据点（params 参数迁移尚未覆盖）';
     fitEl.innerHTML = '';
     renderExcludedList(name);
     return;
@@ -206,47 +256,50 @@ async function buildChart(name) {
   emptyEl.style.display = 'none';
 
   const canvas = document.getElementById(`cv-${name}`);
-  const xLog = def.x_log !== false;
+  const xLog = xLogOf(def), yLog = yLogOf(def);
   const cc = chartColors();
-  const TYPE_COLORS = cc.type, FIT_COLORS = cc.typeFit;
+  const FIT_COLORS = cc.typeFit;
+  const gs = groupStyle(def, pts);
 
-  // 按 grb_type 分组散点（高亮点拆出，最后单独成层置顶绘制）
-  const groups = { I: [], II: [], unknown: [] };
+  // 按组分组散点（高亮点拆出，最后单独成层置顶绘制）
+  const groups = {};
   const hlPts = [];
   for (const p of pts) {
-    const g = p.grb_type === 'I' ? 'I' : (p.grb_type === 'II' ? 'II' : 'unknown');
+    const g = gs.keyOf(p);
     if (isHighlighted(p)) hlPts.push({ ...p, _grp: g });
-    else groups[g].push(p);
+    else (groups[g] = groups[g] || []).push(p);
   }
   const datasets = [];
-  for (const g of ['I', 'II', 'unknown']) {
-    if (!groups[g].length) continue;
+  for (const g of gs.keys) {
+    if (!groups[g] || !groups[g].length) continue;
     datasets.push({
-      label: TYPE_NAMES[g],
+      label: gs.name(g),
       _isScatter: true,
       data: groups[g].map(p => ({ ...p })),
-      backgroundColor: TYPE_COLORS[g],
-      borderColor: TYPE_COLORS[g],
+      backgroundColor: gs.color(g),
+      borderColor: gs.color(g),
       pointStyle: 'circle',
       radius: 4,
       hoverRadius: 6,
     });
   }
 
-  // 转 log10 空间坐标
-  const toLog = p => ({
+  // 转拟合空间坐标（log/线性按轴定义）
+  const toFit = p => ({
     lx: xLog ? Math.log10(p.x) : p.x,
-    ly: Math.log10(p.y),
-    slx: xLog ? logErr(p.x, p.xerr) : null,
-    sly: logErr(p.y, p.yerr),
+    ly: yLog ? Math.log10(p.y) : p.y,
+    slx: xLog ? logErr(p.x, p.xerr) : linErr(p.xerr),
+    sly: yLog ? logErr(p.y, p.yerr) : linErr(p.yerr),
   });
+  const fromFit = (lx, ly) => ({ x: xLog ? 10 ** lx : lx, y: yLog ? 10 ** ly : ly });
+  const spaceNote = xLog || yLog ? 'log10 空间' : '线性空间';
 
   // ── 拟合：优先服务端最大似然（POST /relations/<name>/fit），失败回退本地 OLS ──
   const token = (fitTokens[name] = (fitTokens[name] || 0) + 1);
   let fitResp = null, fitFailed = false;
   try {
     fitResp = await api('POST', `/relations/${name}/fit`, {
-      points: pts.map(p => ({ x: p.x, y: p.y, xerr: p.xerr ?? null, yerr: p.yerr ?? null, grb_type: p.grb_type ?? null })),
+      points: pts.map(p => ({ x: p.x, y: p.y, xerr: p.xerr ?? null, yerr: p.yerr ?? null, group: p.group ?? null })),
       sigma_int: state.sigmaInt,
     });
   } catch {
@@ -255,31 +308,32 @@ async function buildChart(name) {
   if (fitTokens[name] !== token) return;   // 等待期间又有新的重建请求，丢弃本次结果
   if (charts[name]) { charts[name].destroy(); charts[name] = null; }
   const srvXLog = fitResp ? fitResp.x_log !== false : xLog;
+  const srvYLog = fitResp ? fitResp.y_log !== false : yLog;
 
-  // group_by_type 时 I / II 分别拟合，否则拟合全部点
-  const fitTargets = def.group_by_type
-    ? [['I', groups.I, FIT_COLORS.I], ['II', groups.II, FIT_COLORS.II]]
+  // group_by=grb_type 时 I / II 分别拟合，否则拟合全部点
+  const fitTargets = def.group_by === 'grb_type'
+    ? [['I', groups.I || [], FIT_COLORS.I], ['II', groups.II || [], FIT_COLORS.II]]
     : [['all', pts, FIT_COLORS.all]];
   const fitTexts = [];
   const fitSets = [];   // 拟合线数据集引用，供按当前 x 显示范围重绘
   for (const [gname, gpts, color] of fitTargets) {
-    const lpts = gpts.map(toLog);
-    const prefix = def.group_by_type ? `${TYPE_NAMES[gname]}: ` : '';
+    const lpts = gpts.map(toFit);
+    const prefix = def.group_by === 'grb_type' ? `${TYPE_NAMES[gname]}: ` : '';
     if (lpts.length < 3) { fitTexts.push(`${prefix}点数不足（<3），无法拟合`); continue; }
     const srv = fitResp && fitResp.groups ? fitResp.groups[gname] : null;
-    let a, b, seFn, xLogFit, lxs, text;
+    let a, b, seFn, xLogFit, yLogFit, lxs, text;
     if (srv && !srv.error) {
-      // 服务端最大似然结果（log10 空间，x 是否取 log 由 x_log 告知）
+      // 服务端最大似然结果（拟合空间，x/y 是否取 log 由 x_log/y_log 告知）
       a = srv.slope; b = srv.intercept;
       const ae = srv.slope_err ?? 0, be = srv.intercept_err ?? 0, cov = srv.cov_ab ?? 0;
       // 1σ 置信带半宽：σ_fit(X) = sqrt([X,1]·C·[X,1]ᵀ)
       seFn = lx => Math.sqrt(Math.max(ae * ae * lx * lx + 2 * cov * lx + be * be, 0));
-      xLogFit = srvXLog;
+      xLogFit = srvXLog; yLogFit = srvYLog;
       lxs = gpts.filter(p => p.x != null && (!srvXLog || p.x > 0))
         .map(p => srvXLog ? Math.log10(p.x) : p.x);
       const r = pearsonR(lpts);
-      text = `${prefix}y = (${sci3(a)}±${sci3(ae)})·x ${b >= 0 ? '+' : '−'} (${sci3(Math.abs(b))}±${sci3(be)}), `
-        + `σ_int=${sci3(srv.sigma_int)}, N=${srv.N ?? lpts.length}${r != null ? `, r=${r.toFixed(3)}` : ''} (log10 空间)`;
+      text = `${prefix}本库拟合: y = (${sci3(a)}±${sci3(ae)})·x ${b >= 0 ? '+' : '−'} (${sci3(Math.abs(b))}±${sci3(be)}), `
+        + `σ_int=${sci3(srv.sigma_int)}, N=${srv.N ?? lpts.length}${r != null ? `, r=${r.toFixed(3)}` : ''} (${spaceNote})`;
     } else if (srv && srv.error) {
       fitTexts.push(`${prefix}服务端拟合：${srv.error === 'insufficient' ? '点数不足，无法拟合' : srv.error}`);
       continue;
@@ -290,9 +344,9 @@ async function buildChart(name) {
       a = fit.a; b = fit.b;
       // 1σ 置信带：SE(x) = s·sqrt(1/N + (x-x̄)²/Sxx)
       seFn = lx => fit.s * Math.sqrt(1 / fit.N + (lx - fit.xbar) ** 2 / fit.Sxx);
-      xLogFit = xLog;
+      xLogFit = xLog; yLogFit = yLog;
       lxs = lpts.map(p => p.lx);
-      text = `${prefix}y = ${a.toFixed(2)}·x ${b >= 0 ? '+' : '−'} ${Math.abs(b).toFixed(2)} (log10 空间), N=${fit.N}, r=${fit.r.toFixed(3)}（本地OLS回退）`;
+      text = `${prefix}本库拟合(OLS回退): y = ${a.toFixed(2)}·x ${b >= 0 ? '+' : '−'} ${Math.abs(b).toFixed(2)}, N=${fit.N}, r=${fit.r.toFixed(3)} (${spaceNote})`;
     }
     if (!lxs.length) { fitTexts.push(`${prefix}点数不足，无法拟合`); continue; }
     // 拟合线（覆盖该组数据 x 范围，留 5% 边距）
@@ -303,9 +357,8 @@ async function buildChart(name) {
       const lx = lo - pad + (hi - lo + 2 * pad) * i / 50;
       linePts.push({ lx, ly: a * lx + b });
     }
-    // log 空间坐标换回线性坐标
-    const toXY = q => ({ x: xLogFit ? 10 ** q.lx : q.lx, y: 10 ** q.ly });
-    const label = def.group_by_type
+    const toXY = q => fromFit(q.lx, q.ly);
+    const label = def.group_by === 'grb_type'
       ? `${TYPE_NAMES[gname]}拟合 (a=${a.toFixed(2)})`
       : `拟合 (a=${a.toFixed(2)})`;
     const band = linePts.map(q => {
@@ -329,32 +382,56 @@ async function buildChart(name) {
       backgroundColor: color + '33', fill: '-1',
     };
     datasets.push(lineDs, loDs, hiDs);
-    fitSets.push({ a, b, seFn, xLogFit, lineDs, loDs, hiDs });
+    fitSets.push({ a, b, seFn, xLogFit, yLogFit, lineDs, loDs, hiDs });
     fitTexts.push(text);
   }
   if (fitFailed) fitTexts.unshift('服务端拟合接口不可用，已回退本地 OLS');
 
-  // ── 文献参考虚线（过当前数据 x̄,ȳ 中点、斜率 = lit.slope） ──
+  // ── 文献真值线（lit.slope 与 lit.intercept 均有数值时直接画 y=slope·x+intercept；
+  //    σ_int 有数值时画 ±σ_int 虚线带；原文未发表系数则不画） ──
   let litSet = null;
-  if (def.lit && def.lit.slope != null) {
-    const lpts = pts.map(toLog);
-    const xbar = lpts.reduce((s, p) => s + p.lx, 0) / lpts.length;
-    const ybar = lpts.reduce((s, p) => s + p.ly, 0) / lpts.length;
+  const L = def.lit || {};
+  if (L.slope != null && L.intercept != null) {
+    const lpts = pts.map(toFit);
     const lxs = lpts.map(p => p.lx);
     const lo = minOf(lxs), hi = maxOf(lxs);
     const pad = (hi - lo) * 0.05 || 0.1;
-    const data = [];
-    for (let i = 0; i <= 50; i++) {
-      const lx = lo - pad + (hi - lo + 2 * pad) * i / 50;
-      data.push({ x: xLog ? 10 ** lx : lx, y: 10 ** (ybar + def.lit.slope * (lx - xbar)) });
-    }
+    const mkLine = off => {
+      const data = [];
+      for (let i = 0; i <= 50; i++) {
+        const lx = lo - pad + (hi - lo + 2 * pad) * i / 50;
+        data.push(fromFit(lx, L.slope * lx + L.intercept + off));
+      }
+      return data;
+    };
     const litDs = {
-      label: def.lit.label || '文献', _hideLegend: false, type: 'line',
-      data, borderColor: '#d29922', borderWidth: 1.5, borderDash: [6, 4],
+      label: `${L.label || '文献'}真值`, _hideLegend: false, type: 'line',
+      data: mkLine(0), borderColor: '#d29922', borderWidth: 1.5, borderDash: [6, 4],
       pointRadius: 0, fill: false,
     };
     datasets.push(litDs);
-    litSet = { slope: def.lit.slope, xbar, ybar, xLog, ds: litDs };
+    litSet = { slope: L.slope, intercept: L.intercept, sigma: null, xLog, yLog, ds: litDs, loDs: null, hiDs: null };
+    if (L.sigma_int != null) {
+      const loDs = {
+        label: `${L.label || '文献'} −σ_int`, _hideLegend: true, type: 'line',
+        data: mkLine(-L.sigma_int), borderColor: '#d29922', borderWidth: 1,
+        borderDash: [2, 4], pointRadius: 0, fill: false,
+      };
+      const hiDs = {
+        label: `${L.label || '文献'} +σ_int`, _hideLegend: true, type: 'line',
+        data: mkLine(L.sigma_int), borderColor: '#d29922', borderWidth: 1,
+        borderDash: [2, 4], pointRadius: 0, fill: false,
+      };
+      datasets.push(loDs, hiDs);
+      litSet.sigma = L.sigma_int;
+      litSet.loDs = loDs;
+      litSet.hiDs = hiDs;
+    }
+    fitTexts.push(`原文 ${L.label || ''}: ${litText(def)}（拟合空间系数，口径见卡片说明）`);
+  } else if (L.slope != null) {
+    fitTexts.push(`原文 ${L.label || ''}: ${litText(def)}（原文未给截距，不画真值线）`);
+  } else if (L.label) {
+    fitTexts.push(`原文 ${L.label}: ${litText(def)}（不画真值线）`);
   }
 
   // ── 特殊标记层：最后压栈 → 置顶绘制，星形大点 + 高对比描边 ──
@@ -413,7 +490,7 @@ async function buildChart(name) {
               return [
                 `${def.x.label} = ${sci3(p.x)} ${def.x.unit || ''} (${fmtE(p.xerr)})`,
                 `${def.y.label} = ${sci3(p.y)} ${def.y.unit || ''} (${fmtE(p.yerr)})`,
-                `类型: ${TYPE_NAMES[p.grb_type] || '未知'}  z: ${p.z ?? '-'}`,
+                `分组: ${p.group || '未知'}  z: ${p.z ?? '-'}`,
                 `来源: ${src}`,
               ];
             },
@@ -428,7 +505,8 @@ async function buildChart(name) {
           border: { color: tickColor },
         },
         y: {
-          type: 'logarithmic',
+          type: yLog ? 'logarithmic' : 'linear',
+          reverse: def.y && def.y.reverse === true,
           title: { display: true, text: `${def.y.label}${def.y.unit ? ` (${def.y.unit})` : ''}`, color: tickColor, font: { ...fonts.title, size: 12 } },
           ticks: { color: tickColor, font: { ...fonts.tick, size: 11 } }, grid: { color: gridColor },
           border: { color: tickColor },
@@ -482,20 +560,23 @@ function applyRangeToChart(name) {
   reflowFitLines(name);
 }
 
-// 拟合线、置信带、文献线按当前 x 显示范围重新采样（y 超出显示范围的点置 NaN 截断）
+// 拟合线、置信带、文献真值线按当前 x 显示范围重新采样（y 超出显示范围的点置 NaN 截断）
 function reflowFitLines(name) {
   const chart = charts[name];
   if (!chart) return;
   const xs = chart.scales.x, ys = chart.scales.y;
-  if (!xs || !ys || xs.min == null || !(ys.min > 0)) return;   // y 一律 log 轴，min 必为正
-  const yLo = Math.log10(ys.min), yHi = Math.log10(ys.max);
-  const clipY = ly => (ly < yLo || ly > yHi) ? NaN : 10 ** ly;   // 出界置 NaN → 线在边缘断开而非走平
+  if (!xs || !ys || xs.min == null || ys.min == null) return;
+  const def = relDef(name);
+  const xLog = xLogOf(def), yLog = yLogOf(def);
   // log 轴的 min 必为正；防御一下避免 log10(≤0)
-  const xToLog = v => Math.log10(Math.max(v, Number.MIN_VALUE));
+  const xToFit = v => (xLog ? Math.log10(Math.max(v, Number.MIN_VALUE)) : v);
+  const yToFit = v => (yLog ? Math.log10(Math.max(v, Number.MIN_VALUE)) : v);
+  const yLo = yToFit(ys.min), yHi = yToFit(ys.max);
+  const clipY = (ly, lg) => (ly < yLo || ly > yHi) ? NaN : (lg ? 10 ** ly : ly);   // 出界置 NaN → 线在边缘断开而非走平
   for (const fs of chart._fitSets || []) {
-    const xLo = fs.xLogFit ? xToLog(xs.min) : xs.min;
-    const xHi = fs.xLogFit ? xToLog(xs.max) : xs.max;
-    const toXY = (lx, ly) => ({ x: fs.xLogFit ? 10 ** lx : lx, y: clipY(ly) });
+    const xLo = fs.xLogFit ? xToFit(xs.min) : xs.min;
+    const xHi = fs.xLogFit ? xToFit(xs.max) : xs.max;
+    const toXY = (lx, ly) => ({ x: fs.xLogFit ? 10 ** lx : lx, y: clipY(ly, fs.yLogFit) });
     const line = [], lo = [], hi = [];
     for (let i = 0; i <= 50; i++) {
       const lx = xLo + (xHi - xLo) * i / 50;
@@ -509,30 +590,37 @@ function reflowFitLines(name) {
     fs.loDs.data = lo;
     fs.hiDs.data = hi;
   }
-  const L = chart._litSet;
-  if (L) {
-    const xLo = L.xLog ? xToLog(xs.min) : xs.min;
-    const xHi = L.xLog ? xToLog(xs.max) : xs.max;
-    const data = [];
-    for (let i = 0; i <= 50; i++) {
-      const lx = xLo + (xHi - xLo) * i / 50;
-      data.push({ x: L.xLog ? 10 ** lx : lx, y: clipY(L.ybar + L.slope * (lx - L.xbar)) });
+  const LS = chart._litSet;
+  if (LS) {
+    const xLo = LS.xLog ? xToFit(xs.min) : xs.min;
+    const xHi = LS.xLog ? xToFit(xs.max) : xs.max;
+    const mk = off => {
+      const data = [];
+      for (let i = 0; i <= 50; i++) {
+        const lx = xLo + (xHi - xLo) * i / 50;
+        data.push({ x: LS.xLog ? 10 ** lx : lx, y: clipY(LS.slope * lx + LS.intercept + off, LS.yLog) });
+      }
+      return data;
+    };
+    LS.ds.data = mk(0);
+    if (LS.sigma != null && LS.loDs && LS.hiDs) {
+      LS.loDs.data = mk(-LS.sigma);
+      LS.hiDs.data = mk(LS.sigma);
     }
-    L.ds.data = data;
   }
   chart.update('none');
 }
 
 // 读取卡片上的四个输入框，校验后写入记忆并应用；留空的端保持自动
 function applyRangeFromInputs(name) {
-  const def = relDefs.find(r => r.name === name);
-  const xLog = def ? def.x_log !== false : true;
+  const def = relDef(name);
+  const xLog = xLogOf(def), yLog = yLogOf(def);
   const r = {};
   for (const k of ['xmin', 'xmax', 'ymin', 'ymax']) {
     const raw = (document.getElementById(`rg-${k}-${name}`)?.value || '').trim();
     if (!raw) { r[k] = null; continue; }
     const v = Number(raw);
-    const needPos = k[0] === 'y' || xLog;   // log 轴只接受正值（y 一律 log）
+    const needPos = k[0] === 'y' ? yLog : xLog;   // log 轴只接受正值
     if (!isFinite(v) || (needPos && v <= 0)) {
       showToast(`${k} 无效：需为${needPos ? '正' : ''}数字（log 轴填线性值）`, 'warning');
       return;
@@ -541,13 +629,13 @@ function applyRangeFromInputs(name) {
   }
   if (r.xmin != null && r.xmax != null && r.xmin >= r.xmax) { showToast('xmin 必须小于 xmax', 'warning'); return; }
   if (r.ymin != null && r.ymax != null && r.ymin >= r.ymax) { showToast('ymin 必须小于 ymax', 'warning'); return; }
-  state.ranges[exclKey(name)] = r;
+  state.ranges[name] = r;
   applyRangeToChart(name);
 }
 
 // 恢复默认：删除记忆、清空输入框、回到自动范围
 function resetRange(name) {
-  delete state.ranges[exclKey(name)];
+  delete state.ranges[name];
   fillRangeInputs(name);
   applyRangeToChart(name);
 }
@@ -565,35 +653,35 @@ function fillRangeInputs(name) {
 function exportCsv(name) {
   const pts = visiblePoints(name);
   if (!pts.length) { showToast('没有可导出的数据点', 'warning'); return; }
-  const esc = v => {
+  const escCsv = v => {
     const s = v == null ? '' : String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const rows = ['id,x,xerr,y,yerr,grb_type,z,src'];
+  const rows = ['id,x,xerr,y,yerr,group,z,src'];
   for (const p of pts) {
     const errStr = e => Array.isArray(e) ? `[${e[0]},${e[1]}]` : (e ?? '');
-    rows.push([p.id, p.x, errStr(p.xerr), p.y, errStr(p.yerr), p.grb_type ?? '', p.z ?? '',
-      p.src ? `x:${p.src.x};y:${p.src.y}` : ''].map(esc).join(','));
+    rows.push([p.id, p.x, errStr(p.xerr), p.y, errStr(p.yerr), p.group ?? '', p.z ?? '',
+      p.src ? `x:${p.src.x};y:${p.src.y}` : ''].map(escCsv).join(','));
   }
   const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `${name}_${state.source}.csv`;
+  a.download = `${name}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
 }
 
-// ─── 拉取当前来源下全部关系数据 ───
+// ─── 拉取全部 active 关系数据（pending 关系不画图不拉数） ───
 let _fetchReqId = 0;   // 请求令牌：先发后至的旧响应整体丢弃
 async function fetchAllData() {
   const req = ++_fetchReqId;
   const result = {};
-  await Promise.all(relDefs.map(async def => {
+  await Promise.all(relDefs.filter(d => d.status === 'active').map(async def => {
     try {
-      const d = await api('GET', `/relations/${def.name}/data?source=${encodeURIComponent(state.source)}`);
+      const d = await api('GET', `/relations/${def.name}/data`);
       result[def.name] = d.points || [];
     } catch {
-      result[def.name] = [];   // 该来源对此关系无数据
+      result[def.name] = [];
     }
   }));
   if (req !== _fetchReqId) return false;   // 期间发起了更新的拉取，丢弃旧结果
@@ -632,7 +720,33 @@ function updateTagBtnLabel() {
 }
 
 function rebuildAllCharts() {
-  for (const def of relDefs) buildChart(def.name);
+  for (const def of relDefs) {
+    if (def.status === 'active') buildChart(def.name);
+  }
+}
+
+// ─── 卡片头部徽章 ───
+function badges(def) {
+  const out = [];
+  if (def.rating) {
+    const c = RATING_COLORS[def.rating] || '#8b949e';
+    out.push(`<span class="badge" style="background:${c};color:#fff" title="用途评级: ${esc(RATING_NAMES[def.rating] || '')}">${esc(def.rating)}</span>`);
+  }
+  if (def.timeliness) out.push(`<span class="badge bg-secondary" title="时效性">${esc(def.timeliness)}</span>`);
+  if (def.warning) out.push('<span class="badge" style="background:#f85149;color:#fff" title="该关系已被显著削弱或有重大口径警告">⚠</span>');
+  return out.join(' ');
+}
+
+// 待定（pending）卡片正文：关系式说明 + 文献系数 + 缺口说明
+function pendingBody(def) {
+  const L = def.lit || {};
+  return `
+    <div class="small mb-2"><span class="badge bg-warning text-dark">待定</span>
+      <span class="text-secondary ms-1">参数管线未上线，暂不出图。</span></div>
+    ${L.form_note ? `<div class="small mb-2">${esc(L.form_note)}</div>` : ''}
+    <div class="small mb-2"><strong class="text-secondary">文献系数（${esc(L.label || '原文')}）：</strong>${esc(litText(def))}</div>
+    ${def.pending_note ? `<div class="small text-secondary"><strong>缺口：</strong>${esc(def.pending_note)}</div>` : ''}
+  `;
 }
 
 // ─── 主渲染 ───
@@ -642,16 +756,17 @@ export async function render() {
   try {
     const d = await api('GET', '/relations');
     relDefs = d.relations || [];
-    relSources = d.sources || {};
+    relCoverage = d.coverage || {};
   } catch (err) {
     if (!navStale(seq)) showError(`加载统计关系失败: ${err.message}`);
     return;
   }
   if (navStale(seq)) return;  // 请求期间已切换路由
 
-  // 全局来源下拉：best + 各关系来源的并集
-  const allSources = ['best', ...new Set(Object.values(relSources).flat().filter(s => s !== 'best'))];
-  if (!allSources.includes(state.source)) state.source = 'best';
+  // 按 domain 分节
+  const sections = DOMAIN_ORDER
+    .map(dom => ({ dom, defs: relDefs.filter(r => r.domain === dom) }))
+    .filter(s => s.defs.length);
 
   app.innerHTML = `
     <div class="relations-root soft-root">
@@ -661,12 +776,6 @@ export async function render() {
     <!-- 控制栏 -->
     <div class="card mb-3">
       <div class="card-body d-flex flex-wrap align-items-center gap-3">
-        <div class="d-flex align-items-center gap-1">
-          <label class="small text-secondary">数据来源:</label>
-          <select class="form-select form-select-sm" style="width:auto" id="sourceSelect">
-            ${allSources.map(s => `<option value="${esc(s)}" ${s === state.source ? 'selected' : ''}>${esc(s)}</option>`).join('')}
-          </select>
-        </div>
         <div class="dropdown">
           <button class="sp-btn-ghost dropdown-toggle" data-bs-toggle="dropdown"
                   data-bs-auto-close="outside" id="tagFilterBtn">标签筛选 (全部)</button>
@@ -685,23 +794,30 @@ export async function render() {
       </div>
     </div>
 
+    ${sections.map(s => `
+    <div class="sp-muted mb-2 mt-3" style="font-size:0.9rem;letter-spacing:0.05em">${DOMAIN_NAMES[s.dom]}</div>
     <!-- 关系卡片：响应式 2 列网格 -->
-    <div class="row g-3" id="relCards">
-      ${relDefs.map(def => `
+    <div class="row g-3">
+      ${s.defs.map(def => `
         <div class="col-lg-6">
           <div class="card" id="card-${def.name}">
             <div class="card-header d-flex justify-content-between align-items-center">
-              <span>${esc(def.title)}${def.lit && def.lit.label ? ` · <span class="sp-muted">${esc(def.lit.label)}${def.lit.bibcode ? ` (${esc(def.lit.bibcode)})` : ''}</span>` : ''}</span>
+              <span>${esc(def.title)}${def.lit && def.lit.label ? ` · <span class="sp-muted">${esc(def.lit.label)}${def.lit.bibcode ? ` (${esc(def.lit.bibcode)})` : ''}</span>` : ''}
+                <span class="ms-1">${badges(def)}</span>
+                <span class="sp-muted ms-1" style="font-size:0.72rem">当前 ${relCoverage[def.name] ?? 0} 点</span>
+              </span>
               <div class="d-flex gap-1">
+                ${def.status === 'active' ? `
                 <button class="sp-btn-ghost py-0" data-range-toggle="${def.name}" title="坐标范围">
                   <i class="bi bi-gear"></i>
                 </button>
                 <button class="sp-btn-ghost py-0" data-export="${def.name}">
                   <i class="bi bi-download"></i> 导出 CSV
-                </button>
+                </button>` : ''}
               </div>
             </div>
             <div class="card-body">
+              ${def.status === 'active' ? `
               <!-- 坐标范围控件：log 轴填线性值，留空 = 自动 -->
               <div class="mb-2" id="range-${def.name}" style="display:none">
                 <div class="d-flex flex-wrap align-items-center gap-1 small">
@@ -716,7 +832,10 @@ export async function render() {
                   <button class="sp-btn-ghost py-0 ms-1" data-range-apply="${def.name}">应用</button>
                   <button class="sp-btn-ghost py-0" data-range-reset="${def.name}">恢复默认</button>
                 </div>
-                <div class="sp-muted" style="font-size:0.72rem">log 轴填原始线性值（如 1e50），留空的端保持自动</div>
+                <div class="sp-muted" style="font-size:0.72rem">${[
+                  xLogOf(def) ? 'x 为 log 轴：填原始线性值（如 1e50）' : 'x 为线性轴：直接填数值',
+                  yLogOf(def) ? 'y 为 log 轴：填原始线性值' : `y 为线性轴：直接填数值${def.y && def.y.reverse ? '（星等轴反向显示，仍按数值填 min~max）' : ''}`,
+                ].join('；')}，留空的端保持自动</div>
               </div>
               <div class="chart-container" style="height:420px" id="chartbox-${def.name}">
                 <canvas id="cv-${def.name}"></canvas>
@@ -724,6 +843,7 @@ export async function render() {
               <div class="text-center text-secondary py-4" id="empty-${def.name}" style="display:none">加载中...</div>
               <div class="small mt-2" id="fitinfo-${def.name}"></div>
               <div class="small mt-1" id="excluded-${def.name}"></div>
+              ` : pendingBody(def)}
               ${Array.isArray(def.refs) && def.refs.length ? `
               <div class="sp-muted mt-2" style="font-size:0.78rem">参考文献: ${def.refs.map(r =>
                 r && r.url
@@ -733,18 +853,11 @@ export async function render() {
             </div>
           </div>
         </div>`).join('')}
-    </div>
+    </div>`).join('')}
     </div>
   `;
 
   // 控件事件
-  document.getElementById('sourceSelect').onchange = async e => {
-    state.source = e.target.value;
-    if (await fetchAllData()) {
-      rebuildTagList();
-      rebuildAllCharts();
-    }
-  };
   let hlTimer = null;
   document.getElementById('highlightInput').oninput = e => {
     clearTimeout(hlTimer);
@@ -775,7 +888,7 @@ export async function render() {
   document.querySelectorAll('[data-range-reset]').forEach(b => {
     b.onclick = () => resetRange(b.dataset.rangeReset);
   });
-  relDefs.forEach(def => fillRangeInputs(def.name));   // 回填已记忆的范围
+  relDefs.forEach(def => { if (def.status === 'active') fillRangeInputs(def.name); });   // 回填已记忆的范围
 
   if (await fetchAllData()) {
     rebuildTagList();

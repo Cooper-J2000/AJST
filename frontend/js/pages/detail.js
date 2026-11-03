@@ -1,6 +1,6 @@
 // === Transient Detail Page（编排层） ===
 // 职责：拉取数据、拼页面模板、Tab 切换调度、向各功能区模块分发初始化。
-// 功能区实现（概览/数据表/光变图/derived/外部目录/光谱/Aladin）在 detail_*.js 子模块；
+// 功能区实现（概览/数据表/光变图/光谱/Aladin）在 detail_*.js 子模块；
 // 子模块经 { render, currentTid } 循环引用回调本模块（仅函数声明导出 + 运行时读 let
 // 实时绑定，模块求值期不访问，ESM 循环安全）。
 import { app, showLoading, showError, navSeq, navStale } from './layout.js';
@@ -16,8 +16,6 @@ import { esc, escAttr } from '../utils.js';
 import { initOverview, articlesHTML, fillHostSummary, attachEditCoordHints, attachEditTagInputs } from './detail_overview.js';
 import { LC_COLS, lcRowHTML, setLCItems, setLCT0, buildLcColPanel, applyLcColVis } from './detail_lctable.js';
 import { setLCSourceParams, resetLCChart, initLCPlot, wireLCChartGlobals, t0ToMJD, setLCSpectra } from './detail_lcchart.js';
-import { renderDerivedCard, initDerived, resetDerived } from './detail_derived.js';
-import { renderCatalogData } from './detail_catalog.js';
 import { initSpectraTab, resetSpectra, getSpecAxisType } from './detail_spectra.js';
 import { initAladin, resetAladin } from './detail_aladin.js';
 
@@ -53,7 +51,6 @@ export async function render(tid) {
   destroyFittingTab(); // 停止拟合标签页轮询/图表（DOM 即将重建）
   destroyHostfitTab(); // 停止宿主星系标签页轮询（DOM 即将重建）
   destroySedTab(); // 停止 SED 分析标签页轮询/图表（DOM 即将重建）
-  resetDerived();
   resetAladin();  // Aladin 容器随 DOM 重建销毁，旧实例引用必须清空（否则切源后全天图空白）
   showLoading();
 
@@ -243,10 +240,6 @@ export async function render(tid) {
               </div>
             </div>
           </div>
-          <!-- 外部目录参数（T90/Epeak/fluence/Eiso 等，含来源） -->
-          ${renderCatalogData(transient.extra_data)}
-          <!-- 派生物理量 (derived) -->
-          ${renderDerivedCard(transient.extra_data)}
         </div>
 
         <!-- ─── 光变曲线 ─── -->
@@ -595,9 +588,6 @@ export async function render(tid) {
         initAladin(aladinRa, aladinDec, hasCoords ? transient.id : null);
       }
     }, 500);
-
-    // ─── derived 卡片初始化 ───
-    initDerived(transient.extra_data && transient.extra_data.derived);
 
     // 概览「宿主星系」摘要行（独立请求，不阻塞主渲染）
     fillHostSummary(tid);

@@ -87,7 +87,7 @@
 | `sub_tag` | JSONB | 子标签数组，如 `["L","S","X"]` |
 | `tags` | JSONB | 标签数组，如 `["fxt","grb"]` |
 | `aliases` | JSONB | 别名数组 |
-| `extra_data` | JSONB | **任意扩展字段（推荐方式）**，含 `catalog_data`（外部目录参数，见 §8.5）与 `derived`（静止系派生量，见 §8.13） |
+| `extra_data` | JSONB | **任意扩展字段（推荐方式）**，含 `params`（规格统一物理量，见 §8.13；2026-11-04 起替代已删除的 `catalog_data`/`derived` 两键） |
 | `created_at` | DATETIME | |
 | `updated_at` | DATETIME | |
 
@@ -406,8 +406,9 @@ time,time_err,time_unit,mjd,band,flux_density,flux_density_err,flux_density_unit
 | POST | `/api/tags/register` | 批量幂等登记标签（内部用） | 登录 |
 | GET | `/api/stats/overview` | 汇总统计 | 否 |
 | GET | `/api/stats/hosts` | 宿主星系统计（覆盖率 / M*/SFR 分布 / 宿主绝对星等点；带 `ETag` + `Cache-Control: no-cache`，数据未变时返回 304，见 §8.30） | 否 |
-| GET | `/api/relations` | 统计关系定义列表 + 各关系当前可用来源目录（见 §8.13） | 否 |
-| GET | `/api/relations/<name>/data` | 取某关系统计数点（`?source=best` 或目录短名） | 否 |
+| GET | `/api/relations` | 统计关系定义列表 + 各关系当前库内可画点数 coverage（见 §8.13） | 否 |
+| GET | `/api/relations/<name>/data` | 取某关系统计数点（params 单值化后无 source 参数；返回 group/src，log 轴剔除非正值） | 否 |
+| POST | `/api/relations/<name>/fit` | 带内禀弥散的最大似然拟合（Kelly 2007 风格 NLL；x/y 按轴定义取 log 或线性） | 登录 |
 | GET | `/api/extinction/status` | 银消功能可用性 + 覆盖统计 | 否 |
 | POST | `/api/extinction/run` | 执行银消改正（`{}`全部源 / `{"transient_id"}`单源 / `{"lightcurve_id"}`单点） | 管理员 |
 | POST | `/api/extinction/clear` | 清除改正结果（参数同 run） | 管理员 |
@@ -1026,7 +1027,7 @@ curl http://localhost:27101/api/auth/status
 |---|---|---|
 | `#/` / `#/list` | 事件列表 | 搜索/筛选（标签/红移/RA/Dec）/排序（ID/红移/T0，默认 T0 倒序、T0 为空的排最后）/分页/删除/全局银消改正 |
 | `#/stats` | 全局统计 | 概览卡片 + Mollweide 全天图 + 红移直方图（按 tag 筛选）+ 波段覆盖 |
-| `#/stats/relations` | 统计关系 | GRB 瞬时辐射 6 个 2D 统计关系（Amati 等）散点 + 分组拟合（见 §8.13） |
+| `#/stats/relations` | 统计关系 | 调研认定的 11 条经典统计关系（GRB/超新星/TDE 分节）：散点 + 评级/时效徽章 + 文献真值线与 ±σ_int 带 + 分组拟合（见 §8.13） |
 | `#/transient/<id>` | 单源详情 | 基本信息 + 子标签 + 光变曲线 + 全列数据表 + 行内编辑 |
 | `#/compare` | 多源对比 | 叠加对比光变曲线（含误差棒显示开关）；事件列表支持按名称/别名筛选；模板层可叠加 K 改正引擎预测曲线（虚线），Y 轴三态流量/绝对星等/K 改正绝对星等，支持服务端 CSV/JSON 导出与复制图（见 §8.34） |
 | `#/filters` | 光学滤光片 | 81 个滤波器 CRUD（类型 mean/ref/eff/guess 齐全），可排序/添加/行内编辑 |
@@ -1052,7 +1053,7 @@ curl http://localhost:27101/api/auth/status
 - 登录需用户名 + 密码；管理员账户为 `admin`（密码取 `AJST_CATALOG_PASSWORD`，未设置时每次启动随机生成），普通用户由管理员在 `/admin` 后台维护
 - 导航栏登录后显示当前账户名；管理员额外显示「管理后台」入口（`/admin`）
 - 数据表"添加记录"/"上传数据表"按钮与编辑列登录后显示；普通用户编辑列内：自己录入的记录（source=本账户）显示行内编辑按钮，其余记录只有扣点（discard 切换）按钮；单点银消/删除选中与行首删除复选框列仅管理员可见
-- 事件编辑、derived 卡片编辑、银消改正按钮仅管理员可用
+- 事件编辑、银消改正按钮仅管理员可用
 - T0 等事件字段：新建源时普通登录用户可设定；**库中已存在源的修改仅管理员**（PUT 已 `@require_admin`；POST 新建对重复 id 一律 409，无经新建覆盖已有源的旁路；契约由 tests/acceptance/test_l2_t0_permissions.py 锁定，v2.30）
 - 光学滤光片的添加按钮登录后显示，编辑仅管理员
 - 光谱的上传按钮登录后显示，删除按钮仅管理员
@@ -1089,15 +1090,13 @@ frontend/
         ├── detail_lctable.js     # 详情页数据表（行渲染/排序/行内编辑/批量删/CSV 上传；单点编辑局部行替换）
         ├── detail_lcchart.js     # 详情页光变图（状态/构建/缩放/拟合叠加/轴范围）
         ├── detail_spectra.js     # 详情页光谱标签页
-        ├── detail_derived.js     # 详情页 derived 参数卡
-        ├── detail_catalog.js     # 详情页外部目录数据卡
         ├── detail_aladin.js      # 详情页 Aladin 实例管理
         ├── lc_upload.js      # 数据表 CSV 上传（列映射预览导入，v2.9）
         ├── gcn_tool.js       # GCN 阅读工具（工具箱，v2.10，见 §8.17）
         ├── digitizer.js      # 抠图取数（工具箱，v2.11，见 §8.18）
         ├── fitting_tab.js    # 详情页"余辉拟合"标签页（配置/任务轮询/结果展示，见 §8.14）
         ├── stats.js          # 全局统计（全天图/红移柱状图/波段覆盖）
-        ├── relations.js      # 统计关系（6 关系平铺卡片/来源切换/分组 OLS 拟合/导出 CSV）
+        ├── relations.js      # 统计关系（11 条按领域分节/评级与时效徽章/文献真值线+σ_int 带/分组拟合/导出 CSV）
         ├── hostfit_tab.js    # 详情页「宿主星系」标签页（宿主信息/测光表/pcigale·prospector 拟合，见 §8.20、§8.22）
         ├── sed_tab.js        # 详情页「SED 分析」标签页（SED 构建/拟合/结果/时间序列诊断，见 §8.27）
         ├── stats_hosts.js    # 宿主星系统计子页（覆盖率/M*/SFR/绝对星等—红移图，见 §8.22）
@@ -1331,24 +1330,16 @@ psql -d ajst_catalog -c "ALTER TABLE transients ADD COLUMN peak_flux FLOAT;"
 # 3. 在 frontend/index.html 导航栏加链接
 ```
 
-### 8.5 外部 GRB 目录数据（v2.3 新增）
+### 8.5 外部 GRB 目录数据（v2.3 新增；2026-11-04 起不再合入 DB）
 
-14 个外部 GRB 目录的瞬时辐射参数已规范化并合并进 `transients.extra_data.catalog_data`，
-按目录短名组织，每条记录含参数、来源（名称/URL/获取日期）：
+16 个外部 GRB 目录的规范化原始文件保留在 `catadata/external/<短名>/`
+（含原始文件 + README 逐列文档 + parse.py + normalized.jsonl），作为再推导原料与溯源证据；
+**2026-11-04 起这些目录不再合入数据库**——原先合并进 `transients.extra_data.catalog_data`
+的内容（1403 源）已随 params 命名空间改造从库中删除（§8.13），统计关系所需参数经
+`backend/tools/migrate_params.py` 单值化迁移到 `extra_data.params`。
+`catalog_merge.py` 本就未随仓库发布（见 §8.11 末条），现已整体退役。
 
-```json
-"catalog_data": {
-  "fermi_gbm": {
-    "params": {"t90": {"v": 325.8, "err": 1.2, "band": "50-300 keV"},
-               "epeak": {"v": 512.0, "err": [20, 18], "model": "BAND", "frame": "obs"},
-               "fluence": {"v": 0.038, "band": "10-1000 keV"}},
-    "other": {...}, "name_alt": ["GRB 221009.553"], "trigger_time": "...",
-    "source": {"name": "Fermi GBM Burst Catalog", "url": "...", "retrieved": "2026-07-21"}
-  }
-}
-```
-
-- **目录清单**（`catadata/external/<短名>/`，含原始文件 + README 逐列文档 + parse.py + normalized.jsonl）：
+- **目录清单**（`catadata/external/<短名>/`）：
   `batse`（T90/四通道 fluence/350 个 Epeak）、`fermi_gbm`（T90/Epeak/fluence/峰流量）、
   `fermi_lat`（T90/fluence/静止系 Eiso）、`swift_bat`（T90/Epeak-CPL/fluence/红移）、
   `swift_grb`（T90/Epeak/fluence/Eiso/红移，2004–2012）、`heasarc_grbcat`（多任务 T90/fluence/红移）、
@@ -1358,7 +1349,7 @@ psql -d ajst_catalog -c "ALTER TABLE transients ADD COLUMN peak_flux FLOAT;"
   `swiftgrbba`（Swift BA 汇编，T90/fluence/XRT 余辉参数）、
   `rssgrbag`（射电余辉目录，T90/fluence/Eiso/E_γ + 射电峰值光变点）；
   `swift_xrt_live` 仅存档原始表（X 射线余辉目录，无瞬时辐射参数）
-  （⚠️ wang2022 数据已于 2026-07-22 应要求从库中删除，其 external 文件保留但已从合并配置移除）
+  （⚠️ wang2022 数据已于 2026-07-22 应要求从库中删除，其 external 文件保留）
 - **统计关系文献样本**（v2.4 新增，`insert_new` 目录）：
   `minaev2020`（Minaev & Pozanenko 2020, MNRAS 492, 1919；320 条，I/II 型分类 + Epi + Eiso）、
   `konus_wind`（Tsvetkova+2017/2021；317 条，Eiso/Liso/Epeak/tlag/e_gamma）、
@@ -1366,14 +1357,15 @@ psql -d ajst_catalog -c "ALTER TABLE transients ADD COLUMN peak_flux FLOAT;"
   `liang2023`（Liang+2023, ApJS 266, 31；153 条，Band/CPL 谱型分类）、
   `guidorzi2025`（Guidorzi+2024, A&A 690, A261；216 条，变异性 V + Liso）
 - **规范**：`catadata/external/SCHEMA.md`（统一键名；能段/模型/观测系/静止系/置信度逐量标注；误差对称单值、不对称 `[+,−]`）
-- **匹配合并**：`backend/tools/catalog_merge.py`（dry-run 默认，`--apply` 写库；该脚本未随仓库发布，见 §8.11 末条）
-  - 匹配规则：精确名（含 aliases）→ 字母约定差异时坐标 ≤1.5° → 无字母名按日期+坐标（阈值按目录精度）
-  - **insert_new 机制**（v2.4 新增）：5 个统计关系文献目录标记 `insert_new: True`，未匹配记录不再丢弃，
-    而是整条入库为新源（`comment` 标记 `catalog-only: <目录标签>`），可参与后续匹配与派生量计算；本次新增 77 个 catalog-only 源
-  - 红移：DB 为 NULL 时按 mpe_greiner → swift_bat → swift_grb → grbcat → lat → uvot →（文献目录）优先级填补，`redshift_ref` 记 `catalog:<短名>`
-  - 已合并：672/705 个源、3077 条目录记录（v2.4 在 595/628 源、1855 条基础上并入 5 个文献目录；未匹配源主要是无 GRB 对应的 EP/FXT）
-- **ETL 往返**：v2.3 起 `--dump` 导出 `extra_data`、导入时读回，全量重建不丢目录数据
-- **前端**：详情页概览标签内"外部目录参数"卡片，逐目录展示参数+来源链接
+- **历史合并记录**（v2.3/v2.4，流程已退役）：匹配规则为精确名（含 aliases）→ 字母约定差异时坐标 ≤1.5°
+  → 无字母名按日期+坐标；文献目录 `insert_new` 机制曾把未匹配记录整条入库为新源
+  （`comment` 标记 `catalog-only: <目录标签>`，共 77 个，后清理为 60 个现存）；红移曾按
+  mpe_greiner → swift_bat → swift_grb → grbcat → lat → uvot →（文献目录）优先级填补
+  （`redshift_ref` 记 `catalog:<短名>`，这部分红移结果保留在一级列，不受影响）；
+  合并峰值规模 672/705 个源、3077 条目录记录
+- **ETL 往返**：v2.3 起 `--dump` 导出 `extra_data`、导入时读回（含 params）
+- **前端**：详情页概览标签内的"外部目录参数"卡片已于 2026-11-04 删除
+  （60 个 catalog-only 源详情页不再显示该卡）
 - **波段名统一（2026-08-02）**：GRBSN/Dainotti 中的波段名变体已在**数据层**统一映射到 filters 条目——
   UVOT 系（UVW2/UW2→uvot-uvw2、UVW1/UW1→uvot-uvw1、UVM2/UM2→uvot-uvm2、UVU/B/V→uvot-u/b/v、UWh/UVOT-white/White→uvot-white）、
   Johnson/Cousins 系（R_{c}/R_c/R_C→Rc、I_{c}/I_C/IC→Ic、B_{J}→B、J_{s}→J、K_{s}/K_s→Ks）、
@@ -1384,7 +1376,8 @@ psql -d ajst_catalog -c "ALTER TABLE transients ADD COLUMN peak_flux FLOAT;"
   K'→Ks、50CCD/V→V、BV-MOA→V、RI-MOA→I、R_{special}→Rc（comment 均记原波段名）；
   'NaN'/'289' 无法识别已删除；3.6μm 按用户要求保留原名；
   GHz 射电与 10keV 保留原名（物理频率/能量，非 filters 条目）
-- **更新流程**：重新下载原始表 → 重跑各目录 `parse.py` → `catalog_merge.py --apply`
+- **再推导流程**：重新下载原始表 → 重跑各目录 `parse.py` → 按 §8.13 的注册表口径经
+  `migrate_params.py` 迁移进 params（不再存在 catalog_merge 合并入库环节）
 
 ### 8.6 UVOT 光变数据导入（v2.3 新增）
 
@@ -1515,7 +1508,7 @@ XRT 10 keV 未吸收流量密度光变（Evans+2007,2009 数据产品）已导�
   历史记录，这些脚本未随仓库发布**。连带修复：`routes/ingest.py` 原
   `from tools.catalog_merge import ang_dist` 已改为文件内联函数（4 行，小角近似），
   否则重启即 ImportError。tools/ 现仅剩
-  check_fitting / check_relations_api / check_relations_fit / derive_prompt_params
+  check_fitting / check_relations_api / check_relations_fit / migrate_params
 
 ### 8.12 transients 表系统清洗（2026-08-26）
 
@@ -1553,43 +1546,62 @@ t0 补全、GRB 编号关联；终态 `transients_cleaned.csv` 2794 行；审查
   或 OpenSNSpectra 风格 JSON；服务端校验（≥10 点、波长 100–10⁷ Å、同名 409、文件名防穿越）后统一规范化 JSON 存储
 - **删除**：`DELETE /api/spectra/<id>`（需登录），DB 记录与文件一并删除
 
-### 8.13 静止系派生量与统计关系（v2.4 新增）
+### 8.13 统一物理量 params 与统计关系（v2.4 新增；2026-11-04 重做）
 
-**派生量命名空间 `extra_data.derived`**：由 `backend/tools/derive_prompt_params.py`
-从 `catalog_data`（各目录 params）+ `redshift` 统一计算静止系派生量，**不动 `catalog_data`**：
+**统一物理量命名空间 `extra_data.params`**（2026-11-04 起）：平铺结构，每个源为
+`{"<参数key>": {"v": 数值或字符串, "err": 单值|[正,负]|null, "src": 来源短名}, ...}`，
+另设 `params_computed`（迁移/计算日期）。它取代了 2026-11-04 删除的旧结构
+`extra_data.catalog_data`（按目录组织的原始参数，1403 源）与 `extra_data.derived`
+（sources/best 双层的静止系派生量，603 源）；`derive_prompt_params.py` 同步删除。
 
-```json
-"derived": {
-  "sources": {"konus_wind": {"ep_rest": {"v": ..., "err": [...]}, "eiso": {...}}, ...},
-  "best":    {"ep_rest": {"v": ..., "err": [...], "src": "konus_wind"}, ...},
-  "grb_type": {"v": "I", "src": "minaev2020"},
-  "computed": "2026-07-21"
-}
-```
-
-- `sources`：按目录保留各目录的派生量；`best`：按内置优先级（如 `ep_rest` 取
-  konus_wind → liang2023 → wang2022 → minaev2020 → …）选出的代表值，`src` 记录取值目录
-- `grb_type`：I 型（短暴/并合）/ II 型（长暴/坍缩星）；文献有分类（minaev2020 等）用文献值，否则按 T90 判别
-- 用法：`python3 derive_prompt_params.py`（dry-run 默认，只打印统计）/ `--apply` 写库；幂等可重跑
-- 手动修改保护：网页端详情页编辑 derived 时，改动条目标 `"manual": true`、删除路径记入 `_manual_deleted`（墓碑）；重跑脚本时这些条目保留、被删路径不复活，其余条目照常重算（`preserve_manual()`，报告会打印"保留手动条目/删除墓碑"计数）
-- 派生量键名规范见 `catadata/external/SCHEMA.md`（v2.4 新增 `ep_rest`/`lp_iso`/`tlag`/`variability`/`e_gamma`/`grb_type`/`spec_class`）
+- **键注册表**：`backend/params_registry.json`——每个键声明 unit/log/domains/status；
+  12 个 active 迁移键（`ep_rest`/`eiso`/`lp_iso`/`t90_rest`/`t90_obs`/`epeak_obs`/`alpha`/
+  `variability`/`spec_class`/`tlag_rest`/`e_gamma`/`grb_type`）+ 11 个 reserved 待计算键
+  （光变/光谱派生量，等 P3 参数计算器）。迁移覆盖基准：ep_rest 425、eiso 412、lp_iso 389、
+  t90_rest 571、t90_obs 528、epeak_obs 399、alpha 476、variability 216、spec_class 112、
+  tlag_rest 55、e_gamma 46、grb_type 585（II 532 / I 53）
+- **迁移脚本**：`backend/tools/migrate_params.py`（dry-run 默认只打印统计；`--apply` 写库；
+  `--purge [--apply]` 删除旧 `catalog_data`/`derived` 两键，存在「有 derived 无 params」的
+  漏网源时拒绝执行；幂等可重跑）
+- 旧 derived 的手动修改保护机制（`manual` 标记 / `_manual_deleted` 墓碑）已随旧结构一并废弃，
+  params 目前无手动条目
+- ⚠ 注意区分：`host_galaxies.derived`（宿主 SED 拟合参数，§8.20）是另一张表的另一命名空间，
+  与本次改造无关，不受影响；红移一级列 `redshift`/`redshift_ref` 同样不变
 
 **统计关系 API**（`backend/routes/relations.py` + `backend/relations.json`）：
 
-- `relations.json` 定义 6 个 2D 关系：`amati`（Ep,rest–Eiso）、`yonetoku`（Ep,rest–Lp,iso）、
-  `ghirlanda`（Ep,rest–Eγ）、`lag_lum`（τlag–Lp,iso）、`var_lum`（V–Lp,iso）、`ep_alpha`（Ep,obs–α），
-  各关系含坐标键/单位/log 轴标记/文献参考线（`lit`）
-- `GET /api/relations`：关系定义列表 + 各关系当前可用的来源目录（扫描库内 derived 统计）
-- `GET /api/relations/<name>/data?source=`：取数点；`source=best`（默认）用 `derived.best`，
-  否则用 `derived.sources[<目录短名>]`；只返回 x、y 都有值的点，log 轴剔除非正值
+- `relations.json` 定义 11 条经典统计关系，系数一律采用《暂现源统计关系调研》
+  （00_总报告）复核的**原文形式**（含原文样本数与注记；通行化简式只作注记）：
+  - GRB（status=active）：`amati`（E_p,rest–E_iso，B 级）、`yonetoku`（E_p,rest–L_p,iso，B 级）、
+    `lag_lum`（τ_lag,rest–L_p,iso，Norris，D 级 + ⚠ 已被显著削弱）
+  - 超新星（status=pending，等 P3 光变/光谱参数计算器）：`phillips`（Δm15–M_B，A）、
+    `tripp`（Δm15+颜色项，A）、`stretch`（s–M_B，B）、`arnett`（M_Ni–L_peak，C）、
+    `ic_ni_l`（剥离包层 Arnett，C）、`scm_iip`（SCM v_FeII–M_P，A）
+  - TDE（status=pending）：`tde_peak_decay`（ΔL40–L_peak，C）、`tde_fallback_mbh`（M_BH–t_fb,min，C）
+  - 每条含 x/y 轴定义（key/label/unit/log/reverse）、`lit` 原文系数（slope/intercept/σ_int/
+    n_calib/form_note）、用途评级 `rating`（A–D）、`timeliness`、`warning`、`group_by`、
+    `applies_to`（tag + sub_tag_any 过滤）、`status`/`pending_note`、`refs`；
+    ghirlanda / var_lum / ep_alpha 已下线（耀发、新星条目经决策不进项目）
+- `GET /api/relations`：关系定义列表 + `coverage`（每条关系当前库内可画点数：x、y 都有数值、
+  满足 log 轴正值要求且通过 applies_to 过滤的源数）
+- `GET /api/relations/<name>/data`：取数点（params 单值化后**不再有 source 参数**）；
+  返回 `{id,x,xerr,y,yerr,group,tags,sub_tag,z,src}`；log 轴剔除非正值
+- `POST /api/relations/<name>/fit`（需登录）：带内禀弥散的最大似然拟合（Kelly 2007 风格 NLL +
+  数值 Hessian 参数误差，上限 5000 点）；x/y 各按轴定义取 log10 或保持线性（星等轴线性），
+  返回带 `x_log`/`y_log`
+- 当前数据量：amati 410 点 / yonetoku 364 点 / lag_lum 48 点，其余 8 条 pending
 
 **前端统计关系页**（`#/stats/relations`，`frontend/js/pages/relations.js`，全局统计页子页面）：
 
-- 6 个关系平铺卡片；来源目录下拉切换（best / 各文献目录）；tag 筛选
-- 点击数据点排除个体样本（按 关系:来源 记忆，可恢复）
-- 特殊标记源（输入框填 GRB 名）以星形高亮显示
-- log 空间 OLS 分组拟合（I 型 / II 型分组）+ 1σ 置信带 + 文献参考虚线
-- 误差棒；hover 显示源名/数值/红移/数据来源；导出当前数据点 CSV
+- 按领域分节（GRB / 超新星 / TDE），关系卡片 2 列网格；卡片头部含标题 + 文献标签（bibcode）+
+  用途评级徽章（A/B/C/D 分色）+ 时效标签 + ⚠ 警告徽章 + 当前可画点数
+- status=pending 的卡片不出图，显示关系式说明（form_note）、文献系数文本与缺口说明（pending_note）
+- 散点按 group 分组上色（GRB I 红/II 蓝/未知灰；SN 子型用调色板）；文献真值线
+  （lit.slope 与 intercept 都有数值时直接画 y=slope·x+intercept，σ_int 画 ±σ_int 虚线带；
+  原文未发表系数则不画）；拟合结果并排显示「原文 a±σ (N=…)」vs「本库拟合 a±σ (N=…)」
+- 服务端最大似然拟合优先、失败回退本地 OLS；tag 筛选；点击数据点排除个体样本（可恢复/清空）；
+  特殊标记源星形高亮；坐标范围记忆（log/线性按轴提示）；误差棒；hover 显示源名/数值/红移/来源；
+  导出当前数据点 CSV（`id,x,xerr,y,yerr,group,z,src`）
 
 ### 8.14 余辉拟合（VegasAfterglow）（v2.5 新增）
 
@@ -2410,6 +2422,24 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 ---
 
 ## 十一、版本历史
+
+### v2.37（2026-11-04）— 统计关系体系重做：params 平铺命名空间 + 11 条调研复核关系
+
+- `extra_data` 结构改造：`catalog_data`（1403 源）与 `derived`（603 源）两键删除，替换为平铺
+  `extra_data.params`（`{"<key>": {"v","err","src"}}` + `params_computed`）；键注册表
+  `backend/params_registry.json`（12 active 迁移键 + 11 reserved 待计算键）；
+  迁移脚本 `backend/tools/migrate_params.py`（dry-run 默认 / `--apply` / `--purge`，见 §8.13）；
+  `derive_prompt_params.py` 删除，旧 derived 手动保护机制（manual/_manual_deleted）随结构废弃
+- 外部 GRB 目录原始文件（`catadata/external/`，16 个目录）保留为再推导原料与溯源证据，
+  不再合入 DB（§8.5）；60 个 catalog-only 源详情页不再显示外部目录卡
+- `backend/relations.json` 重写为 11 条关系（GRB 3 active：amati/yonetoku/lag_lum⚠；
+  SN 6、TDE 2 pending），系数用《暂现源统计关系调研》复核的原文形式，lit 含 slope/intercept/
+  σ_int/n_calib/rating(A–D)/timeliness/warning；ghirlanda/var_lum/ep_alpha 下线
+- 关系统计 API：`GET /api/relations` 返回 relations+coverage；`/<name>/data` 取消 source 参数
+  （params 单值），返回 group/src；`POST /<name>/fit` 保留 Kelly 2007 风格拟合，y 轴支持线性（星等）
+- 前端：`#/stats/relations` 按领域分节（GRB/超新星/TDE）、评级与时效徽章、文献真值线+σ_int 带、
+  pending 卡显示关系式与缺口说明；详情页「外部目录参数」「派生物理量」两卡片删除
+  （detail_catalog.js/detail_derived.js 文件删除）；首页统计关系数=11
 
 ### v2.36（2026-10-12）— 定位误差置信水平（`pos_error_confidence`）+ 红移类型取值归并
 

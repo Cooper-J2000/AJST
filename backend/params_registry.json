@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "params": {
+    "ep_rest": {
+      "label": "静止系峰值能量",
+      "unit": "keV",
+      "log": true,
+      "type": "number",
+      "domains": ["grb"],
+      "status": "active",
+      "priority": ["konus_wind", "liang2023", "wang2022", "minaev2020", "fermi_gbm", "swift_bat", "batse"]
+    },
+    "eiso": {
+      "label": "各向同性释放能量",
+      "unit": "erg",
+      "log": true,
+      "type": "number",
+      "domains": ["grb"],
+      "status": "active",
+      "priority": ["konus_wind", "liang2023", "wang2022", "minaev2020", "fermi_lat", "heasarc_grbcat"]
+    },
+    "lp_iso": {
+      "label": "各向同性峰值光度",
+      "unit": "erg/s",
+      "log": true,
+      "type": "number",
+      "domains": ["grb"],
+      "status": "active",
+      "priority": ["konus_wind", "liang2023", "guidorzi2025"]
+    },
+    "tlag_rest": {
+      "label": "静止系谱延迟",
+      "unit": "s",
+      "log": true,
+      "type": "number",
+      "domains": ["grb"],
+      "status": "active",
+      "priority": ["konus_wind"]
+    },
+    "variability": {
+      "label": "变异性",
+      "unit": "",
+      "log": true,
+      "type": "number",
+      "domains": ["grb"],
+      "status": "active",
+      "priority": ["guidorzi2025"]
+    },
+    "e_gamma": {
+      "label": "准直修正能量",
+      "unit": "erg",
+      "log": true,
+      "type": "number",
+      "domains": ["grb"],
+      "status": "active",
+      "priority": ["konus_wind"]
+    },
+    "t90_rest": {
+      "label": "静止系 T90",
+      "unit": "s",
+      "log": true,
+      "type": "number",
+      "domains": ["grb"],
+      "status": "active",
+      "priority": ["fermi_gbm", "swift_bat", "liang2023", "konus_wind", "batse", "minaev2020"]
+    },
+    "t90_obs": {
+      "label": "观测系 T90",
+      "unit": "s",
+      "log": true,
+      "type": "number",
+      "domains": ["grb"],
+      "status": "active",
+      "priority": ["fermi_gbm", "swift_bat", "swift_grb", "liang2023", "batse", "agile_mcal", "uvot_grb", "heasarc_grbcat"]
+    },
+    "epeak_obs": {
+      "label": "观测系峰值能量",
+      "unit": "keV",
+      "log": true,
+      "type": "number",
+      "domains": ["grb"],
+      "status": "active",
+      "priority": ["konus_wind", "fermi_gbm", "liang2023", "swift_grb", "batse", "agile_mcal", "swift_bat"]
+    },
+    "alpha": {
+      "label": "低能谱指数",
+      "unit": "",
+      "log": false,
+      "type": "number",
+      "domains": ["grb"],
+      "status": "active",
+      "priority": ["liang2023", "fermi_gbm", "swift_bat", "batse"]
+    },
+    "spec_class": {
+      "label": "谱型分类",
+      "unit": "",
+      "log": false,
+      "type": "string",
+      "domains": ["grb"],
+      "status": "active",
+      "note": "仅 liang2023 提供，无优先级列表"
+    },
+    "grb_type": {
+      "label": "GRB 类型",
+      "unit": "",
+      "log": false,
+      "type": "string",
+      "domains": ["grb"],
+      "status": "active",
+      "note": "I 型（短暴/并合）/ II 型（长暴/坍缩星）"
+    },
+    "dm15_b": {
+      "label": "Δm15(B)",
+      "unit": "mag",
+      "log": false,
+      "type": "number",
+      "domains": ["sn"],
+      "status": "reserved"
+    },
+    "m_b_peak": {
+      "label": "B 波段峰值星等",
+      "unit": "mag",
+      "log": false,
+      "type": "number",
+      "domains": ["sn"],
+      "status": "reserved",
+      "note": "绝对星等口径 M_B（含距离模数与消光改正）；phillips/tripp/stretch 的文献截距以此口径成立"
+    },
+    "color_bv": {
+      "label": "B−V 颜色",
+      "unit": "mag",
+      "log": false,
+      "type": "number",
+      "domains": ["sn"],
+      "status": "reserved"
+    },
+    "stretch_s": {
+      "label": "拉伸因子 s",
+      "unit": "",
+      "log": false,
+      "type": "number",
+      "domains": ["sn"],
+      "status": "reserved"
+    },
+    "l_peak_bol": {
+      "label": "峰值热光度",
+      "unit": "erg/s",
+      "log": true,
+      "type": "number",
+      "domains": ["sn", "tde"],
+      "status": "reserved"
+    },
+    "m_ni": {
+      "label": "镍质量",
+      "unit": "Msun",
+      "log": true,
+      "type": "number",
+      "domains": ["sn"],
+      "status": "reserved"
+    },
+    "v_feii": {
+      "label": "Fe II 线速度",
+      "unit": "km/s",
+      "log": true,
+      "type": "number",
+      "domains": ["sn"],
+      "status": "reserved"
+    },
+    "vp_av_corr": {
+      "label": "消光改正平台 V 星等",
+      "unit": "mag",
+      "log": false,
+      "type": "number",
+      "domains": ["sn"],
+      "status": "reserved",
+      "note": "平台期绝对 V 星等 M_V = V_P − A_V − DM，DM = 5log(cz) − 5log(H0) + 25（H0=55，与 Hamuy & Pinto 2002 定标口径一致）；II-P SCM 用，relations.json 的 scm_iip 文献截距 6.47 以此口径成立"
+    },
+    "delta_l40": {
+      "label": "ΔL40",
+      "unit": "dex",
+      "log": false,
+      "type": "number",
+      "domains": ["tde"],
+      "status": "reserved"
+    },
+    "m_bh": {
+      "label": "黑洞质量",
+      "unit": "Msun",
+      "log": true,
+      "type": "number",
+      "domains": ["tde"],
+      "status": "reserved"
+    },
+    "t_fb_min": {
+      "label": "最小回落时标",
+      "unit": "d",
+      "log": true,
+      "type": "number",
+      "domains": ["tde"],
+      "status": "reserved"
+    }
+  }
+}

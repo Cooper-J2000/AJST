@@ -2,96 +2,289 @@
   "relations": [
     {
       "name": "amati",
+      "domain": "grb",
       "title": "Amati 关系 (E_p,rest–E_iso)",
-      "x": {"key": "eiso", "label": "E_iso", "unit": "erg"},
-      "y": {"key": "ep_rest", "label": "E_p,rest", "unit": "keV"},
-      "x_log": true,
-      "y_log": true,
-      "lit": {"slope": 0.52, "intercept": null, "label": "Amati+2002", "bibcode": "2002A&A...390...81A"},
-      "group_by_type": true,
+      "x": {"key": "eiso", "label": "E_iso", "unit": "erg", "log": true},
+      "y": {"key": "ep_rest", "label": "E_p,rest", "unit": "keV", "log": true, "reverse": false},
+      "lit": {
+        "slope": 0.52, "slope_err": 0.06,
+        "intercept": null, "intercept_err": null,
+        "sigma_int": null, "n_calib": 9,
+        "label": "Amati+2002", "bibcode": "2002A&A...390...81A",
+        "form_note": "原文 §5.2 Eq.1：E_p ∝ E_rad^(0.52±0.06)（χ²ν=0.91；原文符号 E_rad，通行记法 E_iso），只发表幂律指数、未给截距 ⇒ 不画文献真值线。拟合线样本 = 9 颗 firm-z 暴（Fig.4 图注：只拟合 firm redshift 暴；Table 1 共 12 暴，另 3 颗区间红移者只画不拟）。通行 b≈0.5–0.6 上端来自 Amati+2008/2009 扩充样本，非本文值。"
+      },
+      "rating": "B",
+      "timeliness": "有争议但未被推翻",
+      "warning": false,
+      "group_by": "grb_type",
+      "applies_to": {"tag": "grb", "sub_tag_any": null},
+      "status": "active",
+      "pending_note": null,
       "refs": [
-        {"label": "Amati et al. 2002, A&A 390, 81", "url": null},
+        {"label": "Amati et al. 2002, A&A 390, 81", "url": "https://ui.adsabs.harvard.edu/abs/2002A&A...390...81A/abstract"},
         {"label": "Amati 2012, IJMPD 21, 1230006", "url": null},
         {"label": "Minaev & Pozanenko 2020, MNRAS 492, 1919", "url": "https://arxiv.org/abs/1912.09810"},
-        {"label": "Wang et al. 2022, MNRAS 516, 2575", "url": "https://arxiv.org/abs/2208.09272"},
         {"label": "Liang et al. 2023, ApJS 266, 31", "url": "https://arxiv.org/abs/2211.12187"}
       ]
     },
     {
       "name": "yonetoku",
+      "domain": "grb",
       "title": "Yonetoku 关系 (E_p,rest–L_p,iso)",
-      "x": {"key": "lp_iso", "label": "L_p,iso", "unit": "erg/s"},
-      "y": {"key": "ep_rest", "label": "E_p,rest", "unit": "keV"},
-      "x_log": true,
-      "y_log": true,
-      "lit": {"slope": 0.50, "intercept": null, "label": "Yonetoku+2004", "bibcode": "2004ApJ...609..935Y"},
-      "group_by_type": true,
+      "x": {"key": "lp_iso", "label": "L_p,iso", "unit": "erg/s", "log": true},
+      "y": {"key": "ep_rest", "label": "E_p,rest", "unit": "keV", "log": true, "reverse": false},
+      "lit": {
+        "slope": 0.515, "slope_err": 0.05,
+        "intercept": -24.55, "intercept_err": 2.4,
+        "sigma_int": null, "n_calib": 17,
+        "label": "Yonetoku+2004", "bibcode": "2004ApJ...609..935Y",
+        "form_note": "原文 Eq.2：L/10^52 = (4.29±0.15)e-5 · [E_p(1+z)/keV]^(1.94±0.19)（17 个 firm-z 暴，加权 r=0.957；原文未给 σ_int），即 log10 L = 1.94·log10 E_p + 47.63（L 单位 erg/s、E_p 单位 keV，52+log10(4.29e-5)=47.63）。本图轴口径相反（x=log10 L_p,iso、y=log10 E_p,rest），真值线为原文式反解：y = (x − 47.63)/1.94 = 0.515·x − 24.55；slope_err=0.19/1.94²≈0.05，intercept_err 由斜率误差传播主导 ≈2.4（47.63×0.19/1.94²）。通行化简式 10^52.43·(E_p/355 keV)^1.60 属 Yonetoku+2010，不属本条。"
+      },
+      "rating": "B",
+      "timeliness": "有争议但未被推翻",
+      "warning": false,
+      "group_by": "grb_type",
+      "applies_to": {"tag": "grb", "sub_tag_any": null},
+      "status": "active",
+      "pending_note": null,
       "refs": [
-        {"label": "Yonetoku et al. 2004, ApJ 609, 935", "url": null},
+        {"label": "Yonetoku et al. 2004, ApJ 609, 935", "url": "https://ui.adsabs.harvard.edu/abs/2004ApJ...609..935Y/abstract"},
         {"label": "Tsvetkova et al. 2017, ApJ 850, 161", "url": "https://ui.adsabs.harvard.edu/abs/2017ApJ...850..161T/abstract"},
         {"label": "Tsvetkova et al. 2021, ApJ 908, 83", "url": "https://ui.adsabs.harvard.edu/abs/2021ApJ...908...83T/abstract"},
-        {"label": "Liang et al. 2023, ApJS 266, 31", "url": "https://arxiv.org/abs/2211.12187"},
-        {"label": "Airasca 2025", "url": "https://arxiv.org/abs/2510.16475"}
-      ]
-    },
-    {
-      "name": "ghirlanda",
-      "title": "Ghirlanda 关系 (E_p,rest–E_γ)",
-      "x": {"key": "e_gamma", "label": "E_γ", "unit": "erg"},
-      "y": {"key": "ep_rest", "label": "E_p,rest", "unit": "keV"},
-      "x_log": true,
-      "y_log": true,
-      "lit": {"slope": 0.70, "intercept": null, "label": "Ghirlanda+2004", "bibcode": "2004ApJ...616..331G"},
-      "group_by_type": false,
-      "refs": [
-        {"label": "Ghirlanda et al. 2004, ApJ 616, 331", "url": null},
-        {"label": "Nava et al. 2006, A&A 450, 471", "url": null},
-        {"label": "Ghirlanda et al. 2007, Phil. Trans. R. Soc. A 365, 1385", "url": null}
+        {"label": "Liang et al. 2023, ApJS 266, 31", "url": "https://arxiv.org/abs/2211.12187"}
       ]
     },
     {
       "name": "lag_lum",
-      "title": "谱延迟–光度关系 (τ_lag–L_p,iso)",
-      "x": {"key": "tlag_rest", "label": "τ_lag,rest", "unit": "s"},
-      "y": {"key": "lp_iso", "label": "L_p,iso", "unit": "erg/s"},
-      "x_log": true,
-      "y_log": true,
-      "lit": {"slope": -1.0, "intercept": null, "label": "Norris+2000", "bibcode": "2000ApJ...534..248N"},
-      "group_by_type": false,
+      "domain": "grb",
+      "title": "Norris 谱延迟–光度关系 (τ_lag,rest–L_p,iso)",
+      "x": {"key": "tlag_rest", "label": "τ_lag,rest", "unit": "s", "log": true},
+      "y": {"key": "lp_iso", "label": "L_p,iso", "unit": "erg/s", "log": true, "reverse": false},
+      "lit": {
+        "slope": -1.14, "slope_err": null,
+        "intercept": 50.83, "intercept_err": null,
+        "sigma_int": null, "n_calib": 6,
+        "label": "Norris+2000", "bibcode": "2000ApJ...534..248N",
+        "form_note": "原文 Eq.1（6 个有 z 暴）：L_53 ≈ 1.3 × (τ/0.01 s)^(−1.14)，L_53 单位 10^53 erg/s，τ 为观测系 CCF31 三次拟合 lag。换算到 x=log10(τ/[s])、y=log10(L_p,iso/[erg/s])：y = −1.14·x + (53+log10 1.3−1.14×2) = −1.14·x + 50.83。原文摘要另给 −1.15，换 0.3/0.5 强度区间拟合指数得 1.15/1.03 ⇒ 指数随计数口径在 1.03–1.15 间动，原文未给误差。注意本库 x 为静止系 lag，与原文观测系口径差 (1+z) 因子。"
+      },
+      "rating": "D",
+      "timeliness": "已被显著削弱",
+      "warning": true,
+      "group_by": "grb_type",
+      "applies_to": {"tag": "grb", "sub_tag_any": null},
+      "status": "active",
+      "pending_note": null,
       "refs": [
-        {"label": "Norris et al. 2000, ApJ 534, 248", "url": null},
-        {"label": "Tsvetkova et al. 2017, ApJ 850, 161", "url": "https://ui.adsabs.harvard.edu/abs/2017ApJ...850..161T/abstract"},
+        {"label": "Norris, Marani & Bonnell 2000, ApJ 534, 248", "url": "https://ui.adsabs.harvard.edu/abs/2000ApJ...534..248N/abstract"},
+        {"label": "Bernardini et al. 2015（全样本不复现）", "url": null},
+        {"label": "Dainotti et al. 2020（选择效应否定）", "url": null},
         {"label": "Parsotan & Ito 2022, Universe 8, 329", "url": "https://arxiv.org/abs/2204.09729"}
       ]
     },
     {
-      "name": "var_lum",
-      "title": "变异性–光度关系 (V–L_p,iso)",
-      "x": {"key": "variability", "label": "V", "unit": ""},
-      "y": {"key": "lp_iso", "label": "L_p,iso", "unit": "erg/s"},
-      "x_log": true,
-      "y_log": true,
-      "lit": {"slope": null, "intercept": null, "label": null, "bibcode": null},
-      "group_by_type": false,
+      "name": "phillips",
+      "domain": "sn",
+      "title": "Phillips 宽度–光度关系 (Δm15–M_B)",
+      "x": {"key": "dm15_b", "label": "Δm15(B)", "unit": "mag", "log": false},
+      "y": {"key": "m_b_peak", "label": "M_B,peak", "unit": "mag", "log": false, "reverse": true},
+      "lit": {
+        "slope": 2.698, "slope_err": null,
+        "intercept": -21.726, "intercept_err": null,
+        "sigma_int": 0.36, "n_calib": 9,
+        "label": "Phillips+1993", "bibcode": "1993ApJ...413L.105P",
+        "form_note": "原文 Table 2（9 颗 Ia）：M_max = −21.726 + 2.698·Δm15(B)，残差 σ=0.36 mag。x=dm15_b、y=m_b_peak（绝对星等口径）下关系式直接对应 y = 2.698·x − 21.726，无需换算；原文未给系数误差。前提：m_b_peak 须为消光与距离模数改正后的绝对星等，若为视星等则截距不适用（见原文）。"
+      },
+      "rating": "A",
+      "timeliness": "仍适用未被推翻",
+      "warning": false,
+      "group_by": null,
+      "applies_to": {"tag": "sn", "sub_tag_any": ["Ia", "Ia-pec"]},
+      "status": "pending",
+      "pending_note": "依赖 dm15_b 与 m_b_peak（B 带光变曲线拟合派生），params 迁移与 Ia 测光派生管线尚未上线。",
       "refs": [
-        {"label": "Fenimore & Ramirez-Ruiz 2000 (arXiv:astro-ph/0004176)", "url": "https://arxiv.org/abs/astro-ph/0004176"},
-        {"label": "Reichart et al. 2001, ApJ 552, 57", "url": "https://arxiv.org/abs/astro-ph/0004302"},
-        {"label": "Guidorzi et al. 2024, A&A 690, A261", "url": "https://ui.adsabs.harvard.edu/abs/2024A%26A...690A.261G/abstract"}
+        {"label": "Phillips 1993, ApJL 413, L105", "url": "https://ui.adsabs.harvard.edu/abs/1993ApJ...413L.105P/abstract"},
+        {"label": "Phillips et al. 1999, AJ 118, 1766", "url": null},
+        {"label": "Brout et al. 2022, ApJ 938, 110", "url": "https://arxiv.org/abs/2202.04077"}
       ]
     },
     {
-      "name": "ep_alpha",
-      "title": "E_p,obs–α 分布",
-      "x": {"key": "alpha", "label": "α", "unit": ""},
-      "y": {"key": "epeak_obs", "label": "E_p,obs", "unit": "keV"},
-      "x_log": false,
-      "y_log": true,
-      "lit": {"slope": null, "intercept": null, "label": null, "bibcode": null},
-      "group_by_type": false,
+      "name": "tripp",
+      "domain": "sn",
+      "title": "Tripp 颜色–光度关系 (Δm15 + B−V)",
+      "x": {"key": "dm15_b", "label": "Δm15(B)", "unit": "mag", "log": false},
+      "y": {"key": "m_b_peak", "label": "M_B,peak", "unit": "mag", "log": false, "reverse": true},
+      "lit": {
+        "slope": null, "slope_err": null,
+        "intercept": null, "intercept_err": null,
+        "sigma_int": null, "n_calib": 29,
+        "label": "Tripp+1999", "bibcode": "1999ApJ...525..209T",
+        "form_note": "原文 Eq.2 只给函数式：M_B = <M_B0> + b(Δm15−1.05) + R(B−V)，Eq.(2) 内不含 b/R 数值；表 2 的 b/R 联合拟合值 b=0.483/0.553、R=1.883/2.397（两行分别是 CC6/CT26 与 CC10/CT29 子样）。因含颜色项 R(B−V)，是 b 与 R 联合拟合口径的多参数式，无单一 Δm15 斜率 ⇒ 不画文献真值线（lit.slope=null）。注意：CT 子样单独拟合的 b=0.52/0.53、R=2.09/2.44 不可挂在 Eq.(2) 名下；现代 SALT2 形式 M=M0−α·x1+β(B−V)+ΔM_host 不属 Tripp 1999。定标样本 29 远距 CT Ia + 近邻造父定标。"
+      },
+      "rating": "A",
+      "timeliness": "仍适用未被推翻",
+      "warning": false,
+      "group_by": null,
+      "applies_to": {"tag": "sn", "sub_tag_any": ["Ia", "Ia-pec"]},
+      "status": "pending",
+      "pending_note": "依赖 dm15_b、m_b_peak 与峰期颜色 (B−V)，params 迁移与 Ia 测光派生管线尚未上线。",
       "refs": [
-        {"label": "Parsotan & Ito 2022, Universe 8, 329", "url": "https://arxiv.org/abs/2204.09729"},
-        {"label": "Liang et al. 2023, ApJS 266, 31", "url": "https://arxiv.org/abs/2211.12187"},
-        {"label": "逆康普顿模型 Epeak-α 2026", "url": "https://arxiv.org/abs/2606.04894"}
+        {"label": "Tripp & Branch 1999, ApJ 525, 209", "url": "https://ui.adsabs.harvard.edu/abs/1999ApJ...525..209T/abstract"},
+        {"label": "Betoule et al. 2014, A&A 568, A22", "url": null}
+      ]
+    },
+    {
+      "name": "stretch",
+      "domain": "sn",
+      "title": "Stretch 关系 (s–M_B)",
+      "x": {"key": "stretch_s", "label": "s (stretch)", "unit": "", "log": false},
+      "y": {"key": "m_b_peak", "label": "M_B,peak", "unit": "mag", "log": false, "reverse": true},
+      "lit": {
+        "slope": null, "slope_err": null,
+        "intercept": null, "intercept_err": null,
+        "sigma_int": null, "n_calib": 58,
+        "label": "Goldhaber+2001", "bibcode": "2001ApJ...558..359G",
+        "form_note": "原文定义 B(t)=B_tpl(t0+(t−t0)/s)，并明言峰光度–stretch 拟合 “will be presented elsewhere” ⇒ 原文无发表斜率（lit.slope=null，不画文献线）；峰光度修正系数 β_s 属 Perlmutter+1999，不属本文。原文内禀弥散 δs≈0.08（stretch 单位，非 mag）。定标样本 18 CT + 40 SCP（z≤0.83）。"
+      },
+      "rating": "B",
+      "timeliness": "有争议但未被推翻",
+      "warning": false,
+      "group_by": null,
+      "applies_to": {"tag": "sn", "sub_tag_any": ["Ia", "Ia-pec"]},
+      "status": "pending",
+      "pending_note": "依赖 stretch_s 与 m_b_peak（模板光变拟合派生），params 迁移与 Ia 测光派生管线尚未上线。",
+      "refs": [
+        {"label": "Goldhaber et al. 2001, ApJ 558, 359", "url": "https://ui.adsabs.harvard.edu/abs/2001ApJ...558..359G/abstract"},
+        {"label": "Perlmutter et al. 1999, ApJ 517, 565", "url": null},
+        {"label": "Ginolin et al. 2025（13.4σ 非线性断点 x1=−0.48）", "url": null}
+      ]
+    },
+    {
+      "name": "arnett",
+      "domain": "sn",
+      "title": "Arnett 规则 (M_Ni–L_peak,bol)",
+      "x": {"key": "m_ni", "label": "M_Ni", "unit": "M_sun", "log": true},
+      "y": {"key": "l_peak_bol", "label": "L_peak,bol", "unit": "erg/s", "log": true, "reverse": false},
+      "lit": {
+        "slope": 1.0, "slope_err": null,
+        "intercept": null, "intercept_err": null,
+        "sigma_int": null, "n_calib": null,
+        "label": "Arnett+1982", "bibcode": "1982ApJ...253..785A",
+        "form_note": "原文（Arnett 1982，理论式，无定标样本）：L(t)=M_Ni[ε_Ni0·e^(−t/τ_Ni)+ε_Co(1−e^(−t/τ_Ni))e^(−t/τ_Co)]，常数 ε_Ni0=4.78e10 erg/g/s、τ_Ni=7.605e5 s=8.80 d、ε_Co+=2.561e8 erg/g/s、τ_Co=9.822e6 s=113.7 d（分列 Eq.9/36/37，组合闭式系后世合并写法；2.561e8 仅 ⁵⁶Co 正电子通道，不含 γ 囚禁）。峰时 L_peak = M_Ni·ε_eff(t_p) ⇒ 斜率恒为 1，截距 log10 ε_eff 依赖上升时间：按原文常数复算 t_p=15/18/20 d 时 ε_eff≈1.77/1.27/1.02×10^43 erg/s/M_sun ⇒ 不给固定截距（lit.intercept=null，不画文献线）。"
+      },
+      "rating": "C",
+      "timeliness": "仍适用未被推翻",
+      "warning": false,
+      "group_by": null,
+      "applies_to": {"tag": "sn", "sub_tag_any": ["Ia", "Ia-pec"]},
+      "status": "pending",
+      "pending_note": "依赖 m_ni（Arnett 反演或尾光变拟合）与 l_peak_bol（bolometric 光变），派生管线尚未上线。",
+      "refs": [
+        {"label": "Arnett 1982, ApJ 253, 785", "url": "https://ui.adsabs.harvard.edu/abs/1982ApJ...253..785A/abstract"},
+        {"label": "Khatami & Kasen 2019, ApJ 878, 56", "url": null},
+        {"label": "Meza & Anderson 2020, A&A 641, A177", "url": null}
+      ]
+    },
+    {
+      "name": "ic_ni_l",
+      "domain": "sn",
+      "title": "Arnett 规则（剥离包层 SN Ib/c）",
+      "x": {"key": "m_ni", "label": "M_Ni", "unit": "M_sun", "log": true},
+      "y": {"key": "l_peak_bol", "label": "L_peak,bol", "unit": "erg/s", "log": true, "reverse": false},
+      "lit": {
+        "slope": 1.0, "slope_err": null,
+        "intercept": null, "intercept_err": null,
+        "sigma_int": null, "n_calib": null,
+        "label": "Arnett+1982", "bibcode": "1982ApJ...253..785A",
+        "form_note": "M(Ni)/M_sun ≈ L_peak/ε_eff，理论式移植自 Arnett 1982（无定标样本）。按原文常数（ε_Ni0=4.78e10、τ_Ni=8.80 d、ε_Co+=2.561e8、τ_Co=113.7 d）复算 t_p=15/18/20 d 得 ε_eff≈1.77/1.27/1.02×10^43 erg/s/M_sun（Ni 项带 e^(−t/τ_Ni) ⇒ ε_eff 强烈依赖 t_p）⇒ 斜率 1、截距不固定（lit.intercept=null）。⚠ 口径：原文式(37) 只计正电子通道且自陈光度 “at least as large as” ⇒ 由原文常数换算的 ε_eff 是下界，用它反推 M_Ni 必系统性偏高（约 2 倍，与 Meza+2020、Afsariardchi+2021 一致）；通行口径 (1–2)×10^43 未溯源到原始定标文献（D-待核），不得当作已核实系数。"
+      },
+      "rating": "C",
+      "timeliness": "有争议但未被推翻",
+      "warning": true,
+      "group_by": "sn_subtype",
+      "applies_to": {"tag": "sn", "sub_tag_any": ["Ib", "Ic", "IIb", "Ibn", "Icn", "Ic-BL", "Ibc"]},
+      "status": "pending",
+      "pending_note": "依赖 m_ni 与 l_peak_bol（剥离包层 SN 的 Arnett 反演），派生管线尚未上线。",
+      "refs": [
+        {"label": "Arnett 1982, ApJ 253, 785", "url": "https://ui.adsabs.harvard.edu/abs/1982ApJ...253..785A/abstract"},
+        {"label": "Meza & Anderson 2020, A&A 641, A177", "url": null},
+        {"label": "Afsariardchi et al. 2021, ApJ 918, 89", "url": null}
+      ]
+    },
+    {
+      "name": "scm_iip",
+      "domain": "sn",
+      "title": "SCM 标准烛光 (Hamuy–Pinto, v_FeII–M_P)",
+      "x": {"key": "v_feii", "label": "v_FeII", "unit": "km/s", "log": true},
+      "y": {"key": "vp_av_corr", "label": "M_P (V, 消光改正)", "unit": "mag", "log": false, "reverse": true},
+      "lit": {
+        "slope": -6.504, "slope_err": 0.995,
+        "intercept": 6.47, "intercept_err": null,
+        "sigma_int": 0.39, "n_calib": 17,
+        "label": "Hamuy & Pinto 2002", "bibcode": "2002ApJ...566L..63H",
+        "form_note": "原文两参数式：V_P − A_V + 6.504(±0.995)·log(v_P/5000) = 5·log(cz) − 1.294(±0.131)（I 带系数 5.820±0.764 / −1.797±0.103），H0=55±12，定标 17 颗 II-P。换算到 x=log10(v_FeII/[km/s])、y=M_P(=V_P−A_V−μ，μ=5·log cz−5·log H0+25，取 H0=55 ⇒ 5·log 55=8.70)：M_P = −6.504·x + (6.504×3.699−1.294−25+8.70) = −6.504·x + 6.47；截距误差以斜率项传播为主（≈3.7 mag），不单列。若 vp_av_corr 参数口径不含距离模数（即视星等），截距不适用（见原文）。σ_int 取 V 带改正后残差 0.39 mag（原文 0.95→0.39；cz>3000 子样 0.20）。(B−V)_50 色项与 Lira 改正属 Hamuy+2003/Olivares+2010，非本文。"
+      },
+      "rating": "A",
+      "timeliness": "仍适用未被推翻",
+      "warning": false,
+      "group_by": "sn_subtype",
+      "applies_to": {"tag": "sn", "sub_tag_any": ["II", "II-P"]},
+      "status": "pending",
+      "pending_note": "依赖 v_feii（平台期 Fe II 谱线速度）与 vp_av_corr（平台期 V 带消光改正光度），光谱派生与测光派生管线尚未上线。",
+      "refs": [
+        {"label": "Hamuy & Pinto 2002, ApJ 566, L63", "url": "https://ui.adsabs.harvard.edu/abs/2002ApJ...566L..63H/abstract"},
+        {"label": "Olivares et al. 2010, ApJ 715, 833", "url": null},
+        {"label": "de Jaeger et al. 2022, MNRAS 509, 3427", "url": null}
+      ]
+    },
+    {
+      "name": "tde_peak_decay",
+      "domain": "tde",
+      "title": "TDE 峰光度–衰减率关系 (ΔL40–L_peak)",
+      "x": {"key": "delta_l40", "label": "Δ_L40 = log(L_40/L_peak)", "unit": "dex", "log": false},
+      "y": {"key": "l_peak_bol", "label": "L_peak,bol", "unit": "erg/s", "log": true, "reverse": false},
+      "lit": {
+        "slope": 1.6, "slope_err": 0.3,
+        "intercept": 44.9, "intercept_err": 0.1,
+        "sigma_int": 0.284, "n_calib": 17,
+        "label": "Hinkle+2020", "bibcode": "2020ApJ...894L..10H",
+        "form_note": "原文 Eq.2：log L_peak = 44.1±0.1 + 1.6(+0.4/−0.2)·(Δ_L40 + 0.5)；Δ_L40=log(L_40/L_peak)，L_40 为以峰后 40 d 为中心的 10 天窗口直线拟合截距（静止系天）；+0.5 是原文所取 Δ_L40 均值锚点（使两参数误差不相关）。展开为 y=log10(L_peak/[erg/s])、x=Δ_L40：y = 1.6·x + 44.9（slope_err 取 +0.4/−0.2 的平均 0.3）。σ_int=0.284 dex（Fig.2 图注，20–80 d 逐 5 d 扫描的最优窗；正文另述约 0.29(+0.23/−0.17) dex）。定标用 17 源（Table 1 共 21 源 A4/B5/C8/D4，Class D 4 颗被 MCMC 拟合排除，与 reduced-χ² 的 14 dof 自洽）。原文自述 “TDEs are unlikely to be competitive distance indicators”。"
+      },
+      "rating": "C",
+      "timeliness": "仍适用未被推翻",
+      "warning": false,
+      "group_by": null,
+      "applies_to": {"tag": "tde", "sub_tag_any": null},
+      "status": "pending",
+      "pending_note": "依赖 l_peak_bol 与 delta_l40（峰后 40 d 窗 bolometric 衰减率），TDE 测光派生管线尚未上线。",
+      "refs": [
+        {"label": "Hinkle et al. 2020, ApJL 894, L10", "url": "https://ui.adsabs.harvard.edu/abs/2020ApJ...894L..10H/abstract"},
+        {"label": "Hammerstein et al. 2023, ApJ 942, 9", "url": null}
+      ]
+    },
+    {
+      "name": "tde_fallback_mbh",
+      "domain": "tde",
+      "title": "TDE 回落时标–黑洞质量 (M_BH–t_fb,min)",
+      "x": {"key": "m_bh", "label": "M_BH", "unit": "M_sun", "log": true},
+      "y": {"key": "t_fb_min", "label": "t_fb,min", "unit": "d", "log": true, "reverse": false},
+      "lit": {
+        "slope": 0.5, "slope_err": null,
+        "intercept": -1.387, "intercept_err": null,
+        "sigma_int": null, "n_calib": null,
+        "label": "Lodato & Rossi 2011", "bibcode": "2011MNRAS.410..359L",
+        "form_note": "原文 Eq.4（记号 t_min 而非 t_fb）：t_min = 41·M6^(1/2)·m*^(−1)·β^(−3)·x*^(3/2) d，M6 = M_BH/10^6 M_sun；原文标准参数 β=x*=m*=1、抛物轨道。换算到 x=log10(M_BH/M_sun)、y=log10(t/d)：y = 0.5·x + (log10 41 − 3) = 0.5·x − 1.387。理论式无定标样本（n_calib=null；观测起点 12 源 Wevers+2017）；理论幂律无内禀弥散。原文自陈限制（必须随引）：早期（< 半年）标度仅具提示性；衰减侧时标 Eq.8 t_Edd ∝ M6^(−2/5) 不可与 t_min 混写。"
+      },
+      "rating": "C",
+      "timeliness": "有争议但未被推翻",
+      "warning": false,
+      "group_by": null,
+      "applies_to": {"tag": "tde", "sub_tag_any": null},
+      "status": "pending",
+      "pending_note": "M_BH 需宿主 M–σ 标度或建模反演、t_fb 需光变回落时标测量，两者派生管线均未上线；β/m*/x* 未测是该关系最大系统项（原文标度含此三项依赖）。",
+      "refs": [
+        {"label": "Lodato & Rossi 2011, MNRAS 410, 359", "url": "https://ui.adsabs.harvard.edu/abs/2011MNRAS.410..359L/abstract"},
+        {"label": "Wevers et al. 2017, MNRAS 471, 1694", "url": null},
+        {"label": "Hammerstein et al. 2023, ApJ 942, 9", "url": null}
       ]
     }
   ]
