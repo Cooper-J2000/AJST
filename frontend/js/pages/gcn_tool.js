@@ -121,12 +121,12 @@ export async function render() {
           <div class="card-header">时间计算器</div>
           <div class="card-body">
             <div class="d-flex gap-1 mb-1 align-items-center">
-              <span class="small text-secondary" style="width:48px">time 1:</span>
+              <span class="small text-secondary text-nowrap" style="width:52px">time 1:</span>
               <input type="text" class="form-control form-control-sm" id="gcnCalcT1" placeholder="2025-06-10T12:34:56 或 MJD">
               <select class="form-select form-select-sm" id="gcnCalcF1" style="width:80px"><option value="UTC" selected>UTC</option><option value="MJD">MJD</option></select>
             </div>
             <div class="d-flex gap-1 mb-1 align-items-center">
-              <span class="small text-secondary" style="width:48px">time 2:</span>
+              <span class="small text-secondary text-nowrap" style="width:52px">time 2:</span>
               <input type="text" class="form-control form-control-sm" id="gcnCalcT2" placeholder="2025-06-10T12:34:56 或 MJD">
               <select class="form-select form-select-sm" id="gcnCalcF2" style="width:80px"><option value="UTC" selected>UTC</option><option value="MJD">MJD</option></select>
             </div>

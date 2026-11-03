@@ -46,13 +46,15 @@ export function articlesHTML() {
   const COLLAPSE_N = 3;  // 超过该条数时折叠其余，点「展开全部」显示
   const itemHTML = a => `
     <div class="mb-1" id="articleItem_${a.id}">
-      <div class="d-flex align-items-center gap-2 flex-wrap">
-        <a href="${escAttr(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer" style="overflow-wrap:anywhere"><i class="bi bi-journal-text"></i> ${escAttr(a.name)}</a>
-        ${a.bibtex ? `<button class="sp-btn-ghost py-0 px-1" onclick="articleBibtexCopy(${a.id})" title="复制 BibTeX 引用信息到剪贴板"><i class="bi bi-clipboard"></i> BibTeX</button>` : ''}
-        ${a.source ? `<span class="text-secondary" style="font-size:0.72rem">${escAttr(a.source)}</span>` : ''}
-        ${isAdmin() ? `
-          <button class="sp-btn-ghost py-0 px-1" onclick="articleEditStart(${a.id})" title="编辑"><i class="bi bi-pencil"></i></button>
-          <button class="sp-btn-ghost sp-danger py-0 px-1" onclick="articleDelete(${a.id})" title="删除"><i class="bi bi-trash"></i></button>` : ''}
+      <div class="d-flex align-items-center gap-2">
+        <a href="${escAttr(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer" class="text-truncate" style="overflow-wrap:anywhere;min-width:0"><i class="bi bi-journal-text"></i> ${escAttr(a.name)}</a>
+        <span class="text-nowrap ms-auto d-inline-flex align-items-center gap-1">
+          ${a.bibtex ? `<button class="sp-btn-ghost py-0 px-1" onclick="articleBibtexCopy(${a.id})" title="复制 BibTeX 引用信息到剪贴板"><i class="bi bi-clipboard"></i> BibTeX</button>` : ''}
+          ${a.source ? `<span class="text-secondary" style="font-size:0.72rem">${escAttr(a.source)}</span>` : ''}
+          ${isAdmin() ? `
+            <button class="sp-btn-ghost py-0 px-1" onclick="articleEditStart(${a.id})" title="编辑"><i class="bi bi-pencil"></i></button>
+            <button class="sp-btn-ghost sp-danger py-0 px-1" onclick="articleDelete(${a.id})" title="删除"><i class="bi bi-trash"></i></button>` : ''}
+        </span>
       </div>
       ${a.title ? `<div class="text-secondary text-truncate" style="font-size:0.78rem;max-width:100%" title="${escAttr(a.title)}">${escAttr(a.title)}</div>` : ''}
     </div>`;

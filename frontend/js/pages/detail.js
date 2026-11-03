@@ -155,15 +155,15 @@ export async function render(tid) {
                       <tr><td class="text-secondary" style="width:140px">RA</td><td>${transient.ra != null ? transient.ra.toFixed(6) : '-'}</td></tr>
                       <tr><td class="text-secondary">Dec</td><td>${transient.dec != null ? transient.dec.toFixed(6) : '-'}</td></tr>
                       <tr><td class="text-secondary">T0</td><td>${esc(transient.t0) || '-'}</td></tr>
-                      <tr><td class="text-secondary">T0 引用</td><td class="small">${esc(transient.t0_ref) || '-'}</td></tr>
+                      <tr><td class="text-secondary">T0 引用</td><td><div class="sp-scrollbox">${esc(transient.t0_ref) || '-'}</div></td></tr>
                       <tr><td class="text-secondary">T0 偏移量(秒)</td><td>${transient.t0_offset != null ? transient.t0_offset : '-'}</td></tr>
-                      <tr><td class="text-secondary">T0 偏移量引用</td><td class="small">${esc(transient.t0_offset_ref) || '-'}</td></tr>
+                      <tr><td class="text-secondary">T0 偏移量引用</td><td><div class="sp-scrollbox">${esc(transient.t0_offset_ref) || '-'}</div></td></tr>
                       <tr><td class="text-secondary">触发仪器</td><td>${esc(transient.trigger_instrument) || '-'}</td></tr>
                       <tr><td class="text-secondary">红移</td><td>${transient.redshift != null ? `${transient.redshift} (${esc(transient.redshift_type) || '?'})` : '<span class="text-secondary">未知</span>'}</td></tr>
-                      <tr><td class="text-secondary">红移引用</td><td class="small">${esc(transient.redshift_ref) || '-'}</td></tr>
+                      <tr><td class="text-secondary">红移引用</td><td><div class="sp-scrollbox">${esc(transient.redshift_ref) || '-'}</div></td></tr>
                       <tr><td class="text-secondary">位置误差</td><td>${transient.pos_error != null ? `${transient.pos_error} ${esc(transient.pos_error_unit) || 'arcsec'}${transient.pos_error_confidence ? `（${({90:'90%',68:'68%','3sigma':'3σ','1sigma':'1σ'})[transient.pos_error_confidence] || esc(transient.pos_error_confidence)}）` : ''}` : '-'}</td></tr>
-                      <tr><td class="text-secondary" style="width:140px">位置引用</td><td class="small">${esc(transient.pos_ref) || '-'}</td></tr>
-                      <tr><td class="text-secondary">备注</td><td class="small">${esc(transient.comment) || '-'}</td></tr>
+                      <tr><td class="text-secondary" style="width:140px">位置引用</td><td><div class="sp-scrollbox">${esc(transient.pos_ref) || '-'}</div></td></tr>
+                      <tr><td class="text-secondary">备注</td><td><div class="sp-scrollbox">${esc(transient.comment) || '-'}</div></td></tr>
                       <tr><td class="text-secondary">研究文章</td><td class="small" id="articleCell">${articlesHTML()}</td></tr>
                       <tr><td class="text-secondary">数据点</td><td>${lcData.total}</td></tr>
                       <tr><td class="text-secondary">宿主星系</td><td class="small" id="hostSummaryCell"><span class="text-secondary">加载中…</span></td></tr>

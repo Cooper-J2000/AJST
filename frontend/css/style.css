@@ -1,6 +1,9 @@
 /* === AJST Catalog — 双主题（极简科技风） === */
 /* 变量按 [data-bs-theme] 分套定义；自定义类全部引用变量，两主题下同构可用。 */
 
+/* 滚动条恒占 gutter：页面高度变化时内容不左右抖动 */
+html { scrollbar-gutter: stable; }
+
 [data-bs-theme="dark"] {
   --bg-darker: #0d1117;
   --bg-dark: #161b22;
@@ -757,7 +760,6 @@ a.swiss-tag-subname:hover { text-decoration: underline; }
 .soft-root .sp-seg-item.active { background: var(--bg-card); color: var(--text-primary); box-shadow: var(--card-shadow); }
 .soft-root .sp-seg input:disabled + .sp-seg-item,
 .soft-root .sp-seg-item[data-disabled] { opacity: .4; cursor: default; }
-.soft-root .sp-seg-item.active { font-weight: 500; }
 
 /* 波段 chips */
 .soft-root .sp-chip { display: inline-block; margin: 2px 5px 2px 0; position: relative; }
@@ -827,6 +829,12 @@ a.swiss-tag-subname:hover { text-decoration: underline; }
 .soft-root details.sp-adv > summary::-webkit-details-marker { display: none; }
 .soft-root details.sp-adv > summary::before { content: '▸ '; }
 .soft-root details.sp-adv[open] > summary::before { content: '▾ '; }
+
+/* 长文本字段：限高滚动小抽屉（概览基本信息表等） */
+.soft-root .sp-scrollbox {
+  max-height: 4.6em; overflow-y: auto; overflow-wrap: anywhere;
+  font-size: 12px; background: var(--bg-hover); border-radius: 8px; padding: 4px 8px;
+}
 
 /* 缺项清单 */
 .soft-root .sp-missing { font-size: 12.5px; }
