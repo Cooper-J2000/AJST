@@ -427,14 +427,16 @@ export async function render(tid) {
                     <input type="text" class="form-control form-control-sm" id="specAxYmax" placeholder="ymax" title="y 轴最大值（流量）" style="width:80px">
                     <button class="sp-btn-ghost" onclick="applySpecAxisRange()">应用</button>
                     <button class="sp-btn-ghost" onclick="resetSpecAxisRange()">恢复默认</button>
-                    <select class="form-select form-select-sm" style="width:auto" id="specXTypeSel" onchange="setSpecAxisType()">
-                      <option value="linear" ${specAxisType.x === 'linear' ? 'selected' : ''}>X: 线性</option>
-                      <option value="logarithmic" ${specAxisType.x === 'logarithmic' ? 'selected' : ''}>X: 对数</option>
-                    </select>
-                    <select class="form-select form-select-sm" style="width:auto" id="specYTypeSel" onchange="setSpecAxisType()">
-                      <option value="linear" ${specAxisType.y === 'linear' ? 'selected' : ''}>Y: 线性</option>
-                      <option value="logarithmic" ${specAxisType.y === 'logarithmic' ? 'selected' : ''}>Y: 对数</option>
-                    </select>
+                    <span class="d-inline-flex gap-1">
+                      <select class="form-select form-select-sm" style="width:auto" id="specXTypeSel" onchange="setSpecAxisType()">
+                        <option value="linear" ${specAxisType.x === 'linear' ? 'selected' : ''}>X: 线性</option>
+                        <option value="logarithmic" ${specAxisType.x === 'logarithmic' ? 'selected' : ''}>X: 对数</option>
+                      </select>
+                      <select class="form-select form-select-sm" style="width:auto" id="specYTypeSel" onchange="setSpecAxisType()">
+                        <option value="linear" ${specAxisType.y === 'linear' ? 'selected' : ''}>Y: 线性</option>
+                        <option value="logarithmic" ${specAxisType.y === 'logarithmic' ? 'selected' : ''}>Y: 对数</option>
+                      </select>
+                    </span>
                     <span class="text-secondary ms-1" title="也可在图上拖拽框选缩放"><i class="bi bi-info-circle"></i></span>
                   </div>
                   <details class="sp-adv mb-2">
