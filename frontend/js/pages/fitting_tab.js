@@ -273,24 +273,25 @@ export async function initFittingTab(container, tid) {
   _refMJD = null;             // 基准时刻复位为源 T0
   _t0MJD = null;
   container.innerHTML = `
+    <div class="fitting-root soft-root">
     <div class="row g-3">
       <div class="col-lg-6">
         <div class="card h-100">
-          <div class="card-header"><i class="bi bi-cpu"></i> 拟合配置</div>
+          <div class="card-header">拟合配置</div>
           <div class="card-body" id="fitConfigBody">
-            <div class="text-secondary small"><span class="spinner-border spinner-border-sm"></span> 加载引擎配置...</div>
+            <div class="sp-muted"><span class="spinner-border spinner-border-sm"></span> 加载引擎配置...</div>
           </div>
         </div>
       </div>
       <div class="col-lg-6">
         <div class="card h-100">
           <div class="card-header d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-funnel"></i> 数据选取</span>
-            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1" id="fitSelReset"
+            <span>数据选取</span>
+            <button type="button" class="sp-btn-ghost py-0 px-1" id="fitSelReset"
                     style="font-size:0.72rem">重置选取</button>
           </div>
           <div class="card-body" id="fitSelBody">
-            <div class="text-secondary small">加载光变数据...</div>
+            <div class="sp-muted">加载光变数据...</div>
           </div>
         </div>
       </div>
@@ -299,18 +300,19 @@ export async function initFittingTab(container, tid) {
       <div class="col-12">
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-list-task"></i> 拟合任务</span>
-            <button class="btn btn-sm btn-outline-secondary" id="fitRefreshBtn" title="刷新任务列表">
+            <span>拟合任务</span>
+            <button class="sp-btn-ghost" id="fitRefreshBtn" title="刷新任务列表">
               <i class="bi bi-arrow-clockwise"></i>
             </button>
           </div>
           <div class="card-body p-0" id="fitJobsBody">
-            <div class="text-secondary small p-3"><span class="spinner-border spinner-border-sm"></span> 加载任务...</div>
+            <div class="sp-muted p-3"><span class="spinner-border spinner-border-sm"></span> 加载任务...</div>
           </div>
         </div>
       </div>
     </div>
-    <div id="fitResultArea" class="mt-3"></div>`;
+    <div id="fitResultArea" class="mt-3"></div>
+    </div>`;
 
   document.getElementById('fitRefreshBtn').addEventListener('click', () => refreshJobs());
   document.getElementById('fitSelReset').addEventListener('click', resetSelection);
@@ -391,7 +393,7 @@ function renderConfig() {
             <input type="number" class="form-control form-control-sm" id="fitSeed" value="${sp.seed ?? 42}" min="0"></div>` : '';
 
   body.innerHTML = `
-    ${authed ? '' : `<div class="alert alert-warning py-2 small mb-3">
+    ${authed ? '' : `<div class="sp-warnbox mb-3">
       <i class="bi bi-lock"></i> 未登录：可浏览任务与结果，提交拟合需要先登录。</div>`}
     <div class="row g-2 small">
       <div class="col-12">
@@ -402,7 +404,7 @@ function renderConfig() {
       </div>
       ${modelControls}
       <div class="col-12 mt-2">
-        <label class="form-label small mb-1"><i class="bi bi-sliders"></i> 先验（切换组合会重置为默认模板，可手动修改）</label>
+        <label class="form-label small mb-1">先验<span class="text-secondary">（切换组合会重置为默认模板，可手动修改）</span></label>
         <div class="table-scroll" style="max-height:260px;overflow-y:auto">
           <table class="table table-sm mb-0" style="font-size:0.78rem">
             <thead><tr><th>参数</th><th>min</th><th>max</th><th>scale</th></tr></thead>
@@ -411,7 +413,7 @@ function renderConfig() {
         </div>
       </div>
       <div class="col-12 mt-2">
-        <label class="form-label small mb-1"><i class="bi bi-stopwatch"></i> 采样设置</label>
+        <label class="form-label small mb-1">采样设置</label>
         <div class="row g-2">
           <div class="col-3"><label class="small text-secondary mb-0">nsteps</label>
             <input type="number" class="form-control form-control-sm" id="fitNsteps" value="${sp.nsteps ?? 2000}" min="1" step="100"></div>
@@ -423,12 +425,10 @@ function renderConfig() {
             <input type="number" class="form-control form-control-sm" id="fitNpool" value="${sp.npool ?? 4}" min="1" max="${sp.npool_max ?? 8}"></div>
           ${seedInput}
         </div>
-        <div class="text-secondary mt-1" style="font-size:0.72rem">步数越大耗时越长（分钟~十分钟级）</div>
+        <div class="sp-muted mt-1" style="font-size:0.72rem">步数越大耗时越长（分钟~十分钟级）</div>
       </div>
       <div class="col-12 mt-2">
-        <button class="btn btn-sm btn-primary w-100" id="fitSubmitBtn" ${authed && !unsupported ? '' : 'disabled'}>
-          <i class="bi bi-play-fill"></i> 提交拟合
-        </button>
+        <button class="btn btn-primary w-100" id="fitSubmitBtn" ${authed && !unsupported ? '' : 'disabled'}>提交拟合</button>
       </div>
     </div>`;
 
@@ -519,7 +519,7 @@ function renderDataSelection() {
   }
   el.innerHTML = `
     <div class="row g-2 mb-2">
-      <div class="col-12"><label class="small text-secondary mb-0">基准时刻（横轴/拟合的时间零点；默认源 T0）</label>
+      <div class="col-12"><label class="sp-muted mb-0">基准时刻（横轴/拟合的时间零点；默认源 T0）</label>
         <input type="text" class="form-control form-control-sm" id="fitSelRefEpoch"
                placeholder="留空 = 源 T0；MJD 或 UTC，如 2022-10-09T13:16:59"
                title="可填 MJD 数字或 UTC 时间；改动后下方 t_min/t_max 与提交拟合的时间均按此基准"></div>
@@ -786,7 +786,7 @@ async function submitJob() {
     showToast(`提交失败: ${e.message}`, 'danger');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-play-fill"></i> 提交拟合';
+    btn.innerHTML = '提交拟合';
   }
 }
 
@@ -849,11 +849,11 @@ function renderJobs() {
               <td>${fmtRuntime(j.runtime_s)}</td>
               <td class="text-nowrap small">${fmtTime(j.created_at)}</td>
               <td class="text-nowrap">
-                ${j.status === 'done' ? `<button class="btn btn-sm btn-outline-primary py-0 px-1 fit-view" data-jobid="${j.id}">查看结果</button>` : ''}
+                ${j.status === 'done' ? `<button class="sp-btn-ghost py-0 px-1 fit-view" data-jobid="${j.id}">查看结果</button>` : ''}
                 ${isAuthed() && ['pending', 'running'].includes(j.status)
-                  ? `<button class="btn btn-sm btn-outline-warning py-0 px-1 fit-stop" data-jobid="${j.id}">中断</button>` : ''}
+                  ? `<button class="sp-btn-ghost py-0 px-1 fit-stop" data-jobid="${j.id}">中断</button>` : ''}
                 ${isAdmin() && ['done', 'failed', 'interrupted'].includes(j.status)
-                  ? `<button class="btn btn-sm btn-outline-danger py-0 px-1 fit-del" data-jobid="${j.id}" title="删除"><i class="bi bi-trash"></i></button>` : ''}
+                  ? `<button class="sp-btn-ghost sp-danger py-0 px-1 fit-del" data-jobid="${j.id}" title="删除"><i class="bi bi-trash"></i></button>` : ''}
               </td>
             </tr>
             ${['failed', 'interrupted'].includes(j.status) ? `<tr class="fit-err-row" data-jobid="${j.id}" style="display:none"><td colspan="7" class="small text-danger" id="fitErr_${j.id}">加载错误信息...</td></tr>` : ''}
@@ -969,11 +969,11 @@ async function loadResult(jobId) {
   area.innerHTML = `
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <span><i class="bi bi-graph-up-arrow"></i> 拟合结果 — 任务 #${detail.id} <span class="text-secondary small">${esc(detail.model_name)}</span></span>
+        <span>拟合结果 — 任务 #${detail.id} <span class="sp-muted ms-1">${esc(detail.model_name)}</span></span>
         <span class="d-flex gap-1">
-          ${detail.files && detail.files.metrics ? `<a class="btn btn-sm btn-outline-secondary" href="${esc(detail.files.metrics)}" target="_blank" title="查看 metrics.txt">
+          ${detail.files && detail.files.metrics ? `<a class="sp-btn-ghost text-decoration-none" href="${esc(detail.files.metrics)}" target="_blank" title="查看 metrics.txt">
             <i class="bi bi-file-text"></i> metrics</a>` : ''}
-          ${detail.files && detail.files.h5 ? `<a class="btn btn-sm btn-outline-secondary" href="${esc(detail.files.h5)}" title="下载采样链 h5">
+          ${detail.files && detail.files.h5 ? `<a class="sp-btn-ghost text-decoration-none" href="${esc(detail.files.h5)}" title="下载采样链 h5">
             <i class="bi bi-download"></i> chain_record.h5</a>` : ''}
         </span>
       </div>
@@ -983,7 +983,7 @@ async function loadResult(jobId) {
             <div class="d-flex flex-wrap gap-2 mb-2">
               ${stats.map(([k, v]) => `<span class="badge-tag badge-neutral">${k} = ${v}</span>`).join('')}
             </div>
-            ${warnings.length ? `<div class="alert alert-warning py-2 small">
+            ${warnings.length ? `<div class="sp-warnbox mb-2">
               <i class="bi bi-exclamation-triangle"></i> ${warnings.map(w => esc(w)).join('<br>')}</div>` : ''}
             <div class="table-scroll" style="max-height:340px;overflow-y:auto">
               <table class="table table-sm mb-0" style="font-size:0.8rem">
@@ -996,20 +996,20 @@ async function loadResult(jobId) {
             </div>
           </div>
           <div class="col-lg-7">
-            <div class="small text-secondary mb-1">模型光变叠加（68% 置信带，mJy）</div>
+            <div class="sp-muted mb-1">模型光变叠加（68% 置信带，mJy）</div>
             <div class="d-flex flex-wrap gap-1 align-items-center small mb-1">
               <span class="text-secondary">坐标范围:</span>
               <input type="text" class="form-control form-control-sm" id="fitAxXmin" placeholder="xmin (s)" style="width:80px">
               <input type="text" class="form-control form-control-sm" id="fitAxXmax" placeholder="xmax (s)" style="width:80px">
               <input type="text" class="form-control form-control-sm" id="fitAxYmin" placeholder="ymin" style="width:80px">
               <input type="text" class="form-control form-control-sm" id="fitAxYmax" placeholder="ymax" style="width:80px">
-              <button class="btn btn-sm btn-outline-primary" onclick="fitAxisApply()">应用</button>
-              <button class="btn btn-sm btn-outline-secondary" onclick="fitAxisReset()">恢复默认</button>
+              <button class="sp-btn-ghost" onclick="fitAxisApply()">应用</button>
+              <button class="sp-btn-ghost" onclick="fitAxisReset()">恢复默认</button>
               <div class="form-check form-check-inline mb-0" title="是否绘制数据点的误差棒">
                 <input class="form-check-input" type="checkbox" id="fitLcErr" ${_lcShowErr ? 'checked' : ''} onchange="fitLcErrToggle(this.checked)">
                 <label class="form-check-label small" for="fitLcErr">误差棒</label>
               </div>
-              <span class="text-secondary ms-1" title="在图上按住左键拖出矩形框可放大该区域"><i class="bi bi-info-circle"></i> 可框选缩放</span>
+              <span class="text-secondary ms-1" title="在图上按住左键拖出矩形框可放大该区域"><i class="bi bi-info-circle"></i></span>
             </div>
             <div style="position:relative;height:380px"><canvas id="fitLCChart"></canvas></div>
           </div>

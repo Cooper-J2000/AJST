@@ -116,20 +116,21 @@ export async function initHostfitTab(container, tid) {
   _jobs = [];
   _selectedId = null;
   container.innerHTML = `
+    <div class="hostfit-root soft-root">
     <div class="row g-3">
       <div class="col-lg-6">
         <div class="card h-100">
-          <div class="card-header"><i class="bi bi-houses"></i> 宿主信息</div>
+          <div class="card-header">宿主信息</div>
           <div class="card-body" id="hfHostBody">
-            <div class="text-secondary small"><span class="spinner-border spinner-border-sm"></span> 加载宿主信息...</div>
+            <div class="sp-muted"><span class="spinner-border spinner-border-sm"></span> 加载宿主信息...</div>
           </div>
         </div>
       </div>
       <div class="col-lg-6">
         <div class="card h-100">
-          <div class="card-header"><i class="bi bi-cpu"></i> 拟合配置</div>
+          <div class="card-header">拟合配置</div>
           <div class="card-body" id="hfConfigBody">
-            <div class="text-secondary small"><span class="spinner-border spinner-border-sm"></span> 加载拟合配置...</div>
+            <div class="sp-muted"><span class="spinner-border spinner-border-sm"></span> 加载拟合配置...</div>
           </div>
         </div>
       </div>
@@ -138,18 +139,19 @@ export async function initHostfitTab(container, tid) {
       <div class="col-12">
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-list-task"></i> 拟合任务</span>
-            <button class="btn btn-sm btn-outline-secondary" id="hfRefreshBtn" title="刷新任务列表">
+            <span>拟合任务</span>
+            <button class="sp-btn-ghost" id="hfRefreshBtn" title="刷新任务列表">
               <i class="bi bi-arrow-clockwise"></i>
             </button>
           </div>
           <div class="card-body p-0" id="hfJobsBody">
-            <div class="text-secondary small p-3"><span class="spinner-border spinner-border-sm"></span> 加载任务...</div>
+            <div class="sp-muted p-3"><span class="spinner-border spinner-border-sm"></span> 加载任务...</div>
           </div>
         </div>
       </div>
     </div>
-    <div id="hfResultArea" class="mt-3"></div>`;
+    <div id="hfResultArea" class="mt-3"></div>
+    </div>`;
 
   document.getElementById('hfRefreshBtn').addEventListener('click', () => refreshJobs());
 
@@ -219,9 +221,9 @@ function renderHostCard() {
   ].filter(Boolean);
 
   body.innerHTML = `
-    ${authed ? '' : `<div class="alert alert-warning py-2 small mb-2">
+    ${authed ? '' : `<div class="sp-warnbox mb-2">
       <i class="bi bi-lock"></i> 未登录：可浏览宿主信息与拟合结果，保存/提交需要先登录。</div>`}
-    ${!_host ? `<div class="text-secondary small mb-2">暂无宿主记录，填写并保存即创建。</div>` : ''}
+    ${!_host ? `<div class="sp-muted mb-2">暂无宿主记录，填写并保存即创建。</div>` : ''}
     <div class="row g-2 small">
       <div class="col-6"><label class="form-label small mb-1">RA</label>
         <input type="text" class="form-control form-control-sm" id="hfRa" value="${escAttr(h.ra ?? '')}" placeholder="度 或 08h08m27.4s"></div>
@@ -245,10 +247,10 @@ function renderHostCard() {
       ${d.fit_at ? `<span class="text-secondary" style="font-size:0.72rem">（任务 #${esc(d.job_id ?? '?')}，${esc(fmtTime(d.fit_at))}）</span>` : ''}
     </div>` : ''}
     <div class="d-flex justify-content-between align-items-center mt-3 mb-1">
-      <label class="form-label small mb-0"><i class="bi bi-camera"></i> 宿主测光（勾选行参与拟合；上限行不参与拟合）</label>
+      <label class="form-label small mb-0">宿主测光<span class="text-secondary">（勾选行参与拟合；上限行不参与拟合）</span></label>
       <div class="d-flex gap-1">
-        ${_host ? `<button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hfExportPhot" title="下载宿主测光表（CSV，含银消改正后星等 mag_gextcor 列）"><i class="bi bi-download"></i> 下载数据表</button>` : ''}
-        <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="hfAddPhotRow"><i class="bi bi-plus-lg"></i> 添加行</button>
+        ${_host ? `<button class="sp-btn-ghost py-0 px-1" id="hfExportPhot" title="下载宿主测光表（CSV，含银消改正后星等 mag_gextcor 列）"><i class="bi bi-download"></i> 下载数据表</button>` : ''}
+        <button class="sp-btn-ghost py-0 px-1" id="hfAddPhotRow"><i class="bi bi-plus-lg"></i> 添加行</button>
       </div>
     </div>
     <datalist id="hfBandList">${(_bandList || []).map(b => `<option value="${esc(b)}"></option>`).join('')}</datalist>
@@ -260,13 +262,11 @@ function renderHostCard() {
         <tbody id="hfPhotBody"></tbody>
       </table>
     </div>
-    <div class="text-secondary mt-1" style="font-size:0.72rem">
-      <i class="bi bi-info-circle"></i> 非上限且 mag_err 留空的点，后续处理（拟合 / 统计图）按 σ=${DEFAULT_MAG_ERR} mag 计，该缺省值不会写入记录。<br>
-      <i class="bi bi-moon-stars"></i> 未改正的数据在统计与拟合时会按 CSFD 尘埃图 + Rv=3.1 + P92 自动改正后使用。
+    <div class="sp-muted mt-1" style="font-size:0.72rem">
+      非上限且 mag_err 留空的点，后续处理（拟合 / 统计图）按 σ=${DEFAULT_MAG_ERR} mag 计，该缺省值不会写入记录。<br>
+      未改正的数据在统计与拟合时会按 CSFD 尘埃图 + Rv=3.1 + P92 自动改正后使用。
     </div>
-    <button class="btn btn-sm btn-primary w-100 mt-2" id="hfSaveBtn" ${authed ? '' : 'disabled'}>
-      <i class="bi bi-check-lg"></i> 保存宿主信息
-    </button>`;
+    <button class="btn btn-primary w-100 mt-2" id="hfSaveBtn" ${authed ? '' : 'disabled'}>保存宿主信息</button>`;
 
   renderPhotRows();
   attachCoordHint(document.getElementById('hfRa'), true);
@@ -311,7 +311,7 @@ function renderPhotRows() {
         <option value="n" ${p.gext_corr === false ? 'selected' : ''}>否（未改正）</option>
       </select></td>
       <td><input type="text" class="form-control form-control-sm hf-phot" data-i="${i}" data-f="source" value="${esc(p.source)}" style="width:90px"></td>
-      <td><button class="btn btn-sm btn-outline-danger py-0 px-1 hf-phot-del" data-i="${i}" title="删除行"><i class="bi bi-x"></i></button></td>
+      <td><button class="sp-btn-ghost sp-danger py-0 px-1 hf-phot-del" data-i="${i}" title="删除行"><i class="bi bi-x"></i></button></td>
     </tr>`;
   }).join('');
 
@@ -431,7 +431,7 @@ async function saveHostInfo() {
   } finally {
     if (btn.isConnected) {
       btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-check-lg"></i> 保存宿主信息';
+      btn.innerHTML = '保存宿主信息';
     }
   }
 }
@@ -463,30 +463,29 @@ function renderConfigCard() {
   const dynDft = prDft.dynesty || {};
 
   body.innerHTML = `
-    <div class="small mb-2">
-      <span class="text-secondary">拟合引擎：</span>
-      <div class="form-check form-check-inline">
-        <input class="form-check-input" type="radio" name="hfEngine" id="hfEnginePcg" value="pcigale" ${!isPrs ? 'checked' : ''}>
-        <label class="form-check-label" for="hfEnginePcg">pcigale</label>
-      </div>
-      <div class="form-check form-check-inline">
-        <input class="form-check-input" type="radio" name="hfEngine" id="hfEnginePrs" value="prospector" ${isPrs ? 'checked' : ''} ${prs ? '' : 'disabled'}>
-        <label class="form-check-label" for="hfEnginePrs">prospector${prs ? '' : '（后端不可用）'}</label>
+    <div class="mb-2">
+      <div class="sp-muted mb-1">拟合引擎</div>
+      <div class="sp-seg">
+        <label><input type="radio" name="hfEngine" id="hfEnginePcg" value="pcigale" ${!isPrs ? 'checked' : ''}>
+          <span class="sp-seg-item">pcigale</span></label>
+        <label title="${prs ? '' : '后端不可用'}"><input type="radio" name="hfEngine" id="hfEnginePrs" value="prospector" ${isPrs ? 'checked' : ''} ${prs ? '' : 'disabled'}>
+          <span class="sp-seg-item">prospector${prs ? '' : '（不可用）'}</span></label>
       </div>
     </div>
     <div class="small mb-2">
-      <div class="form-check">
-        <input class="form-check-input" type="radio" name="hfMode" id="hfModeFixed" value="fixed" checked>
-        <label class="form-check-label" for="hfModeFixed">固定红移</label>
-        <input type="text" class="form-control form-control-sm d-inline-block ms-2" id="hfFixedZ" value="${escAttr(fixedZ)}"
+      <div class="sp-muted mb-1">红移模式</div>
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <div class="sp-seg">
+          <label><input type="radio" name="hfMode" id="hfModeFixed" value="fixed" checked>
+            <span class="sp-seg-item">固定红移</span></label>
+          <label><input type="radio" name="hfMode" id="hfModePhotoz" value="photoz">
+            <span class="sp-seg-item">测光红移</span></label>
+        </div>
+        <input type="text" class="form-control form-control-sm" id="hfFixedZ" value="${escAttr(fixedZ)}"
                readonly style="width:110px" title="取当前宿主红移；保存宿主信息后刷新">
-        ${fixedZ === '' ? '<span class="text-secondary" style="font-size:0.72rem">（宿主红移未设置，提交前需先保存）</span>' : ''}
+        ${fixedZ === '' ? '<span class="sp-muted" style="font-size:0.72rem">（宿主红移未设置，提交前需先保存）</span>' : ''}
       </div>
-      <div class="form-check mt-2">
-        <input class="form-check-input" type="radio" name="hfMode" id="hfModePhotoz" value="photoz">
-        <label class="form-check-label" for="hfModePhotoz">测光红移</label>
-      </div>
-      <div class="row g-2 mt-1 ms-3" id="hfZGridRow" style="max-width:420px">
+      <div class="row g-2 mt-1" id="hfZGridRow" style="max-width:420px">
         <div class="col-4"><label class="small text-secondary mb-0">z_min</label>
           <input type="number" class="form-control form-control-sm hf-zgrid" id="hfZMin" step="any" value="${isPrs ? (prDft.z_min ?? 0) : (dft.z_min ?? 0)}"></div>
         <div class="col-4"><label class="small text-secondary mb-0">z_max</label>
@@ -496,21 +495,17 @@ function renderConfigCard() {
       </div>
     </div>
     <div id="hfPcgBlock" style="${isPrs ? 'display:none' : ''}">
-      <div class="mb-2">
-        <a class="small text-secondary text-decoration-none" data-bs-toggle="collapse" href="#hfAdvanced" role="button" aria-expanded="false">
-          <i class="bi bi-sliders"></i> 高级：参数网格（逗号分隔）
-        </a>
-        <div class="collapse mt-2" id="hfAdvanced">
-          <div class="row g-2">
-            <div class="col-12"><label class="small text-secondary mb-0">tau_main (Myr)</label>
-              <input type="text" class="form-control form-control-sm hf-grid" id="hfTauMain" value="${esc(listStr(dft.tau_main))}"></div>
-            <div class="col-12"><label class="small text-secondary mb-0">age_main (Myr)</label>
-              <input type="text" class="form-control form-control-sm hf-grid" id="hfAgeMain" value="${esc(listStr(dft.age_main))}"></div>
-            <div class="col-12"><label class="small text-secondary mb-0">Av_ISM (mag)</label>
-              <input type="text" class="form-control form-control-sm hf-grid" id="hfAvIsm" value="${esc(listStr(dft.Av_ISM))}"></div>
-          </div>
+      <details class="sp-adv mb-2">
+        <summary>高级：参数网格（逗号分隔）</summary>
+        <div class="row g-2 mt-1">
+          <div class="col-12"><label class="small text-secondary mb-0">tau_main (Myr)</label>
+            <input type="text" class="form-control form-control-sm hf-grid" id="hfTauMain" value="${esc(listStr(dft.tau_main))}"></div>
+          <div class="col-12"><label class="small text-secondary mb-0">age_main (Myr)</label>
+            <input type="text" class="form-control form-control-sm hf-grid" id="hfAgeMain" value="${esc(listStr(dft.age_main))}"></div>
+          <div class="col-12"><label class="small text-secondary mb-0">Av_ISM (mag)</label>
+            <input type="text" class="form-control form-control-sm hf-grid" id="hfAvIsm" value="${esc(listStr(dft.Av_ISM))}"></div>
         </div>
-      </div>
+      </details>
       <div class="small mb-2">
         <span class="text-secondary">模型组合：</span><code id="hfModuleLine"></code>
         <div class="form-check mt-1">
@@ -521,7 +516,7 @@ function renderConfigCard() {
           <input class="form-check-input hf-optmod" type="checkbox" id="hfUseDl2014">
           <label class="form-check-label" for="hfUseDl2014">尘埃红外发射（dl2014）</label>
         </div>
-        <div class="text-secondary mt-1" style="font-size:0.78rem" id="hfGridHint"></div>
+        <div class="sp-muted mt-1" style="font-size:0.78rem" id="hfGridHint"></div>
       </div>
     </div>
     <div id="hfPrsBlock" style="${isPrs ? '' : 'display:none'}">
@@ -560,27 +555,21 @@ function renderConfigCard() {
           <div class="col-4"><label class="small text-secondary mb-0">nburn（&lt;niter）</label>
             <input type="number" class="form-control form-control-sm hf-prsamp" id="hfPrNburn" step="1" value="${emceeDft.nburn ?? 500}"></div>
         </div>
-        <div class="text-secondary mt-1" style="font-size:0.78rem" id="hfPrHint"></div>
+        <div class="sp-muted mt-1" style="font-size:0.78rem" id="hfPrHint"></div>
       </div>
-      <div class="mb-2">
-        <a class="small text-secondary text-decoration-none" data-bs-toggle="collapse" href="#hfPrPriors" role="button" aria-expanded="false">
-          <i class="bi bi-sliders"></i> 高级：先验范围（lo / hi）
-        </a>
-        <div class="collapse mt-2" id="hfPrPriors">
-          <div class="row g-2">
-            ${priorInputs('mass', 'mass (M☉)')}
-            ${priorInputs('tage', 'tage (Gyr)')}
-            ${priorInputs('tau', 'τ (Gyr)')}
-            ${priorInputs('dust2', 'dust2（V 带光学深度）')}
-            ${priorInputs('logzsol', 'logzsol')}
-          </div>
+      <details class="sp-adv mb-2">
+        <summary>高级：先验范围（lo / hi）</summary>
+        <div class="row g-2 mt-1">
+          ${priorInputs('mass', 'mass (M☉)')}
+          ${priorInputs('tage', 'tage (Gyr)')}
+          ${priorInputs('tau', 'τ (Gyr)')}
+          ${priorInputs('dust2', 'dust2（V 带光学深度）')}
+          ${priorInputs('logzsol', 'logzsol')}
         </div>
-      </div>
+      </details>
     </div>
-    <div class="small text-secondary mb-2" id="hfFitHint"></div>
-    <button class="btn btn-sm btn-primary w-100" id="hfSubmitBtn" ${authed ? '' : 'disabled'}>
-      <i class="bi bi-play-fill"></i> 提交拟合
-    </button>`;
+    <div class="sp-muted mb-2" id="hfFitHint"></div>
+    <button class="btn btn-primary w-100" id="hfSubmitBtn" ${authed ? '' : 'disabled'}>提交拟合</button>`;
 
   body.querySelectorAll('input[name="hfEngine"]').forEach(r => {
     r.addEventListener('change', () => {
@@ -825,7 +814,7 @@ async function submitJob() {
     showToast(`提交失败: ${e.message}`, 'danger');
   } finally {
     updateSubmitState();
-    if (btn.isConnected) btn.innerHTML = '<i class="bi bi-play-fill"></i> 提交拟合';
+    if (btn.isConnected) btn.innerHTML = '提交拟合';
   }
 }
 
@@ -880,9 +869,9 @@ function renderJobs() {
               <td>${STATUS_BADGE[j.status] || esc(j.status)}</td>
               <td>${j.chi_squared != null ? sci3(j.chi_squared) : '-'}</td>
               <td class="text-nowrap">
-                ${j.status === 'done' ? `<button class="btn btn-sm btn-outline-primary py-0 px-1 hf-view" data-jobid="${j.id}">查看结果</button>` : ''}
+                ${j.status === 'done' ? `<button class="sp-btn-ghost py-0 px-1 hf-view" data-jobid="${j.id}">查看结果</button>` : ''}
                 ${isAdmin() && ['done', 'failed', 'interrupted'].includes(j.status)
-                  ? `<button class="btn btn-sm btn-outline-danger py-0 px-1 hf-del" data-jobid="${j.id}" title="删除"><i class="bi bi-trash"></i></button>` : ''}
+                  ? `<button class="sp-btn-ghost sp-danger py-0 px-1 hf-del" data-jobid="${j.id}" title="删除"><i class="bi bi-trash"></i></button>` : ''}
               </td>
             </tr>
           `).join('')}
@@ -957,7 +946,7 @@ async function loadResult(jobId) {
                         corner: 'corner.png', log: 'run.log' };
   const downloadBtns = Object.keys(files)
     .filter(k => k !== 'sed_png' && FILE_LABELS[k])
-    .map(k => `<a class="btn btn-sm btn-outline-secondary" href="${hostfitJobFileUrl(jobId, k)}" download>
+    .map(k => `<a class="sp-btn-ghost text-decoration-none" href="${hostfitJobFileUrl(jobId, k)}" download>
       <i class="bi bi-download"></i> ${FILE_LABELS[k]}</a>`).join('\n          ');
   const cornerImg = files.corner ? `
         <div class="row g-3 mt-1">
@@ -971,10 +960,10 @@ async function loadResult(jobId) {
   area.innerHTML = `
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <span><i class="bi bi-graph-up-arrow"></i> 拟合结果 — 任务 #${detail.id} ${engineBadge(jobEngine(detail))}
-          <span class="text-secondary small">${detail.mode === 'photoz' ? '测光红移' : '固定红移'} · χ²=${detail.chi_squared != null ? sci3(detail.chi_squared) : '-'}</span>
-          <div class="text-secondary" style="font-size:0.72rem">${esc(jobModules(detail))}</div></span>
-        ${authed && done ? `<button class="btn btn-sm btn-outline-success" id="hfWriteHost">
+        <span>拟合结果 — 任务 #${detail.id} ${engineBadge(jobEngine(detail))}
+          <span class="sp-muted ms-1">${detail.mode === 'photoz' ? '测光红移' : '固定红移'} · χ²=${detail.chi_squared != null ? sci3(detail.chi_squared) : '-'}</span>
+          <div class="sp-muted" style="font-size:0.72rem">${esc(jobModules(detail))}</div></span>
+        ${authed && done ? `<button class="sp-btn-ghost" id="hfWriteHost">
           <i class="bi bi-box-arrow-in-down"></i> 写入宿主信息</button>` : ''}
       </div>
       <div class="card-body">

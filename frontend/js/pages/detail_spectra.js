@@ -180,15 +180,15 @@ export async function initSpectraTab(tid, redshift) {
           : waveTypeLabel(s.wavelength_type)}</td>
         <td class="small">${esc((s.extra_data && s.extra_data.observer)) || '-'}</td>
         <td class="text-nowrap" onclick="event.stopPropagation()">
-          ${remarks ? `<button class="btn btn-sm btn-outline-info py-0 px-1" title="${escAttr(remarks)}" onclick="toggleSpecRemarks(${s.id})"><i class="bi bi-info-circle"></i></button>` : ''}
+          ${remarks ? `<button class="sp-btn-ghost py-0 px-1" title="${escAttr(remarks)}" onclick="toggleSpecRemarks(${s.id})"><i class="bi bi-info-circle"></i></button>` : ''}
           <input type="number" class="form-control form-control-sm d-inline-block spec-offset" data-id="${s.id}"
                  style="width:60px;display:${_specMode === 'relative' ? 'inline-block' : 'none'};font-size:0.75rem;padding:1px 4px"
                  step="0.1" value="${_specOffsets[s.id] || 0}" title="纵向偏移（相对流量模式）" onchange="setSpecOffset(${s.id}, this.value)">
-          <a class="btn btn-sm btn-outline-secondary py-0 px-1" href="${API_BASE}/spectra/${s.id}/download" download
+          <a class="sp-btn-ghost py-0 px-1" href="${API_BASE}/spectra/${s.id}/download" download
              title="下载光谱文本（波长Å 流量 [误差]）" onclick="event.stopPropagation()"><i class="bi bi-download"></i></a>
-          <a class="btn btn-sm btn-outline-secondary py-0 px-1" href="#/tools/specphot/${s.id}" title="光谱工具：在「光谱 × 滤光片」工作台装载该谱（仅装载，不自动计算）" onclick="event.stopPropagation()"><i class="bi bi-rulers"></i></a>
-          ${authed && !isChild ? `<button class="btn btn-sm btn-outline-warning py-0 px-1" title="生成/重新生成银河系消光改正谱" onclick="gextCorrectSpectrum(${s.id})"><i class="bi bi-stars"></i></button>` : ''}
-          ${admin ? `<button class="btn btn-sm btn-outline-danger py-0 px-1" title="删除该光谱" onclick="deleteSpectrum(${s.id})"><i class="bi bi-trash"></i></button>` : ''}
+          <a class="sp-btn-ghost py-0 px-1" href="#/tools/specphot/${s.id}" title="在「光谱 × 滤光片」工作台装载该谱（仅装载，不自动计算）" onclick="event.stopPropagation()"><i class="bi bi-rulers"></i></a>
+          ${authed && !isChild ? `<button class="sp-btn-ghost py-0 px-1" title="生成/重新生成银河系消光改正谱" onclick="gextCorrectSpectrum(${s.id})"><i class="bi bi-stars"></i></button>` : ''}
+          ${admin ? `<button class="sp-btn-ghost sp-danger py-0 px-1" title="删除该光谱" onclick="deleteSpectrum(${s.id})"><i class="bi bi-trash"></i></button>` : ''}
         </td>
       </tr>${remarks ? `
       <tr id="specRem_${s.id}" style="display:none">

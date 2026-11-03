@@ -383,16 +383,16 @@ export async function render(tid) {
         <!-- ─── 宿主星系（由 hostfit_tab.js 填充） ─── -->
         <div id="tab-host" class="tab-pane" style="display:none"></div>
         <!-- ─── 光谱数据（单条查看 / 多条对比） ─── -->
-        <div id="tab-spectra" class="tab-pane" style="display:none">
+        <div id="tab-spectra" class="tab-pane soft-root" style="display:none">
           <div class="row g-3">
             <div class="col-md-5">
               <div class="card h-100">
                 <div class="card-header d-flex justify-content-between align-items-center">
-                  <span><i class="bi bi-list-ul"></i> 光谱列表</span>
-                  <button class="btn btn-sm btn-outline-primary py-0" id="specUploadBtn" style="display:none" onclick="showSpecUpload()" title="上传光谱"><i class="bi bi-upload"></i> 上传</button>
+                  <span>光谱列表</span>
+                  <button class="sp-btn-ghost py-0" id="specUploadBtn" style="display:none" onclick="showSpecUpload()" title="上传光谱"><i class="bi bi-upload"></i> 上传</button>
                 </div>
                 <div class="card-body p-0" style="max-height:560px;overflow-y:auto">
-                  <div class="small text-secondary px-2 pt-1">点击行切换选择，可多选对比；留空的光谱按空气波长处理（不自动回填），所有处理默认先转真空波长</div>
+                  <div class="sp-muted px-2 pt-1">点击行切换选择，可多选对比；留空的光谱按空气波长处理（不自动回填），所有处理默认先转真空波长</div>
                   <table class="table table-sm table-hover mb-0" style="font-size:0.85rem">
                     <thead><tr><th>观测时间 (MJD)</th><th>仪器</th><th>类型</th><th>波长类型</th><th>观测者</th><th>纵向偏移量</th></tr></thead>
                     <tbody id="spectraListBody">
@@ -405,9 +405,9 @@ export async function render(tid) {
             <div class="col-md-7">
               <div class="card h-100">
                 <div class="card-header d-flex justify-content-between align-items-center">
-                  <span><i class="bi bi-activity"></i> <span id="specTitle">光谱</span></span>
+                  <span id="specTitle">光谱</span>
                   <div class="d-flex align-items-center gap-2">
-                    <small class="text-secondary" id="specMeta"></small>
+                    <small class="sp-muted" id="specMeta"></small>
                     <div class="form-check form-check-inline mb-0" id="specErrChkWrap" title="是否绘制流量误差条">
                       <input class="form-check-input" type="checkbox" id="specErrChk" checked onchange="toggleSpecErr(this.checked)">
                       <label class="form-check-label small text-secondary" for="specErrChk">误差</label>
@@ -425,8 +425,8 @@ export async function render(tid) {
                     <input type="text" class="form-control form-control-sm" id="specAxXmax" placeholder="xmax" title="x 轴最大值（Å，观测者系）" style="width:80px">
                     <input type="text" class="form-control form-control-sm" id="specAxYmin" placeholder="ymin" title="y 轴最小值（流量）" style="width:80px">
                     <input type="text" class="form-control form-control-sm" id="specAxYmax" placeholder="ymax" title="y 轴最大值（流量）" style="width:80px">
-                    <button class="btn btn-sm btn-outline-primary" onclick="applySpecAxisRange()">应用</button>
-                    <button class="btn btn-sm btn-outline-secondary" onclick="resetSpecAxisRange()">恢复默认</button>
+                    <button class="sp-btn-ghost" onclick="applySpecAxisRange()">应用</button>
+                    <button class="sp-btn-ghost" onclick="resetSpecAxisRange()">恢复默认</button>
                     <select class="form-select form-select-sm" style="width:auto" id="specXTypeSel" onchange="setSpecAxisType()">
                       <option value="linear" ${specAxisType.x === 'linear' ? 'selected' : ''}>X: 线性</option>
                       <option value="logarithmic" ${specAxisType.x === 'logarithmic' ? 'selected' : ''}>X: 对数</option>
@@ -435,11 +435,11 @@ export async function render(tid) {
                       <option value="linear" ${specAxisType.y === 'linear' ? 'selected' : ''}>Y: 线性</option>
                       <option value="logarithmic" ${specAxisType.y === 'logarithmic' ? 'selected' : ''}>Y: 对数</option>
                     </select>
-                    <span class="text-secondary ms-1">（也可在图上拖拽框选缩放）</span>
+                    <span class="text-secondary ms-1" title="也可在图上拖拽框选缩放"><i class="bi bi-info-circle"></i></span>
                   </div>
-                  <details class="mb-2">
-                    <summary class="small text-secondary" style="cursor:pointer">谱线标记（TNS 风格：H/He/C/N/O… 常见线、自定义波长、Tellurics、星系线、WR 线，z 与 v<sub>exp</sub> 可调）</summary>
-                    <div id="specMarkingsBody" class="border rounded p-2 mt-1" style="max-height:260px;overflow-y:auto"></div>
+                  <details class="sp-adv mb-2">
+                    <summary>谱线标记（TNS 风格：H/He/C/N/O… 常见线、自定义波长、Tellurics、星系线、WR 线，z 与 v<sub>exp</sub> 可调）</summary>
+                    <div id="specMarkingsBody" class="mt-1" style="max-height:260px;overflow-y:auto"></div>
                   </details>
                   <div class="chart-container" style="height:500px"><canvas id="specChart"></canvas></div>
                 </div>
