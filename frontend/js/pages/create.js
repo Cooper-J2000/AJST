@@ -6,15 +6,16 @@ import { attachTagInput, ensureTagsRegistered } from '../taginput.js';
 
 export async function render() {
   app.innerHTML = `
+    <div class="create-root soft-root">
     <div class="mb-3">
       <a href="#/" class="text-secondary text-decoration-none small"><i class="bi bi-arrow-left"></i> 返回列表</a>
     </div>
-    <div class="page-header"><h4><i class="bi bi-plus-circle"></i> 新建暂现源事件</h4></div>
+    <div class="sp-page-title mb-3">新建暂现源事件</div>
 
     <div class="row">
       <div class="col-lg-8">
         <div class="card">
-          <div class="card-header">基本信息 <small class="text-secondary">* 为必填</small></div>
+          <div class="card-header">基本信息 <small class="sp-muted">* 为必填</small></div>
           <div class="card-body">
             <form id="newTransientForm">
               <div class="row g-3">
@@ -112,39 +113,34 @@ export async function render() {
                 </div>
               </div>
               <!-- 宿主星系（可选，可后补） -->
-              <div class="mt-3">
-                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse"
-                        data-bs-target="#hostCollapse" aria-expanded="false" aria-controls="hostCollapse">
-                  <i class="bi bi-houses"></i> 宿主星系（可选，可后补）
-                </button>
-                <div class="collapse mt-2" id="hostCollapse">
-                  <div class="row g-3 border rounded p-2">
-                    <div class="col-md-4">
-                      <label class="form-label">宿主 RA</label>
-                      <input type="text" class="form-control" id="fHostRa" placeholder="度 或 08h08m27.4s">
-                    </div>
-                    <div class="col-md-4">
-                      <label class="form-label">宿主 Dec</label>
-                      <input type="text" class="form-control" id="fHostDec" placeholder="度 或 +40d36m44.8s">
-                    </div>
-                    <div class="col-md-2">
-                      <label class="form-label">宿主红移</label>
-                      <input type="number" class="form-control" id="fHostZ" step="any">
-                    </div>
-                    <div class="col-md-2">
-                      <label class="form-label">红移类型</label>
-                      <select class="form-select" id="fHostZType">
-                        <option value="">-</option>
-                        <option value="spec">spec</option>
-                        <option value="phot">phot</option>
-                      </select>
-                    </div>
+              <details class="sp-adv mt-3" id="hostCollapseWrap">
+                <summary>宿主星系（可选，可后补）</summary>
+                <div class="row g-3 mt-1" id="hostCollapse">
+                  <div class="col-md-4">
+                    <label class="form-label">宿主 RA</label>
+                    <input type="text" class="form-control" id="fHostRa" placeholder="度 或 08h08m27.4s">
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label">宿主 Dec</label>
+                    <input type="text" class="form-control" id="fHostDec" placeholder="度 或 +40d36m44.8s">
+                  </div>
+                  <div class="col-md-2">
+                    <label class="form-label">宿主红移</label>
+                    <input type="number" class="form-control" id="fHostZ" step="any">
+                  </div>
+                  <div class="col-md-2">
+                    <label class="form-label">红移类型</label>
+                    <select class="form-select" id="fHostZType">
+                      <option value="">-</option>
+                      <option value="spec">spec</option>
+                      <option value="phot">phot</option>
+                    </select>
                   </div>
                 </div>
-              </div>
-              <div class="mt-4 d-flex gap-2">
-                <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> 创建事件</button>
-                <a href="#/" class="btn btn-outline-secondary">取消</a>
+              </details>
+              <div class="mt-4 d-flex gap-2 align-items-center">
+                <button type="submit" class="btn btn-primary">创建事件</button>
+                <a href="#/" class="sp-btn-ghost text-decoration-none">取消</a>
               </div>
             </form>
           </div>
@@ -153,7 +149,7 @@ export async function render() {
       <div class="col-lg-4">
         <div class="card">
           <div class="card-header">提示</div>
-          <div class="card-body small text-secondary">
+          <div class="card-body sp-muted">
             <ul class="mb-0 ps-3">
               <li>事件 ID 是唯一标识，不可重复</li>
               <li>坐标支持十进制度或时分秒（如 122.1142 或 08h08m27.4s / +40d36m44.8s），入库统一转度</li>
@@ -164,6 +160,7 @@ export async function render() {
           </div>
         </div>
       </div>
+    </div>
     </div>
   `;
 

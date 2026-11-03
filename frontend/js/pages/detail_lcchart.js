@@ -577,8 +577,8 @@ function buildBandPanel(sortedBands, spectralColors) {
       <label class="form-check-label" for="lcBandChk_${i}"><span style="color:${c}">●</span> ${esc(b)}</label>
     </span>`;
   }).join('') + `
-    <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="lcBandAll">全选</button>
-    <button class="btn btn-sm btn-outline-secondary py-0 px-1" id="lcBandNone">全不选</button>
+    <button class="sp-btn-ghost py-0 px-1" id="lcBandAll">全选</button>
+    <button class="sp-btn-ghost py-0 px-1" id="lcBandNone">全不选</button>
     <span class="form-check form-check-inline mb-0 ms-2 border-start ps-2 d-inline-flex align-items-center" title="是否在图上显示上限点（倒三角）；取消勾选只显示探测点">
       <input class="form-check-input mt-0" type="checkbox" id="lcShowUL" ${_lcShowUL ? 'checked' : ''}>
       <label class="form-check-label" for="lcShowUL">显示上限点</label>
@@ -684,7 +684,7 @@ function renderFitList() {
     return `<div class="d-flex align-items-center gap-2 mb-1">
       <span style="display:inline-block;width:24px;border-top:2px dashed ${fit.color}"></span>
       <span>${FIT_MODEL_NAMES[fit.model] || fit.model} · ${esc(fit.band)} · 拟合[${sciFormat(toChartT(fit.tmin))}, ${sciFormat(toChartT(fit.tmax))}]s${prange} · ${ptxt} · N=${fit.N}</span>
-      <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="removeLCFit(${i})" title="删除该拟合"><i class="bi bi-trash"></i></button>
+      <button class="sp-btn-ghost sp-danger py-0 px-1" onclick="removeLCFit(${i})" title="删除该拟合"><i class="bi bi-trash"></i></button>
     </div>`;
   }).join('');
 }

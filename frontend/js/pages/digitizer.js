@@ -52,26 +52,27 @@ function stMagToFlambda(mag) {
 export async function render() {
   showLoading();
   app.innerHTML = `
-    <div class="page-header"><h4><i class="bi bi-vector-pen"></i> 抠图取数</h4></div>
+    <div class="digitizer-root soft-root">
+    <div class="sp-page-title mb-3">抠图取数</div>
     <div class="row g-3">
       <div class="col-lg-8">
         <div class="card">
-          <div class="card-header d-flex flex-wrap gap-1 align-items-center py-1">
-            <label class="btn btn-sm btn-outline-primary mb-0">
+          <div class="card-header d-flex flex-wrap gap-2 align-items-center">
+            <label class="sp-btn-ghost mb-0">
               <i class="bi bi-image"></i> 加载图片
               <input type="file" id="dgzFile" accept="image/*" hidden>
             </label>
-            <div class="btn-group btn-group-sm ms-2" id="dgzModes">
-              <button class="btn btn-outline-secondary" data-mode="calib">标定</button>
-              <button class="btn btn-outline-secondary" data-mode="manual">手动取点</button>
-              <button class="btn btn-outline-secondary" data-mode="auto">自动取色</button>
-              <button class="btn btn-outline-secondary" data-mode="rect">框选范围</button>
-              <button class="btn btn-outline-secondary" data-mode="interp">插值取点</button>
-              <button class="btn btn-outline-secondary" data-mode="delete">删除点</button>
+            <div class="sp-seg ms-1" id="dgzModes">
+              <button class="sp-seg-item" data-mode="calib">标定</button>
+              <button class="sp-seg-item" data-mode="manual">手动取点</button>
+              <button class="sp-seg-item" data-mode="auto">自动取色</button>
+              <button class="sp-seg-item" data-mode="rect">框选范围</button>
+              <button class="sp-seg-item" data-mode="interp">插值取点</button>
+              <button class="sp-seg-item" data-mode="delete">删除点</button>
             </div>
-            <button class="btn btn-sm btn-outline-warning ms-2" id="dgzUndo"><i class="bi bi-arrow-counterclockwise"></i> 撤销</button>
-            <button class="btn btn-sm btn-outline-danger" id="dgzClearDs">清空当前集</button>
-            <button class="btn btn-sm btn-outline-secondary ms-auto" id="dgzFit">重置视图</button>
+            <button class="sp-btn-ghost ms-1" id="dgzUndo"><i class="bi bi-arrow-counterclockwise"></i> 撤销</button>
+            <button class="sp-btn-ghost sp-danger" id="dgzClearDs">清空当前集</button>
+            <button class="sp-btn-ghost ms-auto" id="dgzFit">重置视图</button>
           </div>
           <div class="card-body p-1">
             <canvas id="dgzCanvas" style="width:100%;height:540px;display:block;cursor:crosshair"></canvas>
@@ -85,9 +86,9 @@ export async function render() {
       <div class="col-lg-4">
         <!-- 坐标轴标定 -->
         <div class="card mb-3">
-          <div class="card-header py-1"><span class="small fw-bold">① 坐标轴标定</span>
-            <span class="small float-end" id="dgzCalibStatus"></span></div>
-          <div class="card-body py-2" style="font-size:0.85rem">
+          <div class="card-header d-flex justify-content-between align-items-center">① 坐标轴标定
+            <span class="sp-muted" id="dgzCalibStatus"></span></div>
+          <div class="card-body" style="font-size:0.85rem">
             <div class="row g-1 align-items-center mb-1">
               <div class="col-2 small">X①</div><div class="col-4"><input class="form-control form-control-sm" id="dgzX1v" placeholder="值"></div>
               <div class="col-2 small">X②</div><div class="col-4"><input class="form-control form-control-sm" id="dgzX2v" placeholder="值"></div>
@@ -103,41 +104,41 @@ export async function render() {
               <div class="form-check form-check-inline mb-0 small">
                 <input class="form-check-input" type="checkbox" id="dgzYLog"><label class="form-check-label" for="dgzYLog">Y 对数轴</label>
               </div>
-              <span class="small text-secondary">（星等轴反转：上方点填小值即可）</span>
+              <span class="sp-muted">（星等轴反转：上方点填小值即可）</span>
             </div>
             <div class="d-flex gap-1">
               <button class="btn btn-sm btn-primary" id="dgzCalibApply">应用标定</button>
-              <button class="btn btn-sm btn-outline-secondary" id="dgzCalibReset">重新标定</button>
+              <button class="sp-btn-ghost" id="dgzCalibReset">重新标定</button>
             </div>
           </div>
         </div>
         <!-- 数据集 -->
         <div class="card mb-3">
-          <div class="card-header py-1 d-flex justify-content-between align-items-center">
-            <span class="small fw-bold">② 数据集</span>
-            <button class="btn btn-sm btn-outline-primary py-0" id="dgzDsAdd"><i class="bi bi-plus"></i> 添加</button>
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>② 数据集</span>
+            <button class="sp-btn-ghost py-0" id="dgzDsAdd"><i class="bi bi-plus"></i> 添加</button>
           </div>
           <div class="card-body p-1" id="dgzDsList" style="max-height:150px;overflow-y:auto"></div>
         </div>
         <!-- 框选范围 -->
         <div class="card mb-3">
-          <div class="card-header py-1"><span class="small fw-bold">③ 框选范围（ROI）</span></div>
-          <div class="card-body py-2" style="font-size:0.85rem">
-            <div class="small text-secondary mb-1" id="dgzRoiInfo">未框选：自动提取作用于全图</div>
+          <div class="card-header">③ 框选范围（ROI）</div>
+          <div class="card-body" style="font-size:0.85rem">
+            <div class="sp-muted mb-1" id="dgzRoiInfo">未框选：自动提取作用于全图</div>
             <div class="d-flex gap-1">
-              <button class="btn btn-sm btn-outline-secondary" id="dgzRoiClear" disabled>取消框选</button>
-              <button class="btn btn-sm btn-outline-danger" id="dgzRoiDel" disabled>删除框内点（当前集）</button>
+              <button class="sp-btn-ghost" id="dgzRoiClear" disabled>取消框选</button>
+              <button class="sp-btn-ghost sp-danger" id="dgzRoiDel" disabled>删除框内点（当前集）</button>
             </div>
           </div>
         </div>
         <!-- 自动提取 -->
         <div class="card mb-3">
-          <div class="card-header py-1"><span class="small fw-bold">④ 自动提取（按颜色）</span></div>
-          <div class="card-body py-2" style="font-size:0.85rem">
+          <div class="card-header">④ 自动提取（按颜色）</div>
+          <div class="card-body" style="font-size:0.85rem">
             <div class="d-flex gap-2 align-items-center mb-1">
               <span class="small">目标色</span>
               <span id="dgzSwatch" style="display:inline-block;width:18px;height:18px;border:1px solid var(--border-color);border-radius:3px"></span>
-              <span class="small text-secondary" id="dgzSwatchInfo">在「自动取色」模式点击图中曲线/符号取色</span>
+              <span class="sp-muted" id="dgzSwatchInfo">在「自动取色」模式点击图中曲线/符号取色</span>
             </div>
             <div class="d-flex gap-2 align-items-center mb-1">
               <span class="small" style="width:70px">容差 ΔE</span>
@@ -152,14 +153,14 @@ export async function render() {
               <span class="small" id="dgzParamArea">面积 <input class="form-control form-control-sm d-inline-block" id="dgzMinArea" value="5" style="width:55px"> – <input class="form-control form-control-sm d-inline-block" id="dgzMaxArea" value="500" style="width:65px"> px</span>
               <span class="small" id="dgzParamStride" style="display:none">列步长 <input class="form-control form-control-sm d-inline-block" id="dgzStride" value="1" style="width:55px"></span>
             </div>
-            <button class="btn btn-sm btn-primary" id="dgzAutoRun"><i class="bi bi-magic"></i> 执行提取</button>
-            <span class="small text-secondary ms-1">结果进入当前数据集</span>
+            <button class="btn btn-sm btn-primary" id="dgzAutoRun">执行提取</button>
+            <span class="sp-muted ms-1">结果进入当前数据集</span>
           </div>
         </div>
         <!-- 生成取点（直线/样条） -->
         <div class="card mb-3">
-          <div class="card-header py-1"><span class="small fw-bold">⑤ 生成取点（直线/样条）</span></div>
-          <div class="card-body py-2" style="font-size:0.85rem">
+          <div class="card-header">⑤ 生成取点（直线/样条）</div>
+          <div class="card-body" style="font-size:0.85rem">
             <div class="d-flex gap-2 align-items-center mb-1 flex-wrap">
               <select class="form-select form-select-sm" id="dgzInterpMode" style="width:auto">
                 <option value="line" selected>直线（2 个端点）</option>
@@ -169,7 +170,7 @@ export async function render() {
             </div>
             <div id="dgzSplineOpts" style="display:none">
               <div class="d-flex gap-2 align-items-center mb-1 flex-wrap">
-                <span class="small text-secondary">样条参数:</span>
+                <span class="text-secondary small">样条参数:</span>
                 <select class="form-select form-select-sm" id="dgzSplineType" style="width:auto">
                   <option value="natural" selected>自然三次样条（光滑，可能过冲）</option>
                   <option value="catmull">Catmull-Rom（张力可调，不易过冲）</option>
@@ -181,23 +182,23 @@ export async function render() {
                 </span>
               </div>
             </div>
-            <div class="small text-secondary mb-1" id="dgzCtrlInfo">在「插值取点」模式点击图上放置控制点（当前 0 个）</div>
+            <div class="sp-muted mb-1" id="dgzCtrlInfo">在「插值取点」模式点击图上放置控制点（当前 0 个）</div>
             <div class="d-flex gap-1">
-              <button class="btn btn-sm btn-primary" id="dgzInterpRun"><i class="bi bi-bezier2"></i> 生成点</button>
-              <button class="btn btn-sm btn-outline-secondary" id="dgzCtrlClear">清除控制点</button>
+              <button class="btn btn-sm btn-primary" id="dgzInterpRun">生成点</button>
+              <button class="sp-btn-ghost" id="dgzCtrlClear">清除控制点</button>
             </div>
           </div>
         </div>
         <!-- 输出 -->
         <div class="card">
-          <div class="card-header py-1"><span class="small fw-bold">⑥ 导出 / 写入 AJST</span></div>
-          <div class="card-body py-2" style="font-size:0.85rem">
-            <button class="btn btn-sm btn-outline-primary mb-2" id="dgzExport"><i class="bi bi-download"></i> 导出 CSV</button>
+          <div class="card-header">⑥ 导出 / 写入 AJST</div>
+          <div class="card-body" style="font-size:0.85rem">
+            <button class="sp-btn-ghost mb-2" id="dgzExport"><i class="bi bi-download"></i> 导出 CSV</button>
             <div class="gcn-form-sec">写入数据库</div>
             <div class="d-flex gap-1 mb-1">
               <input class="form-control form-control-sm" id="dgzSrcQ" placeholder="源 ID / 别名">
-              <button class="btn btn-sm btn-outline-secondary" id="dgzSrcSearch">搜索</button>
-              ${isAuthed() ? `<button class="btn btn-sm btn-outline-primary" id="dgzSrcNewBtn" title="源还不存在？在此新建"><i class="bi bi-plus-lg"></i> 新建源</button>` : ''}
+              <button class="sp-btn-ghost" id="dgzSrcSearch">搜索</button>
+              ${isAuthed() ? `<button class="sp-btn-ghost" id="dgzSrcNewBtn" title="源还不存在？在此新建"><i class="bi bi-plus-lg"></i> 新建源</button>` : ''}
             </div>
             ${isAuthed() ? `
             <div id="dgzSrcNewForm" class="border rounded p-2 mb-1" style="display:none">
@@ -213,7 +214,7 @@ export async function render() {
               <div class="form-text">T0 格式如 2026-09-01T12:34:56（UTC）；X 轴选 MJD 时需要源有 t0 才能换算，建议填写。</div>
               <div class="d-flex gap-1 mt-1">
                 <button class="btn btn-sm btn-primary" id="dgzNewSave">创建并选中</button>
-                <button class="btn btn-sm btn-outline-secondary" id="dgzNewCancel">取消</button>
+                <button class="sp-btn-ghost" id="dgzNewCancel">取消</button>
               </div>
             </div>` : ''}
             <select class="form-select form-select-sm mb-1" id="dgzSrcSel" style="display:none"></select>
@@ -238,8 +239,8 @@ export async function render() {
                 </select>
               </div>
               <div id="dgzDsMap"></div>
-              <details class="mb-1">
-                <summary class="small text-secondary" style="cursor:pointer">公共字段（reference / telescope / instrument / comment）</summary>
+              <details class="sp-adv mb-1">
+                <summary>公共字段（reference / telescope / instrument / comment）</summary>
                 <div class="row g-1 mt-1">
                   <div class="col-6"><input class="form-control form-control-sm" id="dgzRef" placeholder="reference"></div>
                   <div class="col-6"><input class="form-control form-control-sm" id="dgzTel" placeholder="telescope"></div>
@@ -294,13 +295,14 @@ export async function render() {
               <div id="dgzDsMapSpec"></div>
             </div>
             <div class="d-flex gap-1">
-              <button class="btn btn-sm btn-outline-primary" id="dgzPreview">预览入库数据</button>
-              <button class="btn btn-sm btn-success" id="dgzWrite" disabled>写入 AJST</button>
+              <button class="sp-btn-ghost" id="dgzPreview">预览入库数据</button>
+              <button class="btn btn-sm btn-primary" id="dgzWrite" disabled>写入 AJST</button>
             </div>
             <div id="dgzPreviewBox" class="small mt-2" style="max-height:180px;overflow:auto"></div>
           </div>
         </div>
       </div>
+    </div>
     </div>
   `;
 
@@ -836,7 +838,7 @@ function renderDsList() {
       <span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${ds.color}"></span>
       <input class="form-control form-control-sm dgz-ds-name" data-id="${ds.id}" value="${esc(ds.name)}" style="width:90px" onclick="event.stopPropagation()">
       <span class="small text-secondary">${ds.points.length} 点</span>
-      <button class="btn btn-sm btn-outline-danger py-0 px-1 ms-auto dgz-ds-del" data-id="${ds.id}" title="删除该数据集" onclick="event.stopPropagation()"><i class="bi bi-x"></i></button>
+      <button class="sp-btn-ghost sp-danger py-0 px-1 ms-auto dgz-ds-del" data-id="${ds.id}" title="删除该数据集" onclick="event.stopPropagation()"><i class="bi bi-x"></i></button>
     </div>`).join('');
   box.querySelectorAll('.dgz-ds-row').forEach(row => {
     row.addEventListener('click', () => {

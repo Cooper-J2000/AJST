@@ -557,19 +557,20 @@ function syncCheckAll() {
 export async function render() {
   showLoading();
   app.innerHTML = `
-    <div class="page-header d-flex justify-content-between align-items-center">
-      <h4 class="mb-0"><i class="bi bi-funnel"></i> 光学滤光片</h4>
-      <div>
-        <button class="btn btn-sm btn-outline-danger" id="filterDelBtn" style="display:none" onclick="filterDeleteSelected()"><i class="bi bi-trash"></i> 删除所选</button>
-        <button class="btn btn-sm btn-outline-primary ms-2" id="filterAddBtn" style="display:none" onclick="filterShowAdd()"><i class="bi bi-plus-circle"></i> 添加滤光片</button>
-        <small class="text-secondary ms-2" id="filterCount"></small>
+    <div class="filters-root soft-root">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div class="sp-page-title">光学滤光片</div>
+      <div class="d-flex align-items-center">
+        <button class="sp-btn-ghost sp-danger" id="filterDelBtn" style="display:none" onclick="filterDeleteSelected()"><i class="bi bi-trash"></i> 删除所选</button>
+        <button class="sp-btn-ghost ms-2" id="filterAddBtn" style="display:none" onclick="filterShowAdd()"><i class="bi bi-plus-circle"></i> 添加滤光片</button>
+        <small class="sp-muted ms-2" id="filterCount"></small>
       </div>
     </div>
     <!-- 透过率总图 -->
     <div class="card mb-3">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-graph-up"></i> 透过率总览</span>
-        <small class="text-secondary">行首勾选控制显示；点击图例或表格 ID 加粗突出；在图上拖动框选可放大横轴</small>
+        <span>透过率总览</span>
+        <small class="sp-muted">行首勾选控制显示；点击图例或表格 ID 加粗突出；在图上拖动框选可放大横轴</small>
       </div>
       <div class="card-body">
         <div class="chart-container" style="height:240px"><canvas id="filterOverviewChart"></canvas><div id="ovMarquee" style="position:absolute;display:none;pointer-events:none;z-index:5;border:1px solid var(--accent-blue);background:var(--accent-blue-soft)"></div></div>
@@ -578,9 +579,9 @@ export async function render() {
           <input type="number" step="any" class="form-control form-control-sm" style="width:110px" id="ovXMin" placeholder="最小（自动）">
           <span class="text-secondary">~</span>
           <input type="number" step="any" class="form-control form-control-sm" style="width:110px" id="ovXMax" placeholder="最大（自动）">
-          <button class="btn btn-sm btn-outline-primary py-0 ms-1" id="ovXApply">应用</button>
-          <button class="btn btn-sm btn-outline-secondary py-0" id="ovXReset">恢复自动</button>
-          <span class="text-secondary" style="font-size:0.72rem">留空 = 自动全范围</span>
+          <button class="sp-btn-ghost py-0 ms-1" id="ovXApply">应用</button>
+          <button class="sp-btn-ghost py-0" id="ovXReset">恢复自动</button>
+          <span class="sp-muted" style="font-size:0.72rem">留空 = 自动全范围</span>
         </div>
       </div>
     </div>
@@ -750,6 +751,7 @@ export async function render() {
           </div>
         </div>
       </div>
+    </div>
     </div>
   `;
 
@@ -934,7 +936,7 @@ async function loadFilters() {
           : '<span class="badge bg-secondary">—</span>'}</td>
         <td class="fv" data-field="description" style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${esc(f.description) || '-'}</td>
         <td class="filter-edit-cell" style="display:${isAdmin() ? '' : 'none'}">
-          <button class="btn btn-sm btn-outline-secondary py-0 px-1" data-edit="${esc(f.id)}" title="编辑"><i class="bi bi-pencil"></i></button>
+          <button class="sp-btn-ghost py-0 px-1" data-edit="${esc(f.id)}" title="编辑"><i class="bi bi-pencil"></i></button>
         </td>
       </tr>
     `).join('');
@@ -1085,8 +1087,8 @@ async function loadFilters() {
         // 避免动态赋值时机问题导致个别行点取消无反应
         editCell.innerHTML = `
           <button class="btn btn-sm btn-primary py-0 px-1" data-save="${esc(id)}" title="保存"><i class="bi bi-check-lg"></i></button>
-          <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="filterEditCancel()" title="取消"><i class="bi bi-x-lg"></i></button>
-          <button class="btn btn-sm btn-outline-info py-0 px-1" data-cfetch="${esc(id)}" title="获取/补录透过率曲线"><i class="bi bi-graph-up-arrow"></i></button>
+          <button class="sp-btn-ghost py-0 px-1" onclick="filterEditCancel()" title="取消"><i class="bi bi-x-lg"></i></button>
+          <button class="sp-btn-ghost py-0 px-1" data-cfetch="${esc(id)}" title="获取/补录透过率曲线"><i class="bi bi-graph-up-arrow"></i></button>
         `;
       }
     };

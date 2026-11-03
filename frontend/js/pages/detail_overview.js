@@ -48,11 +48,11 @@ export function articlesHTML() {
     <div class="mb-1" id="articleItem_${a.id}">
       <div class="d-flex align-items-center gap-2 flex-wrap">
         <a href="${escAttr(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer" style="overflow-wrap:anywhere"><i class="bi bi-journal-text"></i> ${escAttr(a.name)}</a>
-        ${a.bibtex ? `<button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="articleBibtexCopy(${a.id})" title="复制 BibTeX 引用信息到剪贴板"><i class="bi bi-clipboard"></i> BibTeX</button>` : ''}
+        ${a.bibtex ? `<button class="sp-btn-ghost py-0 px-1" onclick="articleBibtexCopy(${a.id})" title="复制 BibTeX 引用信息到剪贴板"><i class="bi bi-clipboard"></i> BibTeX</button>` : ''}
         ${a.source ? `<span class="text-secondary" style="font-size:0.72rem">${escAttr(a.source)}</span>` : ''}
         ${isAdmin() ? `
-          <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="articleEditStart(${a.id})" title="编辑"><i class="bi bi-pencil"></i></button>
-          <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="articleDelete(${a.id})" title="删除"><i class="bi bi-trash"></i></button>` : ''}
+          <button class="sp-btn-ghost py-0 px-1" onclick="articleEditStart(${a.id})" title="编辑"><i class="bi bi-pencil"></i></button>
+          <button class="sp-btn-ghost sp-danger py-0 px-1" onclick="articleDelete(${a.id})" title="删除"><i class="bi bi-trash"></i></button>` : ''}
       </div>
       ${a.title ? `<div class="text-secondary text-truncate" style="font-size:0.78rem;max-width:100%" title="${escAttr(a.title)}">${escAttr(a.title)}</div>` : ''}
     </div>`;
@@ -61,10 +61,10 @@ export function articlesHTML() {
     const head = articlesData.slice(0, COLLAPSE_N).map(itemHTML).join('');
     const rest = articlesData.slice(COLLAPSE_N).map(itemHTML).join('');
     items = head + `<div id="articleOverflow" style="display:none">${rest}</div>`
-      + `<button class="btn btn-sm btn-outline-secondary py-0 px-2 mt-1" id="articleListToggleBtn" onclick="articleListToggle()"><i class="bi bi-chevron-down"></i> 展开全部 (${articlesData.length})</button>`;
+      + `<button class="sp-btn-ghost py-0 px-2 mt-1" id="articleListToggleBtn" onclick="articleListToggle()"><i class="bi bi-chevron-down"></i> 展开全部 (${articlesData.length})</button>`;
   }
   const addArea = isAuthed() ? `
-    <button class="btn btn-sm btn-outline-primary py-0 px-2 mt-1" id="articleAddBtn" onclick="articleAddToggle()"><i class="bi bi-plus-lg"></i> 添加</button>
+    <button class="sp-btn-ghost py-0 px-2 mt-1" id="articleAddBtn" onclick="articleAddToggle()"><i class="bi bi-plus-lg"></i> 添加</button>
     <div id="articleAddForm" style="display:none" class="mt-1">
       <input type="text" class="form-control form-control-sm mb-1" id="articleAddName" placeholder="简称（建议：第一作者+年份，如 Dainotti+2024）">
       <input type="text" class="form-control form-control-sm mb-1" id="articleAddTitle" placeholder="文章标题（可选）">
@@ -72,7 +72,7 @@ export function articlesHTML() {
       <textarea class="form-control form-control-sm mb-1" id="articleAddBibtex" rows="3" placeholder="BibTeX 引用信息（可选），如 @article{...}"></textarea>
       <div class="d-flex gap-1">
         <button class="btn btn-sm btn-primary py-0 px-2" onclick="articleAddSave()">保存</button>
-        <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="articleAddToggle()">取消</button>
+        <button class="sp-btn-ghost py-0 px-2" onclick="articleAddToggle()">取消</button>
       </div>
     </div>` : (articlesData.length ? '' : '<span class="text-secondary">登录后可添加</span>');
   return (items || '<div class="text-secondary mb-1">暂无</div>') + addArea;
@@ -151,7 +151,7 @@ window.articleEditStart = (id) => {
     <input type="text" class="form-control form-control-sm mb-1" id="articleEditTitle_${id}" value="${escAttr(a.title || '')}" placeholder="文章标题（可选）">
     <textarea class="form-control form-control-sm mb-1" id="articleEditBibtex_${id}" rows="3" placeholder="BibTeX 引用信息（可选）">${escAttr(a.bibtex || '')}</textarea>
     <button class="btn btn-sm btn-primary py-0 px-1" onclick="articleEditSave(${id})" title="保存"><i class="bi bi-check-lg"></i></button>
-    <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="render(currentTid)" title="取消"><i class="bi bi-x-lg"></i></button>`;
+    <button class="sp-btn-ghost py-0 px-1" onclick="render(currentTid)" title="取消"><i class="bi bi-x-lg"></i></button>`;
 };
 
 window.articleEditSave = async (id) => {

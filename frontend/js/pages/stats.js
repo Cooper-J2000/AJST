@@ -232,16 +232,15 @@ function drawSkyChart(canvas, sources, tagColors) {
 export async function render() {
   showLoading();
   app.innerHTML = `
-    <div class="page-header d-flex justify-content-between align-items-center">
-      <h4 class="mb-0"><i class="bi bi-bar-chart-line"></i> 全局统计</h4>
-    </div>
+    <div class="stats-root soft-root">
+    <div class="sp-page-title mb-3">全局统计</div>
     ${statsTabs('overview')}
     <div class="row g-3 mb-4" id="overviewCards"></div>
 
     <!-- 全天分布（纯 Canvas） -->
     <div class="card mb-3">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-globe2"></i> 全天分布（Mollweide 投影）</span>
+        <span>全天分布（Mollweide 投影）</span>
         <div>
           <select class="form-select form-select-sm" style="width:auto;display:inline-block" id="skyTagFilter" onchange="redrawSky()">
             <option value="__all__">全部标签</option>
@@ -277,6 +276,7 @@ export async function render() {
           <div class="card-body"><div class="chart-container" style="height:350px"><canvas id="bandChart"></canvas></div></div>
         </div>
       </div>
+    </div>
     </div>
   `;
 

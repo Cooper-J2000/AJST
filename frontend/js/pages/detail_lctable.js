@@ -89,10 +89,10 @@ export function lcRowHTML(pt) {
       <td class="small text-secondary text-nowrap" data-col="updated_at" title="存入时间 / 最近修改 (UTC)">${esc((pt.updated_at || pt.created_at || '').replace('T', ' ').slice(0, 19)) || '-'}</td>
       <td class="lc-edit-cell" style="display:none">
         ${canEditLc(pt) ? `
-        <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="lcEditStart(${pt.id})" title="编辑"><i class="bi bi-pencil"></i></button>
-        ${isAdmin() ? `<button class="btn btn-sm btn-outline-warning py-0 px-1" onclick="lcGextRun(${pt.id})" title="对该数据点执行银消改正"><i class="bi bi-moon-stars"></i></button>` : ''}` : ''}
+        <button class="sp-btn-ghost py-0 px-1" onclick="lcEditStart(${pt.id})" title="编辑"><i class="bi bi-pencil"></i></button>
+        ${isAdmin() ? `<button class="sp-btn-ghost py-0 px-1" onclick="lcGextRun(${pt.id})" title="对该数据点执行银消改正"><i class="bi bi-moon-stars"></i></button>` : ''}` : ''}
         ${!isAdmin() ? `
-        <button class="btn btn-sm ${pt.discard ? 'btn-outline-success' : 'btn-outline-warning'} py-0 px-1" onclick="lcDiscardToggle(${pt.id}, ${pt.discard ? 'true' : 'false'})" title="${pt.discard ? '恢复该点' : '扣点（标记丢弃）'}"><i class="bi ${pt.discard ? 'bi-arrow-counterclockwise' : 'bi-hand-index'}"></i></button>` : ''}
+        <button class="sp-btn-ghost py-0 px-1" onclick="lcDiscardToggle(${pt.id}, ${pt.discard ? 'true' : 'false'})" title="${pt.discard ? '恢复该点' : '扣点（标记丢弃）'}"><i class="bi ${pt.discard ? 'bi-arrow-counterclockwise' : 'bi-hand-index'}"></i></button>` : ''}
       </td>
     </tr>`;
 }
@@ -210,8 +210,8 @@ export function buildLcColPanel() {
         ${lcColShown(k) ? 'checked' : ''} onchange="lcColToggle('${k}', this.checked)">
       <label class="form-check-label" for="lcColChk_${k}">${label}</label>
     </div>`).join('') + `
-    <button class="btn btn-sm btn-outline-primary py-0" onclick="lcColAll(true)">全选</button>
-    <button class="btn btn-sm btn-outline-secondary py-0" onclick="lcColAll(false)">全不选</button>
+    <button class="sp-btn-ghost py-0" onclick="lcColAll(true)">全选</button>
+    <button class="sp-btn-ghost py-0" onclick="lcColAll(false)">全不选</button>
     <span class="text-secondary">（仅影响页面显示；下载数据表始终为全列完整版）</span>`;
 }
 
@@ -306,7 +306,7 @@ window.lcEditStart = (id) => {
   if (editCell) {
     editCell.innerHTML = `
       <button class="btn btn-sm btn-primary py-0 px-1" onclick="lcEditSave(${id})" title="保存"><i class="bi bi-check-lg"></i></button>
-      <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="lcEditCancel(${id}, true)" title="取消"><i class="bi bi-x-lg"></i></button>
+      <button class="sp-btn-ghost py-0 px-1" onclick="lcEditCancel(${id}, true)" title="取消"><i class="bi bi-x-lg"></i></button>
     `;
   }
 };
@@ -404,8 +404,8 @@ window.lcAddNewRow = () => {
     return `<td data-col="${f}">${input}</td>`;
   }).join('');
   tr.innerHTML += `<td class="lc-edit-cell" style="display:table-cell">
-    <button class="btn btn-sm btn-success py-0 px-1" onclick="lcAddNewSave()" title="保存"><i class="bi bi-check-lg"></i></button>
-    <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="lcAddNewCancel()" title="取消"><i class="bi bi-x-lg"></i></button>
+    <button class="btn btn-sm btn-primary py-0 px-1" onclick="lcAddNewSave()" title="保存"><i class="bi bi-check-lg"></i></button>
+    <button class="sp-btn-ghost py-0 px-1" onclick="lcAddNewCancel()" title="取消"><i class="bi bi-x-lg"></i></button>
   </td>`;
   tbody.appendChild(tr);
   applyLcColVis();  // 新行同样遵循当前列隐藏状态

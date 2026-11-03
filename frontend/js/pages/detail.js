@@ -100,6 +100,7 @@ export async function render(tid) {
     const aladinDec = hasCoords ? transient.dec : -28.936;
 
     app.innerHTML = `
+      <div class="detail-root soft-root">
       <div class="mb-3">
         <a href="#/list" class="text-secondary text-decoration-none small"><i class="bi bi-arrow-left"></i> 返回列表</a>
       </div>
@@ -107,39 +108,39 @@ export async function render(tid) {
       <!-- Header -->
       <div class="d-flex justify-content-between align-items-start mb-3">
         <div>
-          <h4 class="mb-1"><strong>${esc(transient.id)}</strong>
-            <small class="text-secondary ms-2 fs-6">
+          <div class="sp-page-title mb-1">${esc(transient.id)}
+            <span class="sp-muted fs-6 ms-2">
               ${esc((transient.aliases || []).join(', '))}
-            </small>
-          </h4>
+            </span>
+          </div>
           <div class="text-secondary small">
             ${(transient.tags || []).map(t => `<a class="badge-tag badge-link" href="#/list?tag=${encodeURIComponent(t)}" title="筛选该标签">${esc(t)}</a>`).join('')}
             ${(transient.sub_tag || []).map(t => `<a class="badge-neutral badge-link me-1" href="#/list?sub_tag=${encodeURIComponent(t)}" title="筛选该副标签">${esc(t)}</a>`).join('')}
           </div>
         </div>
         <div class="d-flex gap-1">
-          <button class="btn btn-sm btn-outline-warning" onclick="runGextSource()" id="gextBtn" title="对本源全部光学数据执行银河系消光改正">
+          <button class="sp-btn-ghost" onclick="runGextSource()" id="gextBtn" title="对本源全部光学数据执行银河系消光改正">
             <i class="bi bi-moon-stars"></i> 银消改正
           </button>
-          <button class="btn btn-sm btn-outline-secondary" onclick="handleEditClick()" id="editBtn" title="编辑">
+          <button class="sp-btn-ghost" onclick="handleEditClick()" id="editBtn" title="编辑">
             <i class="bi bi-pencil"></i>
           </button>
-          <button class="btn btn-sm btn-outline-secondary" onclick="exportLCWithRef()" title="导出光变CSV（可选基准时刻）">
+          <button class="sp-btn-ghost" onclick="exportLCWithRef()" title="导出光变CSV（可选基准时刻）">
             <i class="bi bi-download"></i>
           </button>
         </div>
       </div>
 
-      <!-- Tabs -->
-      <ul class="nav nav-tabs mb-3" id="detailTabs">
-        <li class="nav-item"><a class="nav-link active" href="#" data-tab="overview">概览</a></li>
-        <li class="nav-item"><a class="nav-link" href="#" data-tab="lc">光变曲线</a></li>
-        <li class="nav-item"><a class="nav-link" href="#" data-tab="data">数据表</a></li>
-        <li class="nav-item"><a class="nav-link" href="#" data-tab="fitting">余辉拟合</a></li>
-        <li class="nav-item"><a class="nav-link" href="#" data-tab="host">宿主星系</a></li>
-        <li class="nav-item"><a class="nav-link" href="#" data-tab="spectra">光谱数据</a></li>
-        <li class="nav-item"><a class="nav-link" href="#" data-tab="sed">SED 分析</a></li>
-      </ul>
+      <!-- Tabs（分段控件；保留 nav-link class 供既有切换逻辑与惰性初始化匹配） -->
+      <div class="sp-seg mb-3" id="detailTabs">
+        <button class="sp-seg-item nav-link active" data-tab="overview">概览</button>
+        <button class="sp-seg-item nav-link" data-tab="lc">光变曲线</button>
+        <button class="sp-seg-item nav-link" data-tab="data">数据表</button>
+        <button class="sp-seg-item nav-link" data-tab="fitting">余辉拟合</button>
+        <button class="sp-seg-item nav-link" data-tab="host">宿主星系</button>
+        <button class="sp-seg-item nav-link" data-tab="spectra">光谱数据</button>
+        <button class="sp-seg-item nav-link" data-tab="sed">SED 分析</button>
+      </div>
 
       <div id="tabContent">
         <!-- ─── 概览页（含 Aladin 方形全天图） ─── -->
@@ -147,7 +148,7 @@ export async function render(tid) {
           <div class="row g-3 align-items-stretch">
             <div class="col-md-4">
               <div class="card h-100" id="metaCard">
-                <div class="card-header"><i class="bi bi-info-circle"></i> 基本信息</div>
+                <div class="card-header">基本信息</div>
                 <div class="card-body">
                   <table class="table table-sm table-borderless" id="metaTable" style="table-layout:fixed">
                     <tbody>
@@ -172,7 +173,7 @@ export async function render(tid) {
               </div>
               <!-- 编辑面板（默认隐藏） -->
               <div class="card" id="editPanel" style="display:none">
-                <div class="card-header"><i class="bi bi-pencil"></i> 编辑基本信息</div>
+                <div class="card-header">编辑基本信息</div>
                 <div class="card-body">
                   <form onsubmit="return false">
                     <div class="row g-2">
@@ -199,8 +200,8 @@ export async function render(tid) {
                       <div class="col-4"><label class="form-label small">别名 (逗号分隔)</label><input type="text" class="form-control form-control-sm" id="editAliases" value="${escAttr((transient.aliases || []).join(', '))}"></div>
                     </div>
                     <div class="mt-3 d-flex gap-2">
-                      <button class="btn btn-sm btn-primary" onclick="saveDetailEdit()"><i class="bi bi-check-lg"></i> 保存</button>
-                      <button class="btn btn-sm btn-outline-secondary" onclick="handleEditClick()">取消</button>
+                      <button class="btn btn-sm btn-primary" onclick="saveDetailEdit()">保存</button>
+                      <button class="sp-btn-ghost" onclick="handleEditClick()">取消</button>
                     </div>
                   </form>
                 </div>
@@ -208,7 +209,7 @@ export async function render(tid) {
             </div>
             <div class="col-md-4">
               <div class="card h-100">
-                <div class="card-header"><i class="bi bi-bar-chart"></i> 光变概览</div>
+                <div class="card-header">光变概览</div>
                 <div class="card-body">
                   <div class="row g-2">
                     <div class="col-6"><div class="stat-card"><div class="stat-value">${bandNames.length}</div><div class="stat-label">波段</div></div></div>
@@ -231,9 +232,9 @@ export async function render(tid) {
             </div>
             <div class="col-md-4">
               <div class="card h-100">
-                <div class="card-header"><i class="bi bi-globe2"></i> Aladin 全天图
+                <div class="card-header">Aladin 全天图
                   ${hasCoords
-                    ? `<small class="text-secondary">RA=${transient.ra.toFixed(4)}° Dec=${transient.dec.toFixed(4)}°</small>`
+                    ? `<small class="sp-muted">RA=${transient.ra.toFixed(4)}° Dec=${transient.dec.toFixed(4)}°</small>`
                     : '<small class="text-warning">该源暂无坐标，图示为银河系中心</small>'}
                 </div>
                 <div class="card-body p-0 d-flex flex-grow-1">
@@ -252,7 +253,7 @@ export async function render(tid) {
         <div id="tab-lc" class="tab-pane" style="display:none">
           <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-              <span><i class="bi bi-graph-up"></i> 光变曲线</span>
+              <span>光变曲线</span>
               <div class="d-flex flex-column gap-1">
                 <!-- 第一排：数据/Y/X/顶部轴 四个 select + 基准时刻输入（lcchart 注入 #lcRefEpochSlot） + 复制按钮（最右） -->
                 <div class="d-flex gap-2 align-items-center flex-wrap justify-content-end">
@@ -276,7 +277,7 @@ export async function render(tid) {
                     <option value="none">顶部轴: 无</option>
                   </select>
                   <span id="lcRefEpochSlot" class="d-inline-flex align-items-center"></span>
-                  <button class="btn btn-sm btn-outline-secondary" onclick="copyLCChart()" title="复制当前光变图（含图例与标题）到剪贴板；不支持时改为下载 PNG"><i class="bi bi-clipboard"></i> 复制光变图</button>
+                  <button class="sp-btn-ghost" onclick="copyLCChart()" title="复制当前光变图（含图例与标题）到剪贴板；不支持时改为下载 PNG"><i class="bi bi-clipboard"></i> 复制光变图</button>
                 </div>
                 <!-- 第二排：四个显示开关（显示光谱观测由 lcchart 注入 #lcSpecChkSlot） -->
                 <div class="d-flex gap-3 align-items-center flex-wrap justify-content-end">
@@ -304,8 +305,8 @@ export async function render(tid) {
                 <input type="text" class="form-control form-control-sm" id="axXmax" placeholder="xmax" title="x 轴最大值（当前 x 轴单位，秒）" style="width:80px">
                 <input type="text" class="form-control form-control-sm" id="axYmin" placeholder="ymin" title="y 轴最小值 (mJy)" style="width:80px">
                 <input type="text" class="form-control form-control-sm" id="axYmax" placeholder="ymax" title="y 轴最大值 (mJy)" style="width:80px">
-                <button class="btn btn-sm btn-outline-primary" onclick="applyLCAxisRange()">应用</button>
-                <button class="btn btn-sm btn-outline-secondary" onclick="resetLCAxisRange()">恢复默认</button>
+                <button class="sp-btn-ghost" onclick="applyLCAxisRange()">应用</button>
+                <button class="sp-btn-ghost" onclick="resetLCAxisRange()">恢复默认</button>
               </div>
               <div class="chart-container" style="height:auto;aspect-ratio:3/2;width:80%;margin:0 auto;min-height:0;overflow:hidden"><canvas id="lcChart"></canvas></div>
               <!-- 波段显示勾选面板（替代内置图例的划线开关） -->
@@ -314,7 +315,7 @@ export async function render(tid) {
               <!-- 光变曲线拟合 -->
               <div class="mt-3 border-top pt-2" id="lcFitSection">
                 <div class="d-flex flex-wrap gap-1 align-items-center small">
-                  <span class="text-secondary me-1"><i class="bi bi-bezier2"></i> 添加拟合:</span>
+                  <span class="text-secondary me-1">添加拟合:</span>
                   <select class="form-select form-select-sm" id="fitModel" style="width:auto" onchange="fitModelChanged()">
                     <option value="pl">powerlaw</option>
                     <option value="bpl">broken-powerlaw</option>
@@ -335,7 +336,7 @@ export async function render(tid) {
                   </span>
                   <input type="text" class="form-control form-control-sm" id="fitPmin" placeholder="绘制 t_min (s)" title="拟合线绘制范围下限（外推用；留空=与拟合范围一致）" style="width:100px;font-size:0.72rem">
                   <input type="text" class="form-control form-control-sm" id="fitPmax" placeholder="绘制 t_max (s)" title="拟合线绘制范围上限（外推用；留空=与拟合范围一致）" style="width:100px;font-size:0.72rem">
-                  <button class="btn btn-sm btn-outline-primary" onclick="addLCFit()"><i class="bi bi-plus-lg"></i> 添加</button>
+                  <button class="sp-btn-ghost" onclick="addLCFit()"><i class="bi bi-plus-lg"></i> 添加</button>
                 </div>
                 <div id="lcFitList" class="mt-2 small"></div>
               </div>` : ''}
@@ -347,12 +348,12 @@ export async function render(tid) {
         <div id="tab-data" class="tab-pane" style="display:none">
           <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
-              <span><i class="bi bi-table"></i> 光变数据表</span>
+              <span>光变数据表</span>
               <div class="d-flex gap-1">
-                <button class="btn btn-sm btn-outline-secondary" onclick="lcColPanelToggle()" title="勾选要显示的列"><i class="bi bi-layout-three-columns"></i> 列显示</button>
-                <button class="btn btn-sm btn-outline-primary" id="lcUploadBtn" style="display:none" onclick="lcUploadShow()"><i class="bi bi-upload"></i> 上传数据表</button>
-                <button class="btn btn-sm btn-outline-primary" id="lcAddBtn" style="display:none" onclick="lcAddNewRow()"><i class="bi bi-plus-circle"></i> 添加记录</button>
-                <button class="btn btn-sm btn-outline-danger" id="lcDelBtn" style="display:none" onclick="lcDeleteSelected()"><i class="bi bi-trash"></i> 删除勾选</button>
+                <button class="sp-btn-ghost" onclick="lcColPanelToggle()" title="勾选要显示的列"><i class="bi bi-layout-three-columns"></i> 列显示</button>
+                <button class="sp-btn-ghost" id="lcUploadBtn" style="display:none" onclick="lcUploadShow()"><i class="bi bi-upload"></i> 上传数据表</button>
+                <button class="sp-btn-ghost" id="lcAddBtn" style="display:none" onclick="lcAddNewRow()"><i class="bi bi-plus-circle"></i> 添加记录</button>
+                <button class="sp-btn-ghost sp-danger" id="lcDelBtn" style="display:none" onclick="lcDeleteSelected()"><i class="bi bi-trash"></i> 删除勾选</button>
               </div>
             </div>
             <div class="card-body p-0">
@@ -392,7 +393,7 @@ export async function render(tid) {
                   <button class="sp-btn-ghost py-0" id="specUploadBtn" style="display:none" onclick="showSpecUpload()" title="上传光谱"><i class="bi bi-upload"></i> 上传</button>
                 </div>
                 <div class="card-body p-0" style="max-height:560px;overflow-y:auto">
-                  <div class="sp-muted px-2 pt-1">点击行切换选择，可多选对比；留空的光谱按空气波长处理（不自动回填），所有处理默认先转真空波长</div>
+                  <div class="sp-muted px-2 pt-1">点击行切换选择，可多选对比；<br>留空的光谱按空气波长处理（不自动回填）；<br>所有处理默认先转真空波长。</div>
                   <table class="table table-sm table-hover mb-0" style="font-size:0.85rem">
                     <thead><tr><th>观测时间 (MJD)</th><th>仪器</th><th>类型</th><th>波长类型</th><th>观测者</th><th>纵向偏移量</th></tr></thead>
                     <tbody id="spectraListBody">
@@ -529,6 +530,7 @@ export async function render(tid) {
             </div>
           </div>
         </div>
+      </div>
       </div>
     `;
 
