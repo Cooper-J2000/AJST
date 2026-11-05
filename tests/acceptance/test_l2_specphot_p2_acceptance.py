@@ -527,7 +527,9 @@ def test_p2b_w24_boundary_badge_and_fit_warnings_rendered():
     丢弃（CA-24 边界值、CA-44、CA-11、CA-15、CA-38 等在 UI 不可见）。"""
     ui = _fe_src('continuum_ui.js')
     assert 'grid_boundary_params' in ui                     # 消费服务端键
-    assert '边界值</sup>' in ui and 'F-65/CA-24' in ui      # 角标 + title 全句
+    assert '边界值</sup>' in ui                             # 角标在场
+    assert 'F-65' in ui and 'CA-24' in ui   # 决策号注释（原合写「F-65/CA-24」，
+                                            # b567e9e 改注为 F-65/F-91② 与 CA-24 两处）
     assert '(f.warnings || [])' in ui                       # 逐模型告警接上
     assert '(r.warnings || [])' in ui                       # 顶层告警接上
 

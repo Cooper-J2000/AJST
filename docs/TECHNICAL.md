@@ -2461,6 +2461,29 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 
 ## 十一、版本历史
 
+### v2.39（2026-11-06）— 验收套件 8 项存量失败清零：specphot 扫描测试对齐重构后实现 + 光变数据质量修复
+
+- specphot 源码扫描测试对齐（5 项）：`b567e9e`/`d6e887e` 两轮前端重构（用户可见文案剥除内部编号、
+  radio 改分段控件）后，4 个测试文件改锚当前实现的等价标记——P2c 诊断项 tooltip 逐项钉等价口径
+  （如 `beta_matrix→('新增','O(波段²)')`）；S3 页签 `sp-lvel`→`'vel_* 禁用'`（下拉默认 null + M6_TIP
+  ⚠ 承载 M-6 语义）；边界值角标 `F-65/CA-24` 分注两处分别断言；voigt 禁用位改断言半透明显示 `<span>`；
+  W-32 后半 M6 徽章/tooltip 按现文案锚（「暂不解锁」/「见 S3」等）。功能零丢失，前端零改动
+- 光变数据质量修复（库侧，改前 pg_dump 留底 `catadata/backups/pre_gext_uvot_fix_20261105.sql`）：
+  - `mag_system='uvot'` 11 行（GRB100704A/GRB140801A）→ `'Vega'`：Poole+2008 的 UVOT 星等系统为
+    Vega 零点，`filters.vega2ab` 的 uvot 各波段值与文献 AB−Vega 偏移表逐值一致，且库内其余 uvot
+    记录均为 Vega；改后非空 mag_system 只剩 ab/vega
+  - `gext_corr=true` 却无改正产物 92 行：根因是「原表已做银消改正」的数据契约标记与 DB 语义
+    （gext_corr=true ⇒ 引擎派生列成组写值）错位。84 行（comment 确有原文已改正确证：Berger2001/
+    Eyles+2019/GCN8515/Nicuesa Guelbenzu+2012/Becerra+2026/ATel12985/Ho+2020）回退 `gext_corr=false`
+    + `extra_data.ext_corrected_by_source=true`（既有机制，引擎跳过避免双重改正）；8 行
+    GRB071227A uvot-white（Dainotti2024，未声明原文已改正）经 `POST /api/extinction/run` 逐点补算
+    （A_λ=0.067 mag）
+- `test_tmplib_p2.py` 库侧证据硬编码「恰 16 行」改写为活断言：窗口内（1000–1e7 Å）`gext_corr=true`
+  且 flux/mag 改正产物皆无的行数 == 0（与 L3 不变量同口径互补）；窗口外遗留（16 行 GRB251025B
+  '1keV' 高能行）由 test_l3 已知问题上界钉住
+- 遗留：84 行回退后库↔文件口径漂移（`catadata/lc/*.csv` 仍写 `Gext_corr=y`），发布数据前需
+  `etl.py --dump` 并统一契约表述，待维护者裁决
+
 ### v2.38（2026-11-05）— 复制光变图全英文 + matplotlib 角落图例；数据表「复制新增」；主页 Tags 列宽与英文副标签
 
 - 光变曲线页「复制光变图」：出图文字全部英文（标题 `<源名> Light Curve`、X/Y/右轴标题的英文版、

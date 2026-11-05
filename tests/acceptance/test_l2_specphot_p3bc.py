@@ -143,15 +143,19 @@ def test_t22_backend_voigt_without_r_e14(client):
 
 
 def test_t22_frontend_voigt_disabled_m4_tooltip():
-    """T-22 前端半支（源码级）：U-26 的 voigt 单选渲染但 disabled，tooltip 写明
-    前置 M-4 与 F-39 拒绝语义。"""
+    """T-22 前端半支（源码级）：U-26 的 voigt 渲染但 disabled，tooltip 写明
+    前置 M-4（全库无仪器分辨率 R）与 F-39 拒绝语义。"""
     with open(os.path.join(FRONT_SPECPHOT, 'lines_ui.js'), encoding='utf-8') as f:
         ui = f.read()
     assert 'const PROFILES' in ui and 'voigt' not in \
         ui.split('const PROFILES', 1)[1].split(';', 1)[0]      # 可选集无 voigt
-    i = ui.index('<input type="radio" disabled>voigt')          # 渲染但禁用
+    # 渲染但禁用：d6e887e 起为不可点的 sp-seg-item 占位（非 radio input），
+    # title 写明「全库无仪器分辨率 R ⇒ voigt 禁用」（M-4 编号按 b567e9e 从
+    # 可见文案剥除、语义保留）；F-39 拒绝语义溯源注释仍在源码内。
+    i = ui.index('>voigt</span>')
     label = ui[max(0, i - 400):i]
-    assert 'M-4' in label and 'F-39' in label and 'disabled' in label
+    assert 'opacity' in label and 'voigt 禁用' in label
+    assert 'F-39' in ui
 
 
 # ═══ F-81 z_from_lines：M-6 闸两态 + CA-36（API-2/3 photometry 路径）═════════
@@ -400,18 +404,25 @@ def test_w32_second_half_frontend_source_scan():
         wb = f.read()
     for k in ('z_from_lines', 'frame_probe'):
         seg = wb.split(f"['{k}', 'M6',", 1)[1].split(']', 1)[0]
-        assert 'M-6' in seg and '解锁条件' in seg, k   # tooltip 写明前置与解锁条件
-    assert "['sky_subtract', 'U31'," in wb and 'U-31' in \
-        wb.split("['sky_subtract', 'U31',", 1)[1].split(']', 1)[0]
+        # tooltip 写明不解锁及其条件（复核未完成）。「解锁条件：M-6 完成」句式
+        # 在 b567e9e 剥编号时改为「暂不解锁」，语义等价；M-6/解锁条件溯源锚
+        # DIAG_META 头注释（维护者向，仍要求在场）。
+        assert '暂不解锁' in seg and '复核' in seg, k
+    head = wb.split('const DIAG_META', 1)[0]
+    assert 'M-6' in head and '解锁条件' in head
+    assert "['sky_subtract', 'U31'," in wb and 'S3' in \
+        wb.split("['sky_subtract', 'U31',", 1)[1].split(']', 1)[0]  # 消费点指路
     badge = wb.split('const badge =', 1)[1].split(';', 1)[0]
-    assert 'M-6' in badge and 'U-31' in badge
+    assert "'M6'" in badge and '待复核' in badge and '见 S3' in badge
     with open(os.path.join(FRONT_SPECPHOT, 'lines_ui.js'), encoding='utf-8') as f:
         ui = f.read()
-    # U-31 subtract 可用（真解锁）：可交互 radio（sp-lsky class）+ F-86 说明
+    # U-31 subtract 可用（真解锁）：可交互 radio（sp-lsky class）+ F-86 扣除
+    # 说明与 CA-37 失败回退语义（编号 b567e9e 剥除，按当前文案锚）
     assert ui.count("class=\"sp-lsky\" value=\"subtract\"") == 1
-    assert 'F-86' in ui and 'CA-37' in ui
-    # U-26 voigt 禁用 + M-4 tooltip（T-22 前端半支）
-    assert '<input type="radio" disabled>voigt' in ui and 'M-4' in ui
+    assert '[O I] 气辉线' in ui and '退回 mask' in ui
+    # U-26 voigt 禁用 + M-4 tooltip（T-22 前端半支；radio 占位在 d6e887e 改为
+    # 不可点 span，M-4 语义 = 全库无仪器分辨率 R ⇒ voigt 禁用）
+    assert '>voigt</span>' in ui and 'voigt 禁用' in ui
 
 
 # ═══ T-51 真实 M-6 数据重跑登记（照 T-10/T-21 先例 skip） ════════════════════

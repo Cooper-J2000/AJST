@@ -515,10 +515,15 @@ def test_frontend_s3_tab_enabled_and_wizard_present():
     for needle in ("'选线区'", "'定基线'", "'拟合轮廓'",      # U-23 三步
                    'line_kind_required' if 'line_kind_required' in ui else 'E-09',
                    'sp-lkind',                                # U-30 线型必选
-                   'sp-lvel',                                 # vel_* 控件禁用位
-                   'M-6', 'W-25', 'TXT-8', 'TXT-15',
+                   'vel_* 禁用',                # vel_* 禁用位（M-6；d6e887e 起为
+                                                # line_frame 下拉默认 null + M6_TIP
+                                                # ⚠提示，velocity_output 占位已移除）
+                   'M-6',
+                   'w25_1_line_side', 'w25_2_spectrum_side',   # W-25①/② 闸门行
+                                                # （行首编号 b567e9e 剥除，按 wire
+                                                #  键名锚「线表侧/谱级」两行仍在）
+                   'TXT-8', 'TXT-15',
                    'exportLinesCsv'):
         assert needle in ui, needle
-    assert "disabled'> velocity_output" in ui or 'disabled" disabled' in ui \
-        or re.search(r'checkbox[^>]*disabled', ui)
+    assert re.search(r'checkbox[^>]*disabled', ui)   # 控件禁用位仍在（U-48 无 R 连带）
     # 掩膜冲突双 reason 词表在前端不得出现合并表述（mask_conflict 只属后端 wire 层）

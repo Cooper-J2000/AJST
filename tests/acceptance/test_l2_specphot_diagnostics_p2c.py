@@ -471,9 +471,16 @@ def test_w32_frontend_switch_panel_source_scan():
     for k in P2C_KEYS:
         assert f"['{k}', 'P2c'," in wb, k
     assert "locked || computing ? 'disabled'" in wb and "E-15/A-3" in wb
-    for k in P2C_KEYS:                       # 每项旁的新增列与新增计算规模
+    # 每项 tooltip 写明新增列与新增计算规模（W-32 前半走查文案）。「新增计算
+    # 规模：」引导语在 b567e9e 文案精简中去掉、规模句保留，按当前措辞逐项钉
+    # 等价口径（resp_perturb 设计上无新增列，锚定既有列换值口径）。
+    P2C_SEG_NEEDLES = {'beta_matrix': ('新增', 'O(波段²)'),
+                       'resp_perturb': ('mag_err_resp', '60 组'),
+                       'anchor_reinsert': ('新增 m_syn_local', '重积分')}
+    for k, needles in P2C_SEG_NEEDLES.items():
         seg = wb.split(f"['{k}', 'P2c',", 1)[1].split(']', 1)[0]
-        assert '新增' in seg and '规模' in seg, k
+        for n in needles:
+            assert n in seg, (k, n)
     assert 'sp-diag' in wb and 'diagFlags' in wb
     with open(os.path.join(FRONT_SPECPHOT, 'results.js'), encoding='utf-8') as f:
         rs = f.read()

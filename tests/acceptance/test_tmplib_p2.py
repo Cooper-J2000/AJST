@@ -6,7 +6,9 @@ T-18/T-19/T-22/T-23/T-24/T-26/T-43/T-45、Q-2/Q-10/Q-12 校验电池。
     gext_distmod=39.718（T-18；01 §E.8）；
   - GRB260321A：redshift/gext_distmod 皆 NULL，与 EP260321a 共享日期 token
     ⇒ CA-12（T-19）；
-  - 全库 gext_corr=true 且 mag_gextcor 为 NULL 恰 16 行（T-23 库侧证据）；
+  - 全库「gext_corr=true 且改正产物全空（flux_density_gextcor 与 mag_gextcor
+    皆 NULL）」的行只剩光学窗口外 16 行 1keV（已知遗留，test_l3 上界钉住）；
+    窗口内该类行必须为 0（T-23 库侧证据）；
   - 九模板 in_domain 由 P2 迁移实测写入 library.json（T-45 加和不变式）。
 
 建面/删除用例一律走 AJST_TMPLIB_DIR 指 tmp_path 的隔离库根（纪律：生产
@@ -217,17 +219,25 @@ def test_gext_nulls_dropped_no_fallback(client):  # T-23：F-11 空值剔除不�
     assert ledger['rejected']['gext_missing'] == 1
     assert ledger['kept'] == 1
     assert csv_rows[0][2] == 18.9                    # 用的是 gext 列，不是 raw 19.5
-    # 库侧证据：全库 gext_corr=true 且 mag_gextcor NULL 恰 16 行（实测值）
+    # 库侧证据：光学窗口内标了 gext_corr=true 的行必须带改正产物
+    # （新流程写 flux_density_gextcor 系列列、旧派生列 mag_gextcor，二者至少其一）。
+    # 不限定某一列 —— mag_gextcor 为 NULL 但 flux 改正值在握的行是正常新口径。
+    # 窗口外的高能行（已知遗留 16 行 1keV）由 test_l3 的已知问题上界断言钉住，
+    # 不在此处用行数硬编码。
     from app import get_session
     from sqlalchemy import text
     sess = get_session()
     try:
         n = sess.execute(text(
-            'SELECT count(*) FROM lightcurves WHERE gext_corr IS TRUE'
-            ' AND mag_gextcor IS NULL')).scalar()
+            'SELECT count(*) FROM lightcurves lc'
+            ' JOIN filters f ON f.id = lc.band'
+            ' WHERE lc.gext_corr IS TRUE'
+            ' AND f.wavelength >= 1000 AND f.wavelength <= 1e7'
+            ' AND lc.flux_density_gextcor IS NULL'
+            ' AND lc.mag_gextcor IS NULL')).scalar()
     finally:
         sess.close()
-    assert n == 16
+    assert n == 0
 
 
 def test_null_system_policies():  # F-10 四档语义
