@@ -118,6 +118,8 @@ const CHART_LIGHT = {
 export function chartColors() {
   return getTheme() === 'light' ? CHART_LIGHT : CHART_DARK;
 }
+// 导出两套调色板本体：复制光变图出图固定白底浅色（v2.38）时做深色→浅色的颜色映射
+export { CHART_LIGHT, CHART_DARK };
 
 // ─── 学术绘图风格 ───
 // 衬线字体（西文 Times 系 + 中文衬线回退），供各图表的刻度/轴标题/图例使用

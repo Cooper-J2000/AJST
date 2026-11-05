@@ -5,7 +5,7 @@
 import { showToast } from '../api.js';
 import { fitLightcurveModel, getSpectrum } from '../api.js';
 import { dragRectPlugin, attachDragZoom } from '../dragzoom.js';
-import { chartColors, ACADEMIC_FONT, academicFonts } from '../theme.js';
+import { chartColors, ACADEMIC_FONT, academicFonts, CHART_LIGHT, CHART_DARK, getTheme } from '../theme.js';
 import { mJyToMagAB, sortBandsByFreq, pointToMJy, LOG_AXIS_FLOOR } from '../bands.js';
 import { esc, escAttr, sciFormat, sciTick, sci3, sig3, minOf, maxOf } from '../utils.js';
 import { createYErrBarPlugin } from '../chart_plugins.js';
@@ -1010,19 +1010,52 @@ function _lcDrawCopyLegend(octx, entries, geom, pos) {
 window.copyLCChart = async () => {
   const chart = lcChartInstance;
   if (!chart) { showToast('光变图尚未生成，请先打开光变曲线页', 'warning'); return; }
-  const cc = chartColors();
+  // ── 出图固定浅色白底，不受当前主题明暗/配色影响（v2.38）──
+  // 两套机制并用：刻度/网格/边框/标题色是建图时固化在 options 里的（逐项换浅色）；
+  // 误差棒/顶部副轴/当前时刻与光谱竖线插件是绘制时实时读 chartColors() 的
+  // （临时改 localStorage 主题位即可让它们画浅色，不动 data-bs-theme 属性、页面无闪烁）
+  const LC = CHART_LIGHT;
+  const THEME_KEY = 'ajst-theme';
+  let prevThemeRaw = null;
+  try { prevThemeRaw = localStorage.getItem(THEME_KEY); } catch {}
+  if (getTheme() !== 'light') {
+    try { localStorage.setItem(THEME_KEY, 'light'); } catch {}
+  }
   const title = chart.options.plugins.title || (chart.options.plugins.title = {});
-  const prev = { ti: title.display, text: title.text, scaleText: {} };
-  // 标题全英文
+  const prev = { ti: title.display, text: title.text, color: title.color, scaleText: {}, scaleColors: {}, fits: [] };
+  // 标题全英文 + 浅色
   title.display = true;
   title.text = `${_lcName || ''} Light Curve`;
-  title.color = cc.legend;
+  title.color = LC.legend;
   title.font = academicFonts().title;
-  // 轴标题临时换英文（条件与 buildLCChart 一致），复制完即恢复。
+  // 轴标题临时换英文、刻度/网格/边框临时换浅色（条件与 buildLCChart 一致），复制完即恢复。
   // 注意：chart.options 下的嵌套对象（scales/title/layout）在每次 update() 后会被
   // Chart.js 整体替换，跨 update 持有的旧引用会失效——恢复时必须重新读取最新引用
   const sc = chart.options.scales;
-  for (const k of ['x', 'y', 'y2']) if (sc[k] && sc[k].title) prev.scaleText[k] = sc[k].title.text;
+  for (const k of ['x', 'y', 'y2']) {
+    const s = sc[k];
+    if (!s) continue;
+    if (s.title) prev.scaleText[k] = s.title.text;
+    prev.scaleColors[k] = {
+      tick: s.ticks ? s.ticks.color : undefined,
+      grid: s.grid ? s.grid.color : undefined,
+      border: s.border ? s.border.color : undefined,
+      titleC: s.title ? s.title.color : undefined,
+    };
+    if (s.ticks) s.ticks.color = LC.tick;
+    if (s.grid) s.grid.color = LC.gridSoft;
+    if (s.border) s.border.color = LC.tick;
+    if (s.title) s.title.color = LC.tick;
+  }
+  // 拟合线在深色主题下取近白色（fits 调色板第 0 色等），白底不可见：按深色 fits 下标映射回浅色同位色
+  chart.data.datasets.forEach((ds, i) => {
+    if (!ds._isFit || !ds.label) return;
+    const di = CHART_DARK.fits.indexOf(ds.borderColor);
+    if (di < 0) return;
+    prev.fits.push({ i, border: ds.borderColor, bg: ds.backgroundColor });
+    ds.borderColor = LC.fits[di];
+    ds.backgroundColor = LC.fits[di];
+  });
   const restFrame = (document.getElementById('lcRestFrame')?.checked || false) && _lcRedshift != null;
   const useGext = document.getElementById('gextMode')?.value === 'gext';
   const absMag = (document.getElementById('yMode')?.value || 'flux') === 'absmag' && _lcDistmod != null;
@@ -1043,9 +1076,23 @@ window.copyLCChart = async () => {
     if (cur.plugins.title) {
       cur.plugins.title.display = prev.ti;
       cur.plugins.title.text = prev.text;
+      cur.plugins.title.color = prev.color;
     }
     const scNow = cur.scales;
     for (const k in prev.scaleText) if (scNow[k] && scNow[k].title) scNow[k].title.text = prev.scaleText[k];
+    for (const k in prev.scaleColors) {
+      const s = scNow[k], p = prev.scaleColors[k];
+      if (!s) continue;
+      if (s.ticks && p.tick !== undefined) s.ticks.color = p.tick;
+      if (s.grid && p.grid !== undefined) s.grid.color = p.grid;
+      if (s.border && p.border !== undefined) s.border.color = p.border;
+      if (s.title && p.titleC !== undefined) s.title.color = p.titleC;
+    }
+    prev.fits.forEach(({ i, border, bg }) => {
+      const ds = chart.data.datasets[i];
+      if (ds) { ds.borderColor = border; ds.backgroundColor = bg; }
+    });
+    try { prevThemeRaw == null ? localStorage.removeItem(THEME_KEY) : localStorage.setItem(THEME_KEY, prevThemeRaw); } catch {}
     _lcTopAxisSuppress = false;
     chart.update('none');
   };
@@ -1063,7 +1110,7 @@ window.copyLCChart = async () => {
     off.width = src.width;
     off.height = src.height + bandPx;
     const octx = off.getContext('2d');
-    octx.fillStyle = cc.canvasBg;
+    octx.fillStyle = '#ffffff';   // 出图固定白底（与主题无关）
     octx.fillRect(0, 0, off.width, off.height);
     // 上半（标题）原样；下半（绘图区）整体下移一个带高
     octx.drawImage(src, 0, 0, src.width, cutY, 0, 0, src.width, cutY);
