@@ -227,6 +227,7 @@ export async function render() {
     try {
       const st = await runExtinction({});
       showToast(`全局银消改正完成: ${st.corrected}/${st.total} 点已改正` +
+        (st.skipped_already_corrected ? `, ${st.skipped_already_corrected} 点 Gext_corr=Y 跳过（权威值已改正，不计算）` : '') +
         (st.skipped_no_coords ? `, ${st.skipped_no_coords} 点无坐标跳过` : '') +
         (st.skipped_band ? `, ${st.skipped_band} 点波段不支持` : '') +
         (st.skipped_not_optical ? `, ${st.skipped_not_optical} 点非光学波段跳过` : '') +

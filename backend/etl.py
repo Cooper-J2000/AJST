@@ -75,9 +75,6 @@ CSV_FIELD_MAP = {
     'weights': 'weights', 'discard': 'discard', 'telescope': 'telescope',
     'instrument': 'instrument', 'reference': 'reference', 'comment': 'comment',
     'source': 'source',
-    # 行级扩展字段（JSON 对象字符串）：dump 写出、import 解析；目前承载
-    # ext_corrected_by_source（原表已做银消改正的守卫标记，防全量重建丢失后双重改正）
-    'extra_data': 'extra_data',
 }
 BOOL_FIELDS = {'gext_corr', 'upperlimit', 'discard'}
 FLOAT_FIELDS = {'time', 'time_err', 'mjd', 'flux_density', 'flux_density_err',
@@ -421,12 +418,6 @@ def import_one_lightcurve(sess, tid):
                     val = row.get(csv_col, '').strip()
                     if val == '':
                         continue
-                    if model_field == 'extra_data':
-                        try:
-                            lc.extra_data = json.loads(val)
-                        except ValueError:
-                            print(f'  [WARN] {tid}: extra_data 不是合法 JSON，忽略: {val[:60]!r}')
-                        continue
                     if model_field in BOOL_FIELDS:
                         setattr(lc, model_field, parse_bool(val))
                     elif model_field in FLOAT_FIELDS:
@@ -668,7 +659,8 @@ def dump_filters(sess):
             out[fid]['extra_data'] = r.extra_data
     with open(FILTERS_FILE, 'w') as f:
         json.dump(out, f, indent=2, ensure_ascii=False)
-        f.write('\n')
+        # 注意：filters.json 历史无末尾换行，且 tmplibrary 引擎按 sha256 钉住本文件
+        # （filter_vendor 守卫 CA-01），**不得**追加换行——保持字节一致
     print(f'  [OK] Filters dumped: {len(out)} entries')
 
 
@@ -765,9 +757,6 @@ def from_dump(sess, prune=False, prune_force=False):
                 'flux_density_Gextcor_unit', 'weights', 'discard',
                 'telescope', 'instrument', 'reference', 'comment',
                 'source',
-                # 行级扩展字段（JSON 对象字符串，空为无）：与 import 端 json.loads 配对，
-                # 保证 ext_corrected_by_source 等行级标记可逆往返、全量重建不丢失
-                'extra_data',
             ]
             with open(os.path.join(LC_DIR, f'{t.id}.csv'), 'w', newline='') as f:
                 writer = csv_mod.writer(f)
@@ -775,11 +764,7 @@ def from_dump(sess, prune=False, prune_force=False):
                 for lc in lcs:
                     row = []
                     for col in fields:
-                        if col == 'extra_data':
-                            val = json.dumps(lc.extra_data, ensure_ascii=False,
-                                             separators=(',', ':')) if lc.extra_data else ''
-                        else:
-                            val = getattr(lc, CSV_FIELD_MAP.get(col, col), '')
+                        val = getattr(lc, CSV_FIELD_MAP.get(col, col), '')
                         if isinstance(val, bool):
                             val = 'y' if val else 'n'
                         elif val is None:

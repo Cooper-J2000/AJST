@@ -41,14 +41,16 @@ export function toMJy(value, unit) {
 // log 轴最小正数（截断阈值；y<=0 的点截断到此值并标记 clipped）
 export const LOG_AXIS_FLOOR = 1e-13;
 
-// ─── 单点换算到 mJy 空间（绘图与拟合共用；useGext 时优先银消改正值） ───
+// ─── 单点换算到 mJy 空间（绘图与拟合共用；useGext 时优先引擎改正产物列） ───
 // 返回 { y, err, clipped }；无法换算返回 null
 // 星等误差同步换算: σ_F = F·ln10·σ_m/2.5
 // 星等系统：AB 直接换算；Vega 先转 AB；ST（F_λ 零点）按波段波长换算 F_ν
+// 改正产物（flux_density_gextcor/mag_gextcor）存在即用——Gext_corr 不作为
+// 依据：n 行算过即有产物，y 行（权威值已改正）用原始值
 export function pointToMJy(p, useGext) {
   const unit = p.flux_density_unit;
   let y = null, err = null;
-  if (useGext && p.gext_corr) {
+  if (useGext && (p.flux_density_gextcor != null || p.mag_gextcor != null)) {
     if (p.flux_density_gextcor != null) {
       y = p.flux_density_gextcor;
       err = p.flux_density_gextcor_err != null ? p.flux_density_gextcor_err : null;

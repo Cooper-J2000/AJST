@@ -1,7 +1,9 @@
 """L1: P92 消光口径（k_λ = Rv·P92(λ)，Rv=3.1）与光学窗口护栏。
 
 口径（AGENTS.md §5 表 + docs/ops-history/extinction-and-caches.md）：银河系消光改正统一为 CSFD E(B-V) + Pei(1992) 消光律 +
-Rv=3.1；A_λ = Rv·P92(λ)·E(B-V)。改正只算不写，读路径对 NULL 一律回退现算。
+Rv=3.1；A_λ = Rv·P92(λ)·E(B-V)。引擎对 gext_corr 非真的行计算后把产物写入派生列
+（gext_Alambda / mag_gextcor* / flux_density_gextcor*），**不碰 gext_corr**——
+该 flag 只描述录入权威值是否已改正（维护者 2026-11-06 裁定），「本库算过」由派生列有无体现。
 
 参照实现：dust_extinction.shapes.P92 —— 生产代码就是调它，这里独立调一次做
 交叉验证（防的是 RV 改了、波长单位传错、缓存串号这类改动）。
@@ -121,10 +123,20 @@ def test_correct_point_applies_vega_to_ab_only_for_vega(mk_lc):
 
 
 def test_correct_point_records_provenance(mk_lc):
-    lc = mk_lc(flux_density=20.0, flux_density_unit='magnitude')
+    """correct_point 只写派生列（gext_Alambda/mag_gextcor*/flux_density_gextcor*），
+    不碰 gext_corr——flag 只描述录入权威值是否已改正（2026-11-06 裁定），
+    n 行的「本库算过」由派生列有无体现。"""
+    lc = mk_lc(flux_density=20.0, flux_density_unit='magnitude', gext_corr=False)
     ex.correct_point(lc, alambda=0.25)
-    assert lc.gext_corr is True
+    assert lc.gext_corr is False                     # flag 保持调用前原值，不置位
     assert lc.gext_Alambda == pytest.approx(0.25)
+    assert lc.mag_gextcor == pytest.approx(19.75)
+    assert lc.flux_density_gextcor is not None
+    assert lc.flux_density_gextcor_unit == 'mJy'
+    # flag 为 y（录入权威值已改正）的行同样不被触碰（引擎本就不会对 y 行调用）
+    lc_y = mk_lc(flux_density=20.0, flux_density_unit='magnitude', gext_corr=True)
+    ex.correct_point(lc_y, alambda=0.25)
+    assert lc_y.gext_corr is True
 
 
 def test_correct_point_returns_false_when_unusable(mk_lc):
@@ -133,9 +145,14 @@ def test_correct_point_returns_false_when_unusable(mk_lc):
 
 
 def test_clear_point_resets_correction(mk_lc):
-    lc = mk_lc(flux_density=20.0, flux_density_unit='magnitude')
+    """clear_point 清掉全部派生列，但 gext_corr 保持调用前原值不动
+    （flag 不是引擎产物，不随清除动作变化）"""
+    lc = mk_lc(flux_density=20.0, flux_density_unit='magnitude', gext_corr=False)
     ex.correct_point(lc, alambda=0.25)
     ex.clear_point(lc)
     assert lc.gext_corr is False
     assert lc.gext_Alambda is None
     assert lc.mag_gextcor is None
+    assert lc.mag_gextcor_err is None
+    assert lc.flux_density_gextcor is None
+    assert lc.flux_density_gextcor_unit is None

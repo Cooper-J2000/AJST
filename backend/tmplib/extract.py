@@ -10,9 +10,9 @@ Pipeline, all pure after the single fetch (ST-1: no session is held past
    nonmag (F-14: Jy/mJy rows -- the 10 keV / GHz class -- are intercepted at
    fetch level, never reach the CSV) → band not in the engine registry
    (F-08 strict same-name, no lower() folding: Cousins R ≠ SDSS r) → band
-   deselected by the author → gext rowset value missing (F-11: dropped, never
-   falls back to the raw magnitude -- the 16 live counter-example rows make
-   this a measured rule, not hygiene) → NULL mag_system under the chosen
+   deselected by the author → gext 档取数（F-11）：有改正产物（mag_gextcor）
+   用派生值；gext_corr=y 无产物 = 录入权威值已改正（原文已改正），回退原始值；
+   gext_corr 非真且无产物 = 未改正，dropped → NULL mag_system under the chosen
    F-10 policy → upperlimit/discard (F-12: written into the CSV with truthy
    tokens so the engine's clean_rows does the accounting; counted under
    rejected so `kept` is the number that can enter the fit).
@@ -147,7 +147,8 @@ def build_rowset(rows: list[dict], *, rowset: str,
     (csv_rows, ledger, band_table); raises SourceRejected for 'drop-source'.
 
     Rejection priority (each row counted once): nonmag → unmapped_band →
-    band_deselected → gext_missing → mag_system_missing → upperlimit/discard
+    band_deselected → gext_missing（gext 档 gext_corr 非真且无派生值的行）
+    → mag_system_missing → upperlimit/discard
     (these last two are *written* to the CSV, F-12, but counted as rejected
     because the engine's clean_rows keeps them out of the fit).
     """
@@ -174,6 +175,7 @@ def build_rowset(rows: list[dict], *, rowset: str,
                 "upperlimit": 0, "discard": 0}
     missing_err = 0
     gext_system_overrides = 0
+    gext_fallback = 0
     band_table: dict = {}
     csv_rows: list[tuple] = []
 
@@ -183,7 +185,7 @@ def build_rowset(rows: list[dict], *, rowset: str,
             "systems": {"ab": 0, "vega": 0, "null": 0},
             "in_registry": band in registry_ids,
             "upperlimit": 0, "discard": 0,
-            "gext_with_value": 0, "gext_missing": 0})
+            "gext_with_value": 0, "gext_missing": 0, "gext_fallback": 0})
 
     for r in rows:
         band = r["band"]
@@ -199,8 +201,10 @@ def build_rowset(rows: list[dict], *, rowset: str,
             b["discard"] += 1
         if r["mag_gextcor"] is not None:
             b["gext_with_value"] += 1
-        elif r["gext_corr"]:
+        else:
             b["gext_missing"] += 1
+            if r["gext_corr"]:
+                b["gext_fallback"] += 1   # y 无派生值：原文已改正行，进面取原始值
 
         if r["flux_density_unit"] != MAG_UNIT:               # F-14
             rejected["nonmag"] += 1
@@ -213,9 +217,25 @@ def build_rowset(rows: list[dict], *, rowset: str,
             continue
 
         if rowset == "gext":                                 # F-11
-            mag, err, system = r["mag_gextcor"], r["mag_gextcor_err"], "ab"
-            if mag is None:
-                rejected["gext_missing"] += 1                # 不回落
+            if r["mag_gextcor"] is not None:
+                # 有引擎改正产物 → 用派生值（gext_corr 为 n 也成立：flag 只描述
+                # 录入权威值，「算过」由派生列有无体现）
+                mag, err, system = r["mag_gextcor"], r["mag_gextcor_err"], "ab"
+            elif r["gext_corr"]:
+                # gext_corr=y 且派生列全空：录入权威值已改正（原文已改正），
+                # 原始值即改正值——回退取原始星等、按其原始星等系统记账
+                # （与导出/前端同口径）；NULL 系统行按 F-10 当前口径处置
+                mag, err = r["flux_density"], r["flux_density_err"]
+                system = sys_tok
+                if system is None:
+                    if null_system_policy == "declare" and band in declarations:
+                        system = declarations[band]
+                    else:
+                        rejected["mag_system_missing"] += 1
+                        continue
+                gext_fallback += 1
+            else:
+                rejected["gext_missing"] += 1  # n 且无派生值：未改正，不进 gext 档
                 continue
         else:
             mag, err = r["flux_density"], r["flux_density_err"]
@@ -237,10 +257,11 @@ def build_rowset(rows: list[dict], *, rowset: str,
         if err is None:
             # TXT-12 第三段：进面但无误差列 ⇒ 进误差预算 photometric 项时缺席
             missing_err += 1
-        if rowset == "gext" and sys_tok == "vega":
-            # 审核更正（P3-9）披露项：gext 行集一律按 AB 记账（依据 models.py
-            # 列注释「银消改正后 AB 星等」）；原始行自称 Vega 的行在此计数显形，
-            # 不静默。此账不改写值，只让账本可核查。
+        if rowset == "gext" and sys_tok == "vega" and r["mag_gextcor"] is not None:
+            # 审核更正（P3-9）披露项：gext 行集凡取改正列者一律按 AB 记账（依据
+            # models.py 列注释「银消改正后 AB 星等」）；原始行自称 Vega 的行在此
+            # 计数显形，不静默。原文已改正的回退行按原始系统记账、不在此列。
+            # 此账不改写值，只让账本可核查。
             gext_system_overrides += 1
         csv_rows.append((band, float(r["time"]), float(mag),
                          None if err is None else float(err),
@@ -254,7 +275,8 @@ def build_rowset(rows: list[dict], *, rowset: str,
     ledger = {"total": len(rows), "kept": kept,
               "csv_rows": len(csv_rows), "rejected": rejected,
               "kept_missing_err": missing_err,
-              "gext_system_overrides": gext_system_overrides}
+              "gext_system_overrides": gext_system_overrides,
+              "gext_fallback": gext_fallback}
     return csv_rows, ledger, band_table
 
 

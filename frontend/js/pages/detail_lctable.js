@@ -71,14 +71,14 @@ export function lcRowHTML(pt) {
       <td class="lc-val" data-field="flux_density_err" data-col="flux_density_err">${fmtNum(pt.flux_density_err, 3)}</td>
       <td class="lc-val" data-field="flux_density_unit" data-col="flux_density_unit">${esc(pt.flux_density_unit)}</td>
       <td class="lc-val" data-field="mag_system" data-col="mag_system">${esc(pt.mag_system) || '-'}</td>
-      <td class="lc-val" data-field="gext_corr" data-col="gext_corr">${pt.gext_corr ? 'Y' : 'N'}</td>
+      <td class="lc-val" data-field="gext_corr" data-col="gext_corr" title="Gext_corr：录入权威值是否已做银河系消光改正。Y=已改正（原文/来源已改正，本库不再计算）；N/空=未改正（点击改正后引擎产物写入右侧派生列，本列仍为 N）">${pt.gext_corr ? 'Y' : 'N'}</td>
       <td class="lc-val" data-field="upperlimit" data-col="upperlimit">${pt.upperlimit ? 'Y' : '-'}</td>
       <td class="lc-val" data-field="host_subtracted" data-col="host_subtracted" title="是否已扣除宿主星系流量">${pt.host_subtracted == null ? '-' : (pt.host_subtracted ? 'Y' : 'N')}</td>
-      <td class="lc-val" data-field="gext_Alambda" data-col="gext_Alambda">${fmtNum(pt.gext_Alambda, 4)}</td>
-      <td class="lc-val lc-computed" data-field="mag_gextcor" data-col="mag_gextcor">${fmtNum(pt.mag_gextcor, 3)}</td>
-      <td class="lc-val lc-computed" data-field="mag_gextcor_err" data-col="mag_gextcor_err">${fmtNum(pt.mag_gextcor_err, 3)}</td>
-      <td class="lc-val" data-field="flux_density_gextcor" data-col="flux_density_gextcor">${fmtNum(pt.flux_density_gextcor, 4)}</td>
-      <td class="lc-val" data-field="flux_density_gextcor_err" data-col="flux_density_gextcor_err">${fmtNum(pt.flux_density_gextcor_err, 4)}</td>
+      <td class="lc-val" data-field="gext_Alambda" data-col="gext_Alambda" title="A_λ 消光量（引擎改正产物，仅算过的行有值）">${fmtNum(pt.gext_Alambda, 4)}</td>
+      <td class="lc-val lc-computed" data-field="mag_gextcor" data-col="mag_gextcor" title="银消改正后 AB 星等（引擎改正产物，仅算过的行有值）">${fmtNum(pt.mag_gextcor, 3)}</td>
+      <td class="lc-val lc-computed" data-field="mag_gextcor_err" data-col="mag_gextcor_err" title="银消改正后星等误差（引擎改正产物）">${fmtNum(pt.mag_gextcor_err, 3)}</td>
+      <td class="lc-val" data-field="flux_density_gextcor" data-col="flux_density_gextcor" title="银消改正后流量 mJy（引擎改正产物，仅算过的行有值）">${fmtNum(pt.flux_density_gextcor, 4)}</td>
+      <td class="lc-val" data-field="flux_density_gextcor_err" data-col="flux_density_gextcor_err" title="银消改正后流量误差（引擎改正产物）">${fmtNum(pt.flux_density_gextcor_err, 4)}</td>
       <td class="lc-val" data-field="weights" data-col="weights">${pt.weights != null ? fmtNum(pt.weights, 2) : '1.00'}</td>
       <td class="lc-val" data-field="discard" data-col="discard">${pt.discard ? 'Y' : 'N'}</td>
       <td class="lc-val" data-field="telescope" data-col="telescope" title="${escAttr(pt.telescope)}">${esc(pt.telescope) || '-'}</td>
@@ -560,11 +560,14 @@ window.lcGextRun = async (id) => {
   if (!isAdmin()) { showToast('仅管理员可执行银消改正', 'warning'); return; }
   try {
     const st = await runExtinction({ lightcurve_id: id });
-    const skipped = st.stats?.skipped_not_optical || 0;
+    const skippedOptical = st.skipped_not_optical || 0;
+    const skippedDone = st.skipped_already_corrected || 0;
     const extra = (st.note ? `；${st.note}` : '') +
-      (skipped > 0 ? `；跳过非光学波段 ${skipped} 点` : '');
+      (skippedOptical > 0 ? `；跳过非光学波段 ${skippedOptical} 点` : '');
     if (st.corrected > 0) {
-      showToast('该数据点已完成银消改正' + extra, 'success');
+      showToast('该数据点已完成银消改正（产物写入派生列，Gext_corr 保持 N）' + extra, 'success');
+    } else if (skippedDone > 0) {
+      showToast('该数据点 Gext_corr=Y（录入权威值已改正），本库不再计算，已跳过' + extra, 'info');
     } else {
       showToast('该数据点无法改正（缺坐标 / 波段不支持 / 流量无效）' + extra, 'warning');
     }

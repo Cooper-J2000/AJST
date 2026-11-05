@@ -6,9 +6,10 @@ T-18/T-19/T-22/T-23/T-24/T-26/T-43/T-45、Q-2/Q-10/Q-12 校验电池。
     gext_distmod=39.718（T-18；01 §E.8）；
   - GRB260321A：redshift/gext_distmod 皆 NULL，与 EP260321a 共享日期 token
     ⇒ CA-12（T-19）；
-  - 全库「gext_corr=true 且改正产物全空（flux_density_gextcor 与 mag_gextcor
-    皆 NULL）」的行只剩光学窗口外 16 行 1keV（已知遗留，test_l3 上界钉住）；
-    窗口内该类行必须为 0（T-23 库侧证据）；
+  - gext_corr 语义（2026-11-06 维护者重做）：y = 录入权威值已改正
+    （原文/来源已改正），本库永不计算、派生列恒空且有 reference/comment
+    留证；「本库算过」由派生列（mag_gextcor 等）是否存在体现。T-23 库侧
+    证据 = 不变量 A（y ⇒ 派生全空）、B（y ⇒ 有留证）的活断言，均 0 违规；
   - 九模板 in_domain 由 P2 迁移实测写入 library.json（T-45 加和不变式）。
 
 建面/删除用例一律走 AJST_TMPLIB_DIR 指 tmp_path 的隔离库根（纪律：生产
@@ -211,33 +212,44 @@ def test_band_labels_case_strict():  # T-22：F-08 严格同名，禁 lower() �
     assert [r[0] for r in csv_rows] == ['R']
 
 
-def test_gext_nulls_dropped_no_fallback(client):  # T-23：F-11 空值剔除不回落
-    rows = [_row('B', mag=19.0, gext_corr=True, mag_gextcor=None),   # 空值 ⇒ 剔
-            _row('B', t=2.0, mag=19.5, gext_corr=True, mag_gextcor=18.9)]
+def test_gext_rowset_three_way_value_priority(client):  # T-23：F-11 新取数顺序
+    """gext 档逐行三级取数（2026-11-06 语义重做后的口径）：
+    ① mag_gextcor 非空 ⇒ 用引擎派生值（n 行也行：「算过」由派生列体现）；
+    ② gext_corr=true 且无派生值 ⇒ 录入权威值已改正，回退原始值保留，
+       并计 gext_fallback；
+    ③ gext_corr 非真且无派生值 ⇒ 未改正，rejected['gext_missing']。"""
+    rows = [
+        _row('B', t=1.0, mag=19.0, gext_corr=False, mag_gextcor=18.7),  # ①
+        _row('B', t=2.0, mag=19.5, gext_corr=True,  mag_gextcor=None),  # ②
+        _row('B', t=3.0, mag=20.0, gext_corr=False, mag_gextcor=None),  # ③
+    ]
     csv_rows, ledger, _ = extract.build_rowset(
         rows, rowset='gext', registry_ids=frozenset({'B'}))
-    assert ledger['rejected']['gext_missing'] == 1
-    assert ledger['kept'] == 1
-    assert csv_rows[0][2] == 18.9                    # 用的是 gext 列，不是 raw 19.5
-    # 库侧证据：光学窗口内标了 gext_corr=true 的行必须带改正产物
-    # （新流程写 flux_density_gextcor 系列列、旧派生列 mag_gextcor，二者至少其一）。
-    # 不限定某一列 —— mag_gextcor 为 NULL 但 flux 改正值在握的行是正常新口径。
-    # 窗口外的高能行（已知遗留 16 行 1keV）由 test_l3 的已知问题上界断言钉住，
-    # 不在此处用行数硬编码。
+    assert ledger['total'] == 3
+    assert ledger['rejected']['gext_missing'] == 1        # ③ 被剔
+    assert ledger['gext_fallback'] == 1                   # ② 回退计数
+    assert ledger['kept'] == 2                            # ①② 保留
+    assert sorted(r[2] for r in csv_rows) == [18.7, 19.5]  # 派生值 + 回退原始值
+    # 库侧证据（活断言，与 test_l3_db_invariants 的新不变量 A/B 同口径，
+    # 不钉行数魔法数）：y ⇒ 派生列恒空；y ⇒ 有 reference/comment 留证。
     from app import get_session
     from sqlalchemy import text
     sess = get_session()
     try:
-        n = sess.execute(text(
-            'SELECT count(*) FROM lightcurves lc'
-            ' JOIN filters f ON f.id = lc.band'
-            ' WHERE lc.gext_corr IS TRUE'
-            ' AND f.wavelength >= 1000 AND f.wavelength <= 1e7'
-            ' AND lc.flux_density_gextcor IS NULL'
-            ' AND lc.mag_gextcor IS NULL')).scalar()
+        n_derived = sess.execute(text(
+            'SELECT count(*) FROM lightcurves'
+            ' WHERE gext_corr IS TRUE'
+            ' AND (mag_gextcor IS NOT NULL'
+            '      OR flux_density_gextcor IS NOT NULL)')).scalar()
+        n_unprovenanced = sess.execute(text(
+            "SELECT count(*) FROM lightcurves"
+            " WHERE gext_corr IS TRUE"
+            " AND (reference IS NULL OR btrim(reference) = '')"
+            " AND (comment IS NULL OR btrim(comment) = '')")).scalar()
     finally:
         sess.close()
-    assert n == 0
+    assert n_derived == 0
+    assert n_unprovenanced == 0
 
 
 def test_null_system_policies():  # F-10 四档语义

@@ -456,9 +456,15 @@ def update_lightcurve(lc_id):
             if not own and set(body.keys()) - {'discard'}:
                 return {'error': '普通用户仅可修改自己录入的记录；他人记录仅可切换 discard（扣点）'}, 403
         _apply_lc_fields(lc, body)
+        # 行内把 Gext_corr 置 y = 声明「录入权威值已改正」：本库此后不再计算该行
+        # 改正；若该行此前已有引擎改正产物，一并清掉，避免 y+派生值并存
+        if lc.gext_corr and (lc.mag_gextcor is not None
+                             or lc.flux_density_gextcor is not None):
+            extinction.clear_point(lc)
         # time/mjd 联动（MJD 为权威时间；改 mjd 重算 time 缓存，改 time 重算 mjd）
         _sync_time_mjd(_t0_mjd_of(sess, lc.transient_id, {}), lc, body)
-        # 已做银消改正的数据点随变动自动重算（条件不满足则清除）
+        # 引擎改正过（n 行有派生产物）的数据点随变动自动重算（条件不满足则清产物）；
+        # y 行与从未算过的 n 行不触碰
         extinction.recompute_point(sess, lc)
         sess.commit()
         return jsonify(lc.to_dict())
@@ -543,8 +549,3 @@ def _apply_lc_fields(lc, body):
                     lc.host_subtracted = None
             else:
                 setattr(lc, bool_field, bool(v))
-    if 'extra_data' in body and isinstance(body['extra_data'], dict):
-        # 浅合并；必须构造新 dict，否则 JSONB 原地修改不被 SQLAlchemy 追踪、不会落库
-        merged = dict(lc.extra_data or {})
-        merged.update(body['extra_data'])
-        lc.extra_data = merged

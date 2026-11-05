@@ -608,12 +608,13 @@ function applyRelatedView() {
 }
 
 // ═══ 测光录入卡：编辑已有记录模式 ═══
-// 把库中记录回填到录入表单；优先用 extra_data 中的原始 start/end/expo 及其单位还原
+// 把库中记录回填到录入表单（v2.40 起行级 extra_data 已删除：原始 start/end/expo
+// 由 time / time_err 反推还原——timeErr = 半曝光、time = 曝光中点）
 function enterEditMode(rec) {
   const $ = (id) => document.getElementById(id);
   _editLcId = rec.id;
   _editTid = rec.transient_id;
-  const ed = rec.extra_data || {};
+  const ed = {};
   // 源联动（异步加载源信息卡，不阻塞表单回填）
   if (rec.transient_id && rec.transient_id !== _tid) {
     $('gcnSrcId').value = rec.transient_id;
@@ -963,13 +964,8 @@ async function saveObs(mode) {
   const band = $('gcnObsBand').value.trim();
   if (!band) { showToast('波段 band 必填', 'warning'); return; }
 
-  const gcnId = $('gcnObsGcnId').value.trim();
-  const extra_data = {};
-  if (gcnId) extra_data.gcn_id = gcnId;
-  if (expo != null) { extra_data.obs_exposure = expo; extra_data.obs_exposure_unit = $('gcnObsExpoU').value; }
-  if (tStart != null) { extra_data.obs_time_start = tStart; extra_data.obs_time_start_unit = $('gcnObsU_start').value; }
-  if (tEnd != null) { extra_data.obs_time_end = tEnd; extra_data.obs_time_end_unit = $('gcnObsU_end').value; }
-
+  // v2.40 起行级 extra_data 机制已删除：gcn_id 与 reference（自动填 GCN <cid>）等价，
+  // 曝光与起止时刻由 time / time_err 承载，不再随记录提交扩展字段
   const body = {
     transient_id: tid,
     time, time_err: timeErr,
@@ -980,7 +976,6 @@ async function saveObs(mode) {
     instrument: $('gcnObsInstr').value.trim() || null,
     reference: $('gcnObsRef').value.trim() || null,
     comment: $('gcnObsComment').value.trim() || null,
-    extra_data,
   };
   try {
     if (updating) {

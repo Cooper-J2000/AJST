@@ -1100,7 +1100,7 @@ function buildRecords() {
         flux_density: d.y, flux_density_unit: fluxUnit, mag_system: magSys,
         upperlimit: ul,
         reference: ref, telescope: tel, instrument: instr, comment,
-        extra_data: { digitizer: true },
+        // v2.40 起行级 extra_data 已删除（原 digitizer:true 标记无任何消费方，不再提交）
       };
     });
     records.push(...recs);

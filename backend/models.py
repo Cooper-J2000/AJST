@@ -238,7 +238,6 @@ class Lightcurve(Base):
     reference     = Column(Text, nullable=True)
     comment       = Column(Text, nullable=True)
     source        = Column(String(128), nullable=True)  # 数据来源（提交账户名或导入渠道）
-    extra_data      = Column(JSONB, default=dict)
 
     created_at    = Column(DateTime, default=lambda: utcnow())
     updated_at    = Column(DateTime, default=lambda: utcnow(),
@@ -282,7 +281,6 @@ class Lightcurve(Base):
             'source': self.source,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-            'extra_data': self.extra_data or {},
         }
 
 

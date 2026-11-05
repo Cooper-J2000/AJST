@@ -108,7 +108,7 @@
 | `flux_density_err` | FLOAT | 原始误差 |
 | `flux_density_unit` | VARCHAR(32) | 原始单位：`mag` / `mJy` / `uJy` / `Jy` / `cgs` |
 | `mag_system` | VARCHAR(8) | 原始星等系统：`AB` / `Vega` |
-| `gext_corr` | BOOLEAN | 是否已做银河消光改正 |
+| `gext_corr` | BOOLEAN | **只标记录入权威数值（flux_density 列）是否已做银河消光改正**（v2.40 起重定义）：`true`=录入值已改正（原文/来源已改正，本库**永不**对其计算改正，派生列恒空，须有 reference/comment 留证）；`false`=录入值未改正。与引擎是否算过无关——「算过」由派生列是否存在体现 |
 | `upperlimit` | BOOLEAN | 是否为上限 |
 | `host_subtracted` | BOOLEAN | 测光是否已扣除宿主星系（false=直接对目标测光可能含宿主，NULL=未知；2026-08-26 新增，详情页数据表展示/行内编辑、CSV 上传映射均已支持） |
 | `gext_Alambda` | FLOAT | 银消量 A_λ（mag） |
@@ -1453,8 +1453,11 @@ XRT 10 keV 未吸收流量密度光变（Evans+2007,2009 数据产品）已导�
   新增 **15,106** 个测光点（Optical/IR 为 Vega 星等、Radio 为 mJy 流量密度），
   **每行 reference 为原始 ADS 文献链接**；重复 21,129 行跳过（与库中已有数据重叠）；
   跳过绝对星等/rest-frame/时间占位异常行 1,517 条。
-  注意：部分来源（如 Ferrero 2006）数据**已被原作者做过消光改正**，
-  这些行 `extra_data.ext_corrected_by_source=true`，银消改正流程会自动跳过它们（extinction.py 内置 guard）。
+  注意：部分来源（如 Ferrero 2006）数据**已被原作者做过消光改正**。
+  ⚠️ 2026-11-06 核实：当时这批行的守卫标记（行级 `extra_data.ext_corrected_by_source=true`）
+  在 2026-08-02 单位修正重导时已丢失（重导整行重建、不重设该标记），此后这些行被引擎
+  按未改正数据处理过；行级 extra_data 机制已于 v2.40 整体删除（改由 `gext_corr` 列承载，
+  见 §11 v2.40 与表结构节），这批行的历史双重改正嫌疑列为待审计事项。
   ⚠️ 单位修正记录（2026-08-02）：GRBSNWebtool 各文件的单位列不统一，曾因按单一单位假设
   导致错误，已全部修正并重导——`time_unit` 列（days/hours/minutes/seconds 逐行换算）、
   射电 `freq_unit` 列（MHz→GHz ÷1000）、`mag_unit` 列（AB/Vega 逐行取值，缺省 Vega）；
@@ -1668,8 +1671,8 @@ fs_inject + powerlaw_wing 8 种，可用 216 种，每种组合的先验模板�
 
 **数据准备**（`jobs.prepare_data()`）：
 
-- 优先取银消改正列（`gext_corr=true` 时用 `flux_density_gextcor`，单位 mJy）；
-  否则按原始值换算——AB 零点 `mag = 16.4 - 2.5·log10(f_mJy)`，Vega 系统先加 `vega2ab` 转 AB
+- 优先取引擎改正产物（`flux_density_gextcor` 非空即用，单位 mJy——与 `gext_corr` 无关，
+  v2.40 起 flag 只描述录入权威值）；否则按原始值换算——AB 零点 `mag = 16.4 - 2.5·log10(f_mJy)`，Vega 系统先加 `vega2ab` 转 AB
 - 频率按 `filters.wavelength` 由 Å 转 Hz（ν = c/λ）；不在 filters 表的波段尝试从波段名
   解析——射电频率标注（`'4.8GHz'` / `'250MHz'` 等，Hz–THz）直接换算，X 射线光子能量标注
   （`'10keV'` 等，eV–GeV）按 ν = E/h 换算；都无法解析的波段才跳过
@@ -2460,6 +2463,36 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 ---
 
 ## 十一、版本历史
+
+### v2.40（2026-11-06）— 行级 extra_data 机制整体拆除：`gext_corr` 重定义为「录入权威值是否已改正」
+
+- **语义重定义（维护者裁定）**：`gext_corr` 只描述**录入的权威数值**（`flux_density` 列）状态——
+  `false`=未改正（引擎可计算，产物写派生列、flag 不变；重复点击重算覆盖）；`true`=已改正
+  （原文/来源已改正，引擎/自动重算/单点 API **永不触碰**，派生列恒空，须 reference/comment 留证）。
+  「本库是否算过」不再由 flag 表达，完全由派生列是否存在体现——v2.39 引入的行级
+  `extra_data.ext_corrected_by_source` 守卫机制整体删除（Lightcurve.extra_data 列 DROP，
+  ETL 回 24 列 CSV，契约文档/validate.py 同步）
+- **数据迁移**（改前 pg_dump 留底 `catadata/backups/pre_gext_semantics_20261106.sql`）：
+  80,614 行「引擎已改正」y→n（保留派生列）；84 行原文已改正保持 y；16 行 GRB251025B '1keV'
+  无留证历史遗留置 n。迁移后：y∧派生非空=0、y 无留证=0、y=84（L3 快照钉）
+- **引擎**（extinction.py）：`correct_point` 只写派生列不碰 flag；`clear_point` 只清派生列；
+  recompute 三件套只作用于「n ∧ 有派生值」的行（条件不满足时清产物）；run 主循环跳过 y 行
+  （`skipped_already_corrected`）、n 行重算覆盖；PUT 行编辑置 y 时自动清派生值避免 y∧派生并存
+- **下游消费**：tmplib `build_rowset` gext 档三级取数——①有派生用派生；②y 无派生回退原始值
+  （权威值已等价改正，计 `gext_fallback`）；③n 无派生 rejected['gext_missing']。前端 `pointToMJy`
+  的 useGext 判定改为「派生列存在」（y 行用原始值）；银消列/toast/文案同步；GCN 工具不再
+  提交行级 extra_data（gcn_id 与 reference 等价、曝光/起止由 time/time_err 承载），
+  `routes/gcn.py` 关联匹配改走 reference 正则
+- **测试**：L3 不变量重写（A：y⇒派生全空；B：y⇒有留证；C：引擎产物完整性；快照钉 y=84）、
+  tmplib F-11 测试改为三级取数、L1 correct/clear_point 断言 flag 不被动
+- **模板库 F-52 指纹修复（本批暴露的潜伏 bug）**：`rows_sha256` 排序键 (time, band) 非全序，
+  并列行保持输入序——输入序取决于物理行序，任何批量 UPDATE（如本次 80k 行迁移）重排元组
+  即引发假「rows-drifted」。排序键补整行 token 决胜（主排序语义不变）；受影响的两个
+  catalogue 派生模板（sn2006aj、at2017gfo，经探针快照核实行集内容未变、纯顺序伪漂移）
+  按新配方重烙印 rows_sha256；ep250108a/sn2002ap 无并列行不受影响
+- **历史结论（见 §8.10）**：GRBSNWebtool「原文已改正」行（Ferrero 2006 等）的守卫标记在
+  2026-08-02 单位修正重导时即已丢失，早于一切本地备份，无法回溯证实是否造成过双重改正；
+  列为待审计事项
 
 ### v2.39（2026-11-06）— 验收套件 8 项存量失败清零：specphot 扫描测试对齐重构后实现 + 光变数据质量修复
 

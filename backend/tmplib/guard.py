@@ -68,10 +68,17 @@ def rows_sha256(rows) -> str:
             tf = float("inf")
         return (tf, str(band))
 
-    ordered = sorted(rows, key=_sort_key)
+    def _line(row):
+        return "|".join(_tok(v) for v in row)
+
+    # 2026-11-06 修复（F-52 配方补正）：排序键在 (time, band) 上补整行 token 做决胜键。
+    # 原配方对同 (time, band) 的并列行保持输入序——输入序取决于物理行序，任何批量
+    # UPDATE（如光变行 gext_corr 迁移）重排元组即引发哈希漂移（误报 rows-drifted）。
+    # 主排序语义仍是 (time, band) 升序，仅决胜规则补全；登记值需随之重烙印（API-7 重建）。
+    ordered = sorted(rows, key=lambda row: (*_sort_key(row), _line(row)))
     h = hashlib.sha256()
     for row in ordered:
-        h.update("|".join(_tok(v) for v in row).encode("utf-8"))
+        h.update(_line(row).encode("utf-8"))
         h.update(b"\n")
     return h.hexdigest()
 

@@ -34,8 +34,9 @@ MJD_MIN, MJD_MAX = 40000.0, 70000.0
 #      报同一个测光值（合法），也可能是重复插入。
 #   4. transients 里 56 个源无 ra/dec（全部是 EP/SVOM 近期目标，位置未回填）。
 #   5. 12 张表从未 ANALYZE（pg_stat_user_tables.last_analyze 全为 NULL）。
-#   6. 某未发布源的 16 行 '1keV' 被标 gext_corr 却无改正值（见文末第 2 条测试，
-#      已用上界断言钉住，不是忽略）。
+#   6.（已消解）原「16 行 '1keV' 标 gext_corr 却无改正值」随 2026-11-06
+#      gext_corr 语义重做消解：y 只表示录入权威值已改正，本库永不计算、
+#      派生列恒空是定义而非缺陷；新不变量 A/B（见文末）钉住该口径。
 #   以上属数据质量/运维范畴，需人判断处置，不属"自洽性"不变量。
 
 
@@ -214,30 +215,54 @@ def test_flux_density_is_finite(q):
     assert rows[0]['bad'] == 0, f"{rows[0]['bad']} 行流量是 NaN/Inf"
 
 
-def test_gext_corrected_rows_have_their_values(scalar):
-    """波段落在光学窗口内（=真正可改正）的行，标了 gext_corr 就必须有改正值"""
+# ── gext_corr 新语义（维护者 2026-11-06 裁定）──────────────────────────────
+# gext_corr 只描述**录入的权威数值**是否已做银河系消光改正：
+#   n/false = 录入值未改正，本库引擎可计算，产物写派生列（flag 保持 n 不变）；
+#   y = 录入权威值已改正（原文/来源已改正），本库永不计算，派生列恒空，
+#       且必须有 reference 或 comment 留证。
+# 「本库是否算过」由派生列（gext_Alambda / mag_gextcor* / flux_density_gextcor*）
+# 是否存在体现，不由 flag 体现。
+
+def test_gext_corr_true_rows_have_no_derived_values(scalar):
+    """新不变量 A：gext_corr=true（录入权威值已改正）⇒ 派生列全空——
+    y 行本库永不计算，引擎/自动重算/单点 API 全跳过"""
+    n = scalar("""SELECT count(*) FROM lightcurves
+                  WHERE gext_corr IS TRUE
+                    AND (mag_gextcor IS NOT NULL
+                         OR flux_density_gextcor IS NOT NULL)""")
+    assert n == 0, f'{n} 行标 gext_corr=true 却带本库派生改正值（y 行永不计算）'
+
+
+def test_gext_corr_true_rows_have_provenance(scalar):
+    """新不变量 B：gext_corr=true ⇒ reference 非空或 comment 非空（留证）"""
+    n = scalar("""SELECT count(*) FROM lightcurves
+                  WHERE gext_corr IS TRUE
+                    AND (reference IS NULL OR btrim(reference) = '')
+                    AND (comment   IS NULL OR btrim(comment)   = '')""")
+    assert n == 0, f'{n} 行标 gext_corr=true 却无 reference/comment 留证'
+
+
+def test_engine_derived_rows_are_complete(scalar):
+    """新不变量 C（引擎产物完整性）：光学窗口内（wavelength 1000–1e7 Å）
+    gext_corr 非真且 flux_density_gextcor 非空的行，gext_Alambda 与
+    flux_density_gextcor_unit 也必须非空（correct_point 三件套同写同清）"""
     n = scalar("""SELECT count(*) FROM lightcurves lc
                   JOIN filters f ON f.id = lc.band
-                  WHERE lc.gext_corr IS TRUE
+                  WHERE lc.gext_corr IS NOT TRUE
+                    AND lc.flux_density_gextcor IS NOT NULL
                     AND f.wavelength >= 1000 AND f.wavelength <= 1e7
-                    AND (lc.flux_density_gextcor IS NULL
+                    AND (lc."gext_Alambda" IS NULL
                          OR lc.flux_density_gextcor_unit IS NULL)""")
-    assert n == 0, f'{n} 行标为已改正却没有改正后流量/单位'
+    assert n == 0, f'{n} 行有引擎改正流量却缺 gext_Alambda/单位（产物不完整）'
 
 
-def test_known_open_issue_high_energy_rows_flagged_as_corrected(scalar):
-    """已知未修（钉上界，修好后可删）：高能波段行标了 gext_corr 但无改正值。
+def test_gext_corr_true_row_count_snapshot(scalar):
+    """快照钉：gext_corr=true（录入权威值已改正）行数恒为 84。
 
-    现状 16 行，全部是同一未发布源的 '1keV' 行（2026-08-27 导入）。
-    根因：1 keV = 12.4 Å，落在 extinction 的光学窗口 [1000, 1e7] Å 之外，
-    _optical_alambda() 返回 None，本来就没有可改的东西，导入侧却仍置
-    gext_corr = TRUE。数值上无害（X 射线尘埃消光可忽略），但标志位撒谎，
-    且 to_dict() 会对外给出 gext_corr=true + flux_density_gextcor=null 的组合。
-    处置建议：导入侧对窗口外波段不置该标志（或把已有 16 行清零），二者都需人确认。
-    """
-    n = scalar("""SELECT count(*) FROM lightcurves lc
-                  WHERE lc.gext_corr IS TRUE
-                    AND lc.flux_density_gextcor IS NULL
-                    AND (lc.band ~ 'keV' OR lc.band ~ 'MeV' OR lc.band ~ 'GeV'
-                         OR lc.band ~ 'GHz' OR lc.band ~ 'MHz')""")
-    assert n <= 16, f'标为已改正但无改正值的高能波段行从 16 涨到 {n} 行，需查导入侧'
+    口径：lightcurves 全表 gext_corr IS TRUE（2026-11-06 语义重做后实测；
+    84 行全部满足上面不变量 A/B）。该 flag 只由人工审核的数据录入置位，
+    引擎/自动重算永不触碰，故行数应稳定——变了说明有录入或迁移改动，
+    需人工核对新口径后再更新本钉。"""
+    n = scalar('SELECT count(*) FROM lightcurves WHERE gext_corr IS TRUE')
+    assert n == 84, (f'gext_corr=true 行数从快照值 84 变为 {n}：'
+                     '该 flag 只由录入决定，变动需人工核对口径')

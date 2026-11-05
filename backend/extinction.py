@@ -20,7 +20,7 @@ CSFD 尘埃图首次使用前需 dustmaps.csfd.fetch()（本机已完成）。
 """
 import math
 
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
 RV = 3.1                # 银河系平均 Rv，固定 3.1
 LN10 = math.log(10)
@@ -236,8 +236,12 @@ def obs_mag(lc):
 
 def correct_point(lc, alambda, vega2ab=0.0):
     """
-    对单个 Lightcurve 行执行改正并写回字段（不 commit）。
+    对单个 Lightcurve 行执行改正并写回派生列（不 commit）。
     返回 True；数据不足/单位不支持返回 False。
+
+    只写派生列（gext_Alambda / mag_gextcor* / flux_density_gextcor*），
+    不碰 gext_corr——该列只标记录入权威数值是否已改正（维护者 2026-11-06
+    裁定）：n 行的引擎改正产物由派生列有无体现，flag 恒为 n。
     """
     om = obs_mag(lc)
     if om is None:
@@ -251,7 +255,6 @@ def correct_point(lc, alambda, vega2ab=0.0):
     flux_corr = 3.631 * 10 ** (6 - mag_corr / 2.5)
     flux_corr_err = (LN10 / 2.5) * flux_corr * mag_err if mag_err is not None else None
 
-    lc.gext_corr = True
     lc.gext_Alambda = alambda
     lc.mag_gextcor = mag_corr
     lc.mag_gextcor_err = mag_err
@@ -262,8 +265,7 @@ def correct_point(lc, alambda, vega2ab=0.0):
 
 
 def clear_point(lc):
-    """清除单点的改正结果（不 commit）"""
-    lc.gext_corr = False
+    """清除单点的改正产物（不 commit）；gext_corr 保持原值不动。"""
     lc.gext_Alambda = None
     lc.mag_gextcor = None
     lc.mag_gextcor_err = None
@@ -276,11 +278,13 @@ def clear_point(lc):
 
 def run(sess, transient_id=None, lightcurve_id=None):
     """
-    执行银河系消光改正。
+    执行银河系消光改正（用户显式触发的首算/重算入口）。
       transient_id=None 且 lightcurve_id=None → 全部源
       transient_id 指定 → 该源全部数据点
       lightcurve_id 指定 → 单个数据点
-    返回统计信息 dict（调用方负责 commit）。
+    只处理 gext_corr 非真的行（录入权威值未改正）；已有改正产物的 n 行会
+    重新计算并覆盖（维护者裁定），gext_corr 保持 n；gext_corr=y 的行
+    （权威值已改正）一律跳过。返回统计信息 dict（调用方负责 commit）。
     """
     from models import Transient, Lightcurve
 
@@ -301,6 +305,7 @@ def run(sess, transient_id=None, lightcurve_id=None):
         'ok': True,
         'total': len(rows),
         'corrected': 0,
+        'skipped_already_corrected': 0,
         'skipped_no_coords': 0,
         'skipped_band': 0,
         'skipped_not_optical': 0,
@@ -319,9 +324,9 @@ def run(sess, transient_id=None, lightcurve_id=None):
         if t is None or t.ra is None or t.dec is None:
             stats['skipped_no_coords'] += 1
             continue
-        if (lc.extra_data or {}).get('ext_corrected_by_source'):
-            # 原作者已做过消光改正的数据（如 GRBSNWebtool 部分来源），不重复改正
-            stats['skipped_flux'] += 1
+        if lc.gext_corr:
+            # 录入权威值已改正（原文/来源已改正）的行：本库永不计算消光改正
+            stats['skipped_already_corrected'] += 1
             continue
         meta = filters.get(lc.band)
         if meta is None or not meta['wavelength'] or meta['wavelength'] <= 0:
@@ -427,10 +432,14 @@ def correct_host_phot(sess, ra, dec, phot_rows, ebv=None):
 
 def recompute_point(sess, lc):
     """
-    单个数据点变动后调用：若该点已做改正则重算；条件不再满足（无坐标/波段不支持）
-    则清除改正结果。调用方负责 commit。
+    单个数据点变动后调用：仅当该行「gext_corr 非真（录入权威值未改正）且
+    已有改正产物（之前算过）」时重算；条件不再满足（无坐标/波段不支持/
+    流量无效）则清掉改正产物（clear_point，flag 不动）。gext_corr=y 的行
+    （权威值已改正）与本库从未算过的 n 行都不触碰——首算只由用户显式点击
+    /api/extinction/run 触发。调用方负责 commit。
     """
-    if not lc.gext_corr:
+    if lc.gext_corr or (lc.flux_density_gextcor is None
+                        and lc.mag_gextcor is None):
         return
     from models import Transient, FilterDef
     t = sess.query(Transient).filter(Transient.id == lc.transient_id).first()
@@ -451,11 +460,13 @@ def recompute_point(sess, lc):
 
 
 def recompute_transient(sess, transient_id):
-    """源坐标变动后：重算该源所有已改正的数据点；坐标被清除则全部清除。"""
+    """源坐标变动后：重算该源「n 且已有改正产物」的数据点；坐标被清除则清掉产物。"""
     from models import Transient, Lightcurve
     rows = sess.query(Lightcurve).filter(
         Lightcurve.transient_id == transient_id,
-        Lightcurve.gext_corr.is_(True),
+        Lightcurve.gext_corr.isnot(True),
+        or_(Lightcurve.mag_gextcor.isnot(None),
+            Lightcurve.flux_density_gextcor.isnot(None)),
     ).all()
     if not rows:
         return
@@ -484,11 +495,13 @@ def recompute_transient(sess, transient_id):
 
 
 def recompute_band(sess, band):
-    """滤波器定义（波长/Vega2AB）变动后：重算该波段所有已改正的数据点。"""
+    """滤波器定义（波长/Vega2AB）变动后：重算该波段「n 且已有改正产物」的数据点。"""
     from models import Transient, Lightcurve
     rows = sess.query(Lightcurve).filter(
         Lightcurve.band == band,
-        Lightcurve.gext_corr.is_(True),
+        Lightcurve.gext_corr.isnot(True),
+        or_(Lightcurve.mag_gextcor.isnot(None),
+            Lightcurve.flux_density_gextcor.isnot(None)),
     ).all()
     if not rows:
         return

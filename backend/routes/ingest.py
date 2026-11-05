@@ -308,8 +308,6 @@ def photometry():
             for f in ('telescope', 'instrument', 'reference'):
                 if p.get(f):
                     fields[f] = p[f]
-            if isinstance(p.get('extra_data'), dict):
-                fields['extra_data'] = p['extra_data']
             _apply_lc_fields(lc, fields)
             lc.source = str(body.get('source') or 'ingest-api')  # 数据来源：ingest 渠道
             sess.add(lc)

@@ -95,7 +95,8 @@ def _extract_name_tokens(data):
 @gcn_bp.route('/<int:cid>/related')
 def related_lightcurves(cid):
     """库中与该期 GCN 相关的光变记录，供阅读工具对照核对。
-    exact: reference 明确写有 GCN<cid>（或 extra_data.gcn_id 等于 cid）
+    exact: reference 明确写有 GCN<cid>（行级 extra_data 列已随 v2.40 退役，
+           不再参与匹配）
     fuzzy: 正文中出现的暴名能匹配到库中的源（id 或别名），取其全部光变记录
     """
     path = os.path.join(GCN_ARCHIVE_DIR, f'{cid}.json')
@@ -113,10 +114,7 @@ def related_lightcurves(cid):
         #    期号前后不得再跟数字，避免 GCN11024 误中 1102
         pattern = rf'gcn\s*#?\s*{cid}(?![0-9])'
         exact = (sess.query(Lightcurve)
-                 .filter(or_(
-                     Lightcurve.reference.op('~*')(pattern),
-                     Lightcurve.extra_data['gcn_id'].astext == str(cid),
-                 ))
+                 .filter(Lightcurve.reference.op('~*')(pattern))
                  .filter(~Lightcurve.band.op('~*')(_HE_BAND_SQL))
                  .order_by(Lightcurve.transient_id, Lightcurve.time)
                  .all())

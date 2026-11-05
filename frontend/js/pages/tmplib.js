@@ -769,7 +769,7 @@ function _ledgerHTML(led) {
   const rj = led.rejected || {};
   const names = {
     nonmag: '非星等行', unmapped_band: '波段不在注册表（严格同名）',
-    band_deselected: '未勾选', gext_missing: 'mag_gextcor 空值（不回落）',
+    band_deselected: '未勾选', gext_missing: '未改正且无派生值（不进 gext 档）',
     mag_system_missing: '缺测光系统', missing_value: '缺值/缺时刻',
     upperlimit: '上限（写进 CSV 但不进拟合）', discard: 'discard（同上）',
   };
@@ -809,9 +809,10 @@ function _step2HTML() {
         <div class="fw-bold small">行账（当前口径：rowset=${esc(p.query.rowset)}，policy=${esc(p.query.null_system_policy)}；改勾/改档即重算）</div>
         ${_ledgerHTML(p.ledger)}
         <div class="sp-muted">gext 档对照：可进面 ${p.rowsets.gext.kept} 行；
-          本源 mag_gextcor 空值行 ${p.rowsets.gext.gext_missing}（gext 档下这些行被剔除、不回落 raw）；
+          未改正且无派生值 ${p.rowsets.gext.gext_missing} 行（不进 gext 档）；
+          ${p.rowsets.gext.gext_fallback ? `Gext_corr=Y 无派生值（原文已改正）${p.rowsets.gext.gext_fallback} 行取原始值；` : ''}
           ${p.rowsets.gext.kept_missing_err ? `进面但无误差列 ${p.rowsets.gext.kept_missing_err} 行（进误差预算 photometric 项时缺席）；` : ''}
-          ${p.rowsets.gext.gext_system_overrides ? `<span class="text-warning">原始行自称 Vega 的 ${p.rowsets.gext.gext_system_overrides} 行（gext 档按库口径记 AB，依据列注释「银消改正后 AB 星等」——请核对）</span>` : ''}
+          ${p.rowsets.gext.gext_system_overrides ? `<span class="text-warning">原始行自称 Vega 的 ${p.rowsets.gext.gext_system_overrides} 行（取派生值者按库口径记 AB，依据列注释「银消改正后 AB 星等」——请核对）</span>` : ''}
         </div>
       </div>
       <div class="col-lg-6" id="tlWizardBandMap">
@@ -918,7 +919,7 @@ function _step3HTML() {
           <label class="form-label small mb-0">行集 rowset（与 mw_removed 绑死）<span class="text-danger">*</span></label>
           <select class="form-select form-select-sm" id="tlRowset">
             <option value="raw" ${_wiz.rowset === 'raw' ? 'selected' : ''}>raw — 未扣银消（本源可进面 ${p.ledger.kept} 行）</option>
-            <option value="gext" ${_wiz.rowset === 'gext' ? 'selected' : ''}>gext — 已扣银消（可进面 ${rsG.kept} 行；mag_gextcor 空值 ${rsG.gext_missing} 行被剔除不回落${rsG.kept_missing_err ? `；无误差列 ${rsG.kept_missing_err} 行不进误差预算` : ''}）</option>
+            <option value="gext" ${_wiz.rowset === 'gext' ? 'selected' : ''}>gext — 已扣银消（可进面 ${rsG.kept} 行；未改正且无派生值 ${rsG.gext_missing} 行不进本档${rsG.gext_fallback ? `；原文已改正 ${rsG.gext_fallback} 行取原始值` : ''}${rsG.kept_missing_err ? `；无误差列 ${rsG.kept_missing_err} 行不进误差预算` : ''}）</option>
           </select>
         </div>
         <div class="mb-1" style="max-width:520px" id="tlSysNullPolicy">
