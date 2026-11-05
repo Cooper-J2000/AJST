@@ -88,6 +88,7 @@ export function lcRowHTML(pt) {
       <td class="small" data-col="source" title="数据来源">${pt.source ? escAttr(pt.source) : '-'}</td>
       <td class="small text-secondary text-nowrap" data-col="updated_at" title="存入时间 / 最近修改 (UTC)">${esc((pt.updated_at || pt.created_at || '').replace('T', ' ').slice(0, 19)) || '-'}</td>
       <td class="lc-edit-cell" style="display:none">
+        <button class="sp-btn-ghost py-0 px-1" onclick="lcCopyRowNew(${pt.id})" title="复制该行为新记录预填（适合录入相似数据）"><i class="bi bi-clipboard-plus"></i></button>
         ${canEditLc(pt) ? `
         <button class="sp-btn-ghost py-0 px-1" onclick="lcEditStart(${pt.id})" title="编辑"><i class="bi bi-pencil"></i></button>
         ${isAdmin() ? `<button class="sp-btn-ghost py-0 px-1" onclick="lcGextRun(${pt.id})" title="对该数据点执行银消改正"><i class="bi bi-moon-stars"></i></button>` : ''}` : ''}
@@ -419,6 +420,37 @@ window.lcAddNewRow = () => {
 window.lcAddNewCancel = () => {
   const row = document.getElementById('lcNewRow');
   if (row) row.remove();
+};
+
+// ─── 以已有行为模板新增：复制该行各字段值预填进新增行，只需改少数格子即可保存 ───
+// 预填值不标 data-src="user"：保存时未手改的 MJD 仍按 time 由服务端反算（同行复制的
+// time/mjd 本就一致），用户手改 time 后预填的 mjd 不会成为陈旧权威值
+window.lcCopyRowNew = (id) => {
+  if (!isAuthed()) { showToast('请先登录', 'warning'); return; }
+  const pt = lcItems.find(p => p.id === id);
+  if (!pt) return;
+  lcAddNewCancel();   // 已有新增行先撤掉（lcAddNewRow 见到已有行会直接 return，不会覆盖）
+  lcAddNewRow();      // 重新开一个空白新增行
+  const row = document.getElementById('lcNewRow');
+  if (!row) return;
+  // time/time_err 直接以秒预填，乘积因子复位 x1
+  for (const f of ['time', 'time_err']) {
+    const facEl = row.querySelector(`.lc-new-tfac[data-for="${f}"]`);
+    if (facEl) facEl.value = '1';
+  }
+  const setVal = (field, value) => {
+    const el = row.querySelector(`.lc-new-input[data-field="${field}"]`);
+    if (!el) return;
+    const v = value == null ? '' : String(value);
+    if (el.tagName === 'SELECT' && v && ![...el.options].some(o => o.value === v)) {
+      el.add(new Option(v, v));   // 候选之外的取值（如历史自定义单位）补为可选项
+    }
+    el.value = v;
+  };
+  for (const f of LC_NEW_EDITABLE) {
+    setVal(f, f === 'host_subtracted' ? (pt[f] == null ? 'null' : String(pt[f])) : pt[f]);
+  }
+  showToast('已按该行预填，修改后点保存即可', 'success');
 };
 
 // 新增行 time/MJD 联动的「来源」标记：用户手填过的字段 data-src="user"，

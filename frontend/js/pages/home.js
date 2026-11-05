@@ -96,7 +96,7 @@ export async function render() {
           const subs = (tagStats.sub_by_tag || {})[t.tag] || [];
           const noSub = (tagStats.no_sub || {})[t.tag] || 0;
           const rows = [...subs.map(x => ({ name: x.sub_tag, count: x.count })),
-                        ...(noSub ? [{ name: '未标注', count: noSub }] : [])];
+                        ...(noSub ? [{ name: 'Untagged', count: noSub }] : [])];
           const desc = tagDesc.main[t.tag] || null;
           return `
         <div class="swiss-tag-item">
@@ -108,9 +108,9 @@ export async function render() {
           </div>
           <div class="swiss-tag-subs">
             ${rows.length ? rows.map(r => {
-              const sd = r.name === '未标注' ? null : (tagDesc.sub[r.name] || null);
+              const sd = r.name === 'Untagged' ? null : (tagDesc.sub[r.name] || null);
               // 副标签行 → 按「主标签 + 副标签」筛选（列表页 tag/sub_tag 为独立的 AND 过滤）
-              const href = r.name === '未标注'
+              const href = r.name === 'Untagged'
                 ? `#/list?tag=${encodeURIComponent(t.tag)}`
                 : `#/list?tag=${encodeURIComponent(t.tag)}&sub_tag=${encodeURIComponent(r.name)}`;
               return sd

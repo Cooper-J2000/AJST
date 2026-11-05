@@ -513,7 +513,8 @@ function _lcTopAxisTicks(chart) {
 }
 
 // 顶部副轴带内容绘制（插件画在 chartArea 上方；复制合成画在离屏插入带 yTop 处，带高 46）
-function _drawTopAxisBand(ctx, chart, yLine, titleY) {
+// english=true 时标题用英文（一键复制出图全英文；屏显保持中文）
+function _drawTopAxisBand(ctx, chart, yLine, titleY, english = false) {
   const info = _lcTopAxisTicks(chart);
   const area = chart.chartArea;
   if (!info || !area) return;
@@ -538,7 +539,9 @@ function _drawTopAxisBand(ctx, chart, yLine, titleY) {
     ctx.stroke();
     ctx.fillText(info.fmt(d), px, yLine - 7);
   }
-  ctx.fillText(info.mode === 'mjd' ? 'MJD' : (_lcUseRefX() ? 'time since 基准 (day)' : 'time since T0 (day)'), (area.left + area.right) / 2, titleY);
+  ctx.fillText(info.mode === 'mjd' ? 'MJD' : (english
+    ? (_lcUseRefX() ? 'time since reference (day)' : 'time since T0 (day)')
+    : (_lcUseRefX() ? 'time since 基准 (day)' : 'time since T0 (day)')), (area.left + area.right) / 2, titleY);
   ctx.restore();
 }
 
@@ -895,39 +898,154 @@ export function wireLCChartGlobals(bands, bandNames, spectralColors) {
   };
 }
 
-// ─── 复制光变图到剪贴板（含图例与标题） ───
-// 临时打开内置图例/标题同步重绘，离屏 canvas 铺底色合成后写剪贴板；
+// ─── 复制光变图到剪贴板（matplotlib 风格角落图例 + 全英文标注） ───
+// 屏显图表保持中文/无图例；复制时临时换英文标题与轴标题，离屏 canvas 铺底色合成后，
+// 按数据疏密把经典 matplotlib 图例（白底半透明圆角框）画进图中角落，再写剪贴板；
 // 非安全上下文或剪贴板写图失败时回退为下载 PNG
+
+// 复制图图例条目：可见且 label 非空的数据集（置信带等空 label 数据集始终排除）
+function _lcCopyLegendEntries(chart) {
+  const entries = [];
+  chart.data.datasets.forEach((ds, i) => {
+    if (!ds.label) return;
+    if (!chart.isDatasetVisible(i) || chart.getDatasetMeta(i).hidden) return;
+    entries.push({
+      text: ds.label,
+      color: ds.borderColor || ds.backgroundColor || '#888888',
+      kind: ds._isFit ? 'fit' : (ds._isUpperLimit ? 'ul' : 'pt'),
+    });
+  });
+  return entries;
+}
+
+// matplotlib legend loc='best' 的简化版：统计各角落候选框内的数据点数，取最少者
+function _lcBestLegendCorner(chart, boxW, boxH, margin) {
+  const area = chart.chartArea;
+  const cand = [
+    { x: area.left + margin, y: area.top + margin },                   // 左上
+    { x: area.right - margin - boxW, y: area.top + margin },           // 右上
+    { x: area.left + margin, y: area.bottom - margin - boxH },         // 左下
+    { x: area.right - margin - boxW, y: area.bottom - margin - boxH }, // 右下
+  ];
+  const counts = cand.map(() => 0);
+  chart.data.datasets.forEach((ds, i) => {
+    if (!chart.isDatasetVisible(i) || chart.getDatasetMeta(i).hidden) return;
+    if (ds._isFit) return;   // 拟合线为细虚线且横贯全图，不参与占位统计
+    for (const p of ds.data) {
+      const px = chart.scales.x.getPixelForValue(p.x);
+      const py = chart.scales.y.getPixelForValue(p.y);
+      if (!isFinite(px) || !isFinite(py)) continue;
+      cand.forEach((c, ci) => {
+        if (px >= c.x && px <= c.x + boxW && py >= c.y && py <= c.y + boxH) counts[ci]++;
+      });
+    }
+  });
+  let best = 0;
+  counts.forEach((n, i) => { if (n < counts[best]) best = i; });
+  return cand[best];
+}
+
+// 复制图图例几何尺寸（供选角与绘制共用；ctx 仅为量字宽）
+function _lcCopyLegendGeom(octx, entries) {
+  const fnt = academicFonts().legend;
+  octx.save();
+  octx.font = `${fnt.size}px ${ACADEMIC_FONT}`;
+  let maxW = 0;
+  for (const e of entries) maxW = Math.max(maxW, octx.measureText(e.text).width);
+  octx.restore();
+  const markerW = 24, gapX = 7, padX = 9, padY = 7, rowH = Math.max(18, fnt.size + 6);
+  return { fnt, markerW, gapX, padX, padY, rowH, boxW: markerW + gapX + maxW + padX * 2, boxH: rowH * entries.length + padY * 2 };
+}
+
+// 在离屏 canvas 上绘制 matplotlib 经典图例：白底半透明圆角框 + 左侧色标（点/倒三角/虚线）+ 文字
+// pos 为 CSS px 坐标（已含绘图区下移带高 band 的补偿）
+function _lcDrawCopyLegend(octx, entries, geom, pos) {
+  octx.save();
+  // 框体（facecolor 白、framealpha 0.8、edgecolor 浅灰，对齐 matplotlib 默认）
+  octx.globalAlpha = 0.8;
+  octx.beginPath();
+  octx.roundRect(pos.x, pos.y, geom.boxW, geom.boxH, 5);
+  octx.fillStyle = '#ffffff';
+  octx.fill();
+  octx.globalAlpha = 1;
+  octx.strokeStyle = '#999999';
+  octx.lineWidth = 0.8;
+  octx.stroke();
+  octx.font = `${geom.fnt.size}px ${ACADEMIC_FONT}`;
+  octx.textBaseline = 'middle';
+  entries.forEach((e, i) => {
+    const cy = pos.y + geom.padY + geom.rowH * i + geom.rowH / 2;
+    const mx = pos.x + geom.padX;   // 色标左端
+    octx.fillStyle = e.color;
+    octx.strokeStyle = e.color;
+    if (e.kind === 'fit') {
+      octx.lineWidth = 1.5;
+      octx.setLineDash([5, 3]);
+      octx.beginPath();
+      octx.moveTo(mx, cy);
+      octx.lineTo(mx + geom.markerW, cy);
+      octx.stroke();
+      octx.setLineDash([]);
+    } else if (e.kind === 'ul') {
+      // 上限点：倒三角（与图中 pointStyle 一致）
+      const s = 5;
+      octx.beginPath();
+      octx.moveTo(mx + geom.markerW / 2, cy + s);
+      octx.lineTo(mx + geom.markerW / 2 - s, cy - s * 0.8);
+      octx.lineTo(mx + geom.markerW / 2 + s, cy - s * 0.8);
+      octx.closePath();
+      octx.fill();
+    } else {
+      octx.beginPath();
+      octx.arc(mx + geom.markerW / 2, cy, 3.5, 0, Math.PI * 2);
+      octx.fill();
+    }
+    octx.fillStyle = '#333333';
+    octx.textAlign = 'left';
+    octx.fillText(e.text, mx + geom.markerW + geom.gapX, cy + 0.5);
+  });
+  octx.restore();
+}
+
 window.copyLCChart = async () => {
   const chart = lcChartInstance;
   if (!chart) { showToast('光变图尚未生成，请先打开光变曲线页', 'warning'); return; }
   const cc = chartColors();
-  const plg = chart.options.plugins;
-  const legend = plg.legend, title = plg.title || (plg.title = {});
-  const layout = chart.options.layout || (chart.options.layout = {});
-  const prev = { lg: legend.display, ti: title.display, text: title.text, pad: layout.padding };
-  legend.display = true;
-  legend.position = 'top';
-  // 图例只列当前可见的数据集（未勾选的波段不进图例；置信带等空 label 数据集始终排除）
-  legend.labels = {
-    color: cc.legend, font: academicFonts().legend,
-    filter: (item) => item.text !== '' &&
-      (item.datasetIndex == null || chart.isDatasetVisible(item.datasetIndex)),
-  };
+  const title = chart.options.plugins.title || (chart.options.plugins.title = {});
+  const prev = { ti: title.display, text: title.text, scaleText: {} };
+  // 标题全英文
   title.display = true;
-  title.text = `${_lcName || ''} 光变曲线`;
+  title.text = `${_lcName || ''} Light Curve`;
   title.color = cc.legend;
   title.font = academicFonts().title;
-  // 顶部留白给图例上方留出边距；手绘顶部副轴在合成时改画进离屏插入带（见下），
-  // 因为 layout.padding 位于所有 dock 组件（含图例）之外，无法用它隔开图例与副轴
-  layout.padding = { ...(typeof prev.pad === 'object' && prev.pad ? prev.pad : {}), top: 40 };
+  // 轴标题临时换英文（条件与 buildLCChart 一致），复制完即恢复。
+  // 注意：chart.options 下的嵌套对象（scales/title/layout）在每次 update() 后会被
+  // Chart.js 整体替换，跨 update 持有的旧引用会失效——恢复时必须重新读取最新引用
+  const sc = chart.options.scales;
+  for (const k of ['x', 'y', 'y2']) if (sc[k] && sc[k].title) prev.scaleText[k] = sc[k].title.text;
+  const restFrame = (document.getElementById('lcRestFrame')?.checked || false) && _lcRedshift != null;
+  const useGext = document.getElementById('gextMode')?.value === 'gext';
+  const absMag = (document.getElementById('yMode')?.value || 'flux') === 'absmag' && _lcDistmod != null;
+  const useRefX = _lcUseRefX();
+  sc.x.title.text = restFrame
+    ? (useRefX ? 't/(1+z) since reference  (s)' : 't/(1+z)  (s)')
+    : (useRefX ? 'Time since reference  (s)' : 'Time since T0  (s)');
+  sc.y.title.text = absMag
+    ? 'Absolute Magnitude M (AB)'
+    : 'Flux Density (mJy)' + (useGext ? ' · Gal. extinction corrected' : '');
+  if (sc.y2 && sc.y2.display) sc.y2.title.text = 'Magnitude (AB)';
+  // 手绘顶部副轴在合成时改画进离屏插入带（见下），因为 layout.padding 位于所有
+  // dock 组件（含标题）之外，无法用它隔开标题与副轴
   _lcTopAxisSuppress = true;
   chart.update('none');
   const restore = () => {
-    legend.display = prev.lg;
-    title.display = prev.ti;
-    title.text = prev.text;
-    layout.padding = prev.pad;
+    const cur = chart.options;   // 重新取最新 options 引用（update 后嵌套对象已替换）
+    if (cur.plugins.title) {
+      cur.plugins.title.display = prev.ti;
+      cur.plugins.title.text = prev.text;
+    }
+    const scNow = cur.scales;
+    for (const k in prev.scaleText) if (scNow[k] && scNow[k].title) scNow[k].title.text = prev.scaleText[k];
     _lcTopAxisSuppress = false;
     chart.update('none');
   };
@@ -935,7 +1053,7 @@ window.copyLCChart = async () => {
     const src = chart.canvas;
     const area = chart.chartArea;
     const dpr = chart.currentDevicePixelRatio || 1;
-    // 有顶部副轴时在图例/标题与绘图区之间插入 46px 高的副轴带，彻底避免与图例重叠
+    // 有顶部副轴时在标题与绘图区之间插入 46px 高的副轴带，彻底避免与绘图区重叠
     const band = _lcTopAxis ? 46 : 0;
     const bandPx = Math.round(band * dpr);
     // 切割线抬高 10px：最顶端一行 y 轴刻度标签（跨越 chartArea 顶边）整体划入下半部分，
@@ -947,14 +1065,24 @@ window.copyLCChart = async () => {
     const octx = off.getContext('2d');
     octx.fillStyle = cc.canvasBg;
     octx.fillRect(0, 0, off.width, off.height);
-    // 上半（标题+图例）原样；下半（绘图区）整体下移一个带高
+    // 上半（标题）原样；下半（绘图区）整体下移一个带高
     octx.drawImage(src, 0, 0, src.width, cutY, 0, 0, src.width, cutY);
     octx.drawImage(src, 0, cutY, src.width, src.height - cutY,
       0, cutY + bandPx, src.width, src.height - cutY);
     if (band && area) {
       octx.save();
       octx.scale(dpr, dpr);
-      _drawTopAxisBand(octx, chart, area.top + band - 8, area.top + 13);
+      _drawTopAxisBand(octx, chart, area.top + band - 8, area.top + 13, true);
+      octx.restore();
+    }
+    // matplotlib 风格角落图例：量尺寸 → 选数据最空的角落 → 画进绘图区（坐标补下移带高）
+    const entries = _lcCopyLegendEntries(chart);
+    if (entries.length && area) {
+      const geom = _lcCopyLegendGeom(octx, entries);
+      const posCss = _lcBestLegendCorner(chart, geom.boxW, geom.boxH, 10);
+      octx.save();
+      octx.scale(dpr, dpr);
+      _lcDrawCopyLegend(octx, entries, geom, { x: posCss.x, y: posCss.y + band });
       octx.restore();
     }
     const blob = await new Promise(r => off.toBlob(r, 'image/png'));
