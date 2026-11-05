@@ -75,6 +75,9 @@ CSV_FIELD_MAP = {
     'weights': 'weights', 'discard': 'discard', 'telescope': 'telescope',
     'instrument': 'instrument', 'reference': 'reference', 'comment': 'comment',
     'source': 'source',
+    # 行级扩展字段（JSON 对象字符串）：dump 写出、import 解析；目前承载
+    # ext_corrected_by_source（原表已做银消改正的守卫标记，防全量重建丢失后双重改正）
+    'extra_data': 'extra_data',
 }
 BOOL_FIELDS = {'gext_corr', 'upperlimit', 'discard'}
 FLOAT_FIELDS = {'time', 'time_err', 'mjd', 'flux_density', 'flux_density_err',
@@ -160,6 +163,17 @@ def parse_bool(val):
     if val is None or val == '':
         return False
     return val.strip().lower() in ('y', 'yes', 'true', '1')
+
+
+def canon_nested(obj):
+    """嵌套容器键排序规范化（extra_data/host_galaxy 等）：
+    PostgreSQL jsonb 按键长+字节序存储，读出顺序随键集合变化而漂移；
+    dump 时统一按字母序输出，保证后续单行改动不再引发整段键序 diff 噪声。"""
+    if isinstance(obj, dict):
+        return {k: canon_nested(obj[k]) for k in sorted(obj)}
+    if isinstance(obj, list):
+        return [canon_nested(x) for x in obj]
+    return obj
 
 
 def parse_float(val):
@@ -407,6 +421,12 @@ def import_one_lightcurve(sess, tid):
                     val = row.get(csv_col, '').strip()
                     if val == '':
                         continue
+                    if model_field == 'extra_data':
+                        try:
+                            lc.extra_data = json.loads(val)
+                        except ValueError:
+                            print(f'  [WARN] {tid}: extra_data 不是合法 JSON，忽略: {val[:60]!r}')
+                        continue
                     if model_field in BOOL_FIELDS:
                         setattr(lc, model_field, parse_bool(val))
                     elif model_field in FLOAT_FIELDS:
@@ -620,6 +640,7 @@ def dump_tags(sess):
             'color': r.color} for r in rows]
     with open(TAGS_FILE, 'w') as f:
         json.dump(out, f, indent=2, ensure_ascii=False)
+        f.write('\n')
     print(f'  [OK] Tags dumped: {len(out)} entries')
 
 
@@ -647,6 +668,7 @@ def dump_filters(sess):
             out[fid]['extra_data'] = r.extra_data
     with open(FILTERS_FILE, 'w') as f:
         json.dump(out, f, indent=2, ensure_ascii=False)
+        f.write('\n')
     print(f'  [OK] Filters dumped: {len(out)} entries')
 
 
@@ -720,8 +742,12 @@ def from_dump(sess, prune=False, prune_force=False):
                 'derived': hg.derived or {},
                 'comment': hg.comment, 'source': hg.source,
             }.items() if v is not None and v != {} and v != []}
+        for k in ('extra_data', 'host_galaxy', 'articles'):
+            if info.get(k):
+                info[k] = canon_nested(info[k])
         with open(os.path.join(INFO_DIR, f'{t.id}.json'), 'w') as f:
             json.dump(info, f, indent=2, ensure_ascii=False)
+            f.write('\n')   # 历史文件均带末尾换行，保持一致避免全量 diff 噪声
         n_info += 1
 
         # ── 写入 lc CSV ──
@@ -739,6 +765,9 @@ def from_dump(sess, prune=False, prune_force=False):
                 'flux_density_Gextcor_unit', 'weights', 'discard',
                 'telescope', 'instrument', 'reference', 'comment',
                 'source',
+                # 行级扩展字段（JSON 对象字符串，空为无）：与 import 端 json.loads 配对，
+                # 保证 ext_corrected_by_source 等行级标记可逆往返、全量重建不丢失
+                'extra_data',
             ]
             with open(os.path.join(LC_DIR, f'{t.id}.csv'), 'w', newline='') as f:
                 writer = csv_mod.writer(f)
@@ -746,7 +775,11 @@ def from_dump(sess, prune=False, prune_force=False):
                 for lc in lcs:
                     row = []
                     for col in fields:
-                        val = getattr(lc, CSV_FIELD_MAP.get(col, col), '')
+                        if col == 'extra_data':
+                            val = json.dumps(lc.extra_data, ensure_ascii=False,
+                                             separators=(',', ':')) if lc.extra_data else ''
+                        else:
+                            val = getattr(lc, CSV_FIELD_MAP.get(col, col), '')
                         if isinstance(val, bool):
                             val = 'y' if val else 'n'
                         elif val is None:

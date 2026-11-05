@@ -2481,8 +2481,14 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
 - `test_tmplib_p2.py` 库侧证据硬编码「恰 16 行」改写为活断言：窗口内（1000–1e7 Å）`gext_corr=true`
   且 flux/mag 改正产物皆无的行数 == 0（与 L3 不变量同口径互补）；窗口外遗留（16 行 GRB251025B
   '1keV' 高能行）由 test_l3 已知问题上界钉住
-- 遗留：84 行回退后库↔文件口径漂移（`catadata/lc/*.csv` 仍写 `Gext_corr=y`），发布数据前需
-  `etl.py --dump` 并统一契约表述，待维护者裁决
+- 遗留闭环（同批完成）：`etl.py --dump` 已发布 AJST-Data（5273 文件）；**lc CSV 24→25 列新增
+  `extra_data`**（JSON 对象字符串，dump 写出 / import `json.loads` 解析），行级标记
+  `ext_corrected_by_source` 从此可逆往返——修前 GRBSNWebtool 15k 行 + 本批 84 行的守卫在全量
+  重建时会静默丢失；`Gext_corr` 契约统一为「`y`=本库引擎已改正（派生列成组有值）；原文已改正写
+  `n` + `extra_data.ext_corrected_by_source=true` + `comment` 说明」（SCHEMA.md / 数据审核提示词 /
+  CONTRIBUTING / `validate.py` 表头与 JSON 校验同步）；info JSON 嵌套键序按字母序规范化
+  （`canon_nested`，消除 jsonb 键长序漂移的未来 diff 噪声）+ info/filters/tags 落盘补末尾换行；
+  `validate.py` 0 错误（2 警告为存量基线）
 
 ### v2.38（2026-11-05）— 复制光变图全英文 + matplotlib 角落图例；数据表「复制新增」；主页 Tags 列宽与英文副标签
 
