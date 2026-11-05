@@ -2472,9 +2472,15 @@ A: 必须重启 Flask 进程：`systemctl --user restart ajst-catalog`（或手�
   「本库是否算过」不再由 flag 表达，完全由派生列是否存在体现——v2.39 引入的行级
   `extra_data.ext_corrected_by_source` 守卫机制整体删除（Lightcurve.extra_data 列 DROP，
   ETL 回 24 列 CSV，契约文档/validate.py 同步）
-- **数据迁移**（改前 pg_dump 留底 `catadata/backups/pre_gext_semantics_20261106.sql`）：
+- **数据迁移**（改前 pg_dump 留底 `catadata/backups/pre_gext_semantics_20261106.sql` 与
+  `pre_fix_gext241_20261106.sql`）：
   80,614 行「引擎已改正」y→n（保留派生列）；84 行原文已改正保持 y；16 行 GRB251025B '1keV'
-  无留证历史遗留置 n。迁移后：y∧派生非空=0、y 无留证=0、y=84（L3 快照钉）
+  无留证历史遗留置 n；**审核结论修复 227+14 行**：审核 comment 明示「原文已改正 → Gext_corr=y」
+  的 GRB141121A Cucchiara+2015 ×164 与 GRB141221A Bardho+2016 ×63（含 Schlafly+2011 表注与
+  Dainotti+2024 extcorr=y 证据），曾被旧引擎双重改正、又被迁移机械翻 n——恢复 y 并清除
+  双重改正派生值；同批扫描另发现 GRB141121A 内 14 行 Swift/UVOT 行审核结论实为「未改正」
+  （comment 明示旧 bot 的 y 无出处），维持 n 并由引擎重算改正值。
+  迁移后：y∧派生非空=0、y 无留证=0、y=311（L3 快照钉）
 - **引擎**（extinction.py）：`correct_point` 只写派生列不碰 flag；`clear_point` 只清派生列；
   recompute 三件套只作用于「n ∧ 有派生值」的行（条件不满足时清产物）；run 主循环跳过 y 行
   （`skipped_already_corrected`）、n 行重算覆盖；PUT 行编辑置 y 时自动清派生值避免 y∧派生并存

@@ -257,12 +257,15 @@ def test_engine_derived_rows_are_complete(scalar):
 
 
 def test_gext_corr_true_row_count_snapshot(scalar):
-    """快照钉：gext_corr=true（录入权威值已改正）行数恒为 84。
+    """快照钉：gext_corr=true（录入权威值已改正）行数恒为 325。
 
-    口径：lightcurves 全表 gext_corr IS TRUE（2026-11-06 语义重做后实测；
-    84 行全部满足上面不变量 A/B）。该 flag 只由人工审核的数据录入置位，
+    口径：lightcurves 全表 gext_corr IS TRUE（2026-11-06 语义重做后实测：
+    84 行历史审核行 + 227 行「审核 comment 明示原文已改正却被旧引擎双重改正」
+    修复行（GRB141121A Cucchiara+2015 ×164 / GRB141221A Bardho+2016 ×63；
+    同批另有 14 行 Swift/UVOT 行经复核审核结论为「未改正」，维持 n 并由引擎
+    重算），全部满足上面不变量 A/B）。该 flag 只由人工审核的数据录入置位，
     引擎/自动重算永不触碰，故行数应稳定——变了说明有录入或迁移改动，
     需人工核对新口径后再更新本钉。"""
     n = scalar('SELECT count(*) FROM lightcurves WHERE gext_corr IS TRUE')
-    assert n == 84, (f'gext_corr=true 行数从快照值 84 变为 {n}：'
-                     '该 flag 只由录入决定，变动需人工核对口径')
+    assert n == 311, (f'gext_corr=true 行数从快照值 311 变为 {n}：'
+                      '该 flag 只由录入决定，变动需人工核对口径')

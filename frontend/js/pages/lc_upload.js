@@ -15,7 +15,7 @@ const DB_FIELDS = [
   { key: 'flux_density_err',        label: '误差 flux_density_err',     type: 'float' },
   { key: 'flux_density_unit',       label: '单位 flux_density_unit',    type: 'str',     required: true },
   { key: 'mag_system',              label: '星等系统 mag_system',       type: 'magsys' },
-  { key: 'gext_corr',               label: '已银消 gext_corr',          type: 'bool' },
+  { key: 'gext_corr',               label: '录入值已银消 gext_corr',     type: 'bool' },
   { key: 'upperlimit',              label: '上限 upperlimit',           type: 'bool' },
   { key: 'host_subtracted',         label: '扣宿主 host_subtracted',    type: 'bool' },
   { key: 'gext_Alambda',            label: '银消量 gext_Alambda',       type: 'float' },
